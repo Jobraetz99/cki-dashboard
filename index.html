@@ -1846,7 +1846,17 @@ async function loadSpFile(f){
   try{
     const token = await getToken();
     msStatus('Lade '+f.name+' ('+(f.size/1e6).toFixed(1)+' MB) …');
-    const buf = await graphGet('/sites/'+spSiteId+'/drive/items/'+f.id+'/content', token, true);
+    // Vorautorisierte Download-URL holen – umgeht das CORS/Redirect-Problem des /content-Endpunkts
+    let buf;
+    const durl = f['@microsoft.graph.downloadUrl'] ||
+      (await graphGet('/sites/'+spSiteId+'/drive/items/'+f.id+'?$select=id,name,size,@microsoft.graph.downloadUrl', token))['@microsoft.graph.downloadUrl'];
+    if(durl){
+      const r = await fetch(durl);
+      if(!r.ok){ throw new Error('Download '+r.status); }
+      buf = await r.arrayBuffer();
+    } else {
+      buf = await graphGet('/sites/'+spSiteId+'/drive/items/'+f.id+'/content', token, true);
+    }
     ingestCSVBytes(new Uint8Array(buf), f.name);
     if(spRefreshTimer) clearTimeout(spRefreshTimer);
     spRefreshTimer = setTimeout(()=>{ if(spSiteId) connectSharePoint(); }, 30*60*1000); // Auto-Refresh 30 Min

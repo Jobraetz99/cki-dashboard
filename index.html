@@ -6,7 +6,26 @@
 <title>Praxismanagement · THEORG Demo</title>
 <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800;900&family=Poppins:wght@300;400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="https://alcdn.msauth.net/browser/2.38.4/js/msal-browser.min.js"></script>
+<script>
+// MSAL robust laden: mehrere CDNs nacheinander probieren (falls eines nicht erreichbar/404)
+window.__msalReady = new Promise(function(resolve){
+  var srcs = [
+    'https://alcdn.msauth.net/browser/2.38.1/js/msal-browser.min.js',
+    'https://cdn.jsdelivr.net/npm/@azure/msal-browser@2.38.1/lib/msal-browser.min.js',
+    'https://unpkg.com/@azure/msal-browser@2.38.1/lib/msal-browser.min.js'
+  ];
+  var i = 0;
+  (function load(){
+    if (typeof msal !== 'undefined') return resolve(true);
+    if (i >= srcs.length) return resolve(false);
+    var s = document.createElement('script');
+    s.src = srcs[i++];
+    s.onload = function(){ (typeof msal !== 'undefined') ? resolve(true) : load(); };
+    s.onerror = load;
+    document.head.appendChild(s);
+  })();
+});
+</script>
 <style>
 :root{
   --primary:#1560B1;--primary-bg:rgba(21,96,177,.08);--primary-hover:#0e4a8a;
@@ -1749,7 +1768,7 @@ function msStatus(t){ const e=document.getElementById('msStatus'); if(e) e.textC
 function initMsal(){
   if(msalApp) return msalApp;
   msalApp = new msal.PublicClientApplication({
-    auth:{ clientId:AAD.clientId, authority:AAD.authority, redirectUri:window.location.origin },
+    auth:{ clientId:AAD.clientId, authority:AAD.authority, redirectUri:window.location.origin + window.location.pathname },
     cache:{ cacheLocation:'sessionStorage', storeAuthStateInCookie:false }
   });
   return msalApp;
@@ -1791,6 +1810,12 @@ async function connectSharePoint(){
   const btn = document.getElementById('msLoginBtn');
   try{
     btn.disabled = true;
+    msStatus('Lade Microsoft-Login …');
+    const ready = await (window.__msalReady || Promise.resolve(typeof msal !== 'undefined'));
+    if(!ready || typeof msal === 'undefined'){
+      msStatus('⚠️ Microsoft-Login-Bibliothek konnte nicht geladen werden. Bitte Seite neu laden (Cmd+Shift+R).');
+      btn.disabled = false; return;
+    }
     msStatus('Anmeldung bei Microsoft …');
     const token = await getToken();
     msStatus('Verbinde mit SharePoint …');

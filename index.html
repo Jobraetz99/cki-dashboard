@@ -1751,14 +1751,14 @@ function analyzeDayForControlling(cells){
 // SHAREPOINT / MICROSOFT-LOGIN (Entra ID + Microsoft Graph)
 // ═══════════════════════════════════════════════════════════
 const AAD = {
-  clientId: 'c0c27ce1-68d8-427d-81c0-576cc8d52702',
-  authority: 'https://login.microsoftonline.com/3e5c8d47-8ccc-42f6-877d-0d0e72972e39',
+  clientId: '3449c999-af75-4237-b39e-2ab1fdcc9f37',
+  authority: 'https://login.microsoftonline.com/709b1b68-1718-476e-989c-2e0f98e7769c',
   scopes: ['Sites.Read.All','Files.Read.All']
 };
 const SP = {
-  hostname: 'kimojophysiotherapie.sharepoint.com',
-  sitePath: '/sites/KIMOJOManagement',
-  folderPath: '12_Code/Physio CKI/Theorg Exports'
+  hostname: 'physiockigmbh.sharepoint.com',
+  sitePath: '/sites/TheorgDashboardPhysioCKI',
+  folderPath: 'Datenexporte'
 };
 
 let msalApp = null, spSiteId = null, spByLicense = {}, spRefreshTimer = null;

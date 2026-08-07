@@ -49,7 +49,7 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--dark);min
 .ub h1 .acc{color:var(--accent)}
 .ub .tag{font-family:'Montserrat',sans-serif;font-size:11px;font-weight:800;letter-spacing:3px;text-transform:uppercase;color:var(--muted);margin-bottom:32px}
 .ub p{color:var(--muted);font-size:15px;margin-bottom:24px;line-height:1.6}
-.drop{border:3px dashed var(--border);border-radius:24px;padding:48px 24px;background:var(--card);transition:all .25s;cursor:pointer;margin-bottom:24px}
+.drop{display:flex;flex-direction:column;align-items:center;border:3px dashed var(--border);border-radius:24px;padding:48px 24px;background:var(--card);transition:all .25s;cursor:pointer;margin-bottom:24px}
 .drop:hover,.drop.dr{border-color:var(--primary);background:var(--primary-bg);transform:translateY(-2px)}
 .drop .ic{font-size:48px;margin-bottom:12px;line-height:1}
 .drop .t{font-family:'Montserrat',sans-serif;font-size:16px;font-weight:800;margin-bottom:6px}
@@ -285,7 +285,9 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--dark);min
   </div>
   
   <div class="main-tabs" id="mainTabs"></div>
-  
+
+  <div id="gapNotify"></div>
+
   <div id="dateTabsWrap" style="display:none">
     <div class="tabs" id="dateTabs"></div>
     <div class="tabs" id="thTabs"></div>
@@ -309,6 +311,37 @@ let currentTherapist = 'all';
 let currentRezeptCat = 'nr';
 let currentNRFilter = 'all';
 let currentOffeneFilter = 'all';
+let currentFvoFilter = 'offen';
+
+// ── Konfiguration (anpassbar) ──────────────────────────────
+const CONFIG = {
+  zielAuslastung: 85,   // Tagesziel-Auslastung in %
+  slotMin: 20           // Minuten pro buchbarem Termin-Slot
+};
+
+// ── Persistenter Speicher (localStorage) ───────────────────
+// Läuft als statische Seite auf GitHub Pages → localStorage verfügbar.
+function lsGet(key, fallback){
+  try{ const v = localStorage.getItem(key); return v===null?fallback:JSON.parse(v); }
+  catch(e){ return fallback; }
+}
+function lsSet(key, val){
+  try{ localStorage.setItem(key, JSON.stringify(val)); }catch(e){}
+}
+// Globaler lokaler Datums-String "YYYY-MM-DD" (parseData hat eine eigene lokale Variante)
+function localDateStrG(d){
+  const y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,'0'), dd=String(d.getDate()).padStart(2,'0');
+  return `${y}-${m}-${dd}`;
+}
+// Doing-Status je Rezept (Interims-Lösung bis THEORG-Zusatz-Export vorliegt)
+function getDoingStatus(rezeptNr){ return lsGet('cki_doing_'+rezeptNr, 'offen'); }
+function cycleDoingStatus(rezeptNr){
+  const order = ['offen','doing','erledigt'];
+  const cur = getDoingStatus(rezeptNr);
+  const next = order[(order.indexOf(cur)+1)%order.length];
+  lsSet('cki_doing_'+rezeptNr, next);
+  if(currentView==='folgevo') renderFolgeVO();
+}
 
 // BVB/LVB-Diagnosen
 const BVB_LVB = {
@@ -663,6 +696,53 @@ function renderDashboard(){
   
   renderMainTabs();
   renderViewContent();
+  checkNewGaps();
+}
+
+// ── Notification: neu entstandene Lücken ───────────────────
+// Vergleicht die aktuellen (zukünftigen) Lücken mit dem letzten Stand
+// im localStorage und meldet neu hinzugekommene Lücken.
+function computeFutureGaps(){
+  const today = localDateStrG(new Date());
+  const out = [];
+  DATA.dates.filter(d=>d>=today).forEach(d=>{
+    const cells = DATA.cells.filter(c=>c.dateStr===d);
+    const analysis = analyzeDay(cells);
+    analysis.therapists.forEach(t=>{
+      t.gaps.forEach(g=>{
+        out.push({
+          key: d+'|'+t.name+'|'+fmt(g.start)+'|'+Math.round(g.min),
+          dateStr: d, therapist: t.name,
+          time: fmt(g.start)+'–'+fmt(g.end), min: Math.round(g.min)
+        });
+      });
+    });
+  });
+  return out;
+}
+function checkNewGaps(){
+  const box = document.getElementById('gapNotify');
+  if(!box) return;
+  const current = computeFutureGaps();
+  const currentKeys = current.map(g=>g.key);
+  const prev = lsGet('cki_gap_snapshot', null);
+  lsSet('cki_gap_snapshot', currentKeys);
+  // Beim allerersten Laden gibt es keinen Vergleichsstand → nichts melden
+  if(prev===null){ box.innerHTML=''; return; }
+  const prevSet = new Set(prev);
+  const neue = current.filter(g=>!prevSet.has(g.key));
+  if(!neue.length){ box.innerHTML=''; return; }
+  neue.sort((a,b)=> a.dateStr.localeCompare(b.dateStr) || b.min-a.min);
+  const items = neue.slice(0,8).map(g=>{
+    const dd = new Date(g.dateStr+'T12:00:00').toLocaleDateString('de-DE',{weekday:'short',day:'2-digit',month:'2-digit'});
+    return `<li style="margin:2px 0"><b>${dd}</b> · ${g.therapist} · ${g.time} <span style="color:var(--accent);font-weight:700">(${g.min} min)</span></li>`;
+  }).join('');
+  const more = neue.length>8 ? `<div style="font-size:10px;color:var(--muted);margin-top:4px">… und ${neue.length-8} weitere</div>` : '';
+  box.innerHTML = `<div style="background:var(--accent-bg);border:1px solid var(--accent);border-radius:14px;padding:14px 16px;margin-bottom:16px;position:relative">
+    <button onclick="document.getElementById('gapNotify').innerHTML=''" style="position:absolute;top:10px;right:12px;border:none;background:none;font-size:16px;cursor:pointer;color:var(--muted)">✕</button>
+    <div style="font-family:Montserrat;font-weight:800;font-size:13px;color:var(--accent);margin-bottom:6px">🔔 ${neue.length} neue Lücke${neue.length!==1?'n':''} seit dem letzten Laden</div>
+    <ul style="margin:0;padding-left:18px;font-size:11px;color:var(--dark)">${items}</ul>${more}
+  </div>`;
 }
 
 function renderMainTabs(){
@@ -670,6 +750,8 @@ function renderMainTabs(){
   h += `<button class="m-tab${currentView==='luecken'?' a':''}" onclick="switchView('luecken')">⚡ Lücken</button>`;
   h += `<button class="m-tab${currentView==='rezepte'?' a':''}" onclick="switchView('rezepte')">💊 Rezepte</button>`;
   h += `<button class="m-tab${currentView==='offene'?' a':''}" onclick="switchView('offene')">💰 Offene Rezepte</button>`;
+  h += `<button class="m-tab${currentView==='potential'?' a':''}" onclick="switchView('potential')">🎯 Potential-Dauer</button>`;
+  h += `<button class="m-tab${currentView==='folgevo'?' a':''}" onclick="switchView('folgevo')">🔄 Folge-VO</button>`;
   h += `<button class="m-tab${currentView==='controlling'?' a':''}" onclick="switchView('controlling')">📊 Controlling</button>`;
   document.getElementById('mainTabs').innerHTML = h;
 }
@@ -690,6 +772,8 @@ function renderViewContent(){
   } else {
     document.getElementById('dateTabsWrap').style.display='none';
     if(currentView==='offene')renderOffene();
+    else if(currentView==='potential')renderPotential();
+    else if(currentView==='folgevo')renderFolgeVO();
     else renderControlling();
   }
 }
@@ -739,7 +823,29 @@ function renderLuecken(){
       <div class="si"><div class="si-l">Therapeuten</div><div class="si-v">${analysis.therapists.length}</div><div class="si-s">${analysis.therapistsWithGaps} mit Lücken</div></div>
     </div>
   </div>`;
-  
+
+  // ── TAGESZIEL ──────────────────────────────────────────────
+  const totalWz = analysis.therapists.reduce((s,t)=>s+t.wzMin,0);
+  const totalPat = analysis.therapists.reduce((s,t)=>s+t.patientMin,0);
+  const istAus = totalWz>0 ? Math.round(totalPat/totalWz*100) : 0;
+  const ziel = CONFIG.zielAuslastung;
+  const zielMin = totalWz*ziel/100;
+  const fehlMin = Math.max(0, zielMin-totalPat);
+  const fehlTermine = Math.ceil(fehlMin/CONFIG.slotMin);
+  const zielErreicht = istAus>=ziel;
+  const pctOfZiel = ziel>0 ? Math.min(100, Math.round(istAus/ziel*100)) : 0;
+  const zbColor = zielErreicht ? 'var(--teal)' : istAus>=ziel-10 ? 'var(--amber)' : 'var(--accent)';
+  h += `<div class="ausl-card" style="margin-bottom:18px;padding:18px 20px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px">
+      <div style="font-family:Montserrat;font-weight:800;font-size:14px;color:var(--dark)">🎯 Tagesziel · ${ziel}% Auslastung</div>
+      <div style="font-family:Montserrat;font-weight:900;font-size:15px;color:${zbColor}">
+        ${zielErreicht ? '✅ Ziel erreicht!' : `noch ${fehlTermine} Termin${fehlTermine!==1?'e':''} (${Math.round(fehlMin)} min)`}
+      </div>
+    </div>
+    <div class="ausl-bar" style="height:22px"><div class="ausl-fill" style="width:${pctOfZiel}%;background:${zbColor};height:22px;line-height:22px">${istAus}%</div></div>
+    <div style="font-size:10px;color:var(--muted);margin-top:6px">Ist ${istAus}% · Ziel ${ziel}% · ${Math.round(totalPat)} von ${Math.round(zielMin)} min Ziel-Patientenzeit${currentTherapist==='all'?' (alle Therapeuten)':''}</div>
+  </div>`;
+
   if(analysis.totalGapMin>0){
     h += `<div class="st">⚡ Lücken<span class="sub">→ Klick für Nachrücker-Vorschläge</span></div>`;
     let gapIdx = 0;
@@ -1745,6 +1851,190 @@ function analyzeDayForControlling(cells){
   });
   
   return {aus: totalWz>0?Math.round(totalPat/totalWz*100):0, termine:termine.size};
+}
+
+// ═══════════════════════════════════════════════════════════
+// REZEPT-SAMMLUNG (geteilt: Potential-Dauer + Folge-VO)
+// ═══════════════════════════════════════════════════════════
+function collectRezepte(){
+  const today = new Date(); today.setHours(0,0,0,0);
+  const rezMap = {};
+  DATA.cells.forEach(c=>{
+    if(!c.rezeptNr || c.belArt!=='R' || !c.patNach)return;
+    const k = c.rezeptNr;
+    if(!rezMap[k]){
+      rezMap[k] = {
+        rezeptNr:c.rezeptNr, name:c.patVor+' '+c.patNach,
+        geb:c.patGeb, mobil:c.patMobil,
+        icd:c.icd, diagnose:c.diagnose,
+        menge:c.menge, heilmittel:c.heilmittel, freq:c.frequenz,
+        arzt:c.arzt, rezDatum:c.rezDatum, therapist:c.therapist,
+        bearbStatus:c.bearbStatus, quittungNr:c.quittungNr,
+        rechnungNr:c.rechnungNr, abrechnungsdatum:c.abrechnungsdatum,
+        patKey:(c.patNach+'|'+c.patVor+'|'+(c.patGeb?c.patGeb.getTime():'')).toLowerCase(),
+        belegteTermine:new Set(), zukunftTermine:new Set(),
+        lastTerminDate:null, nextTerminDate:null
+      };
+    }
+    if(c.termIdent && c.belegt){
+      rezMap[k].belegteTermine.add(c.termIdent);
+      if(!rezMap[k].lastTerminDate || c.start>rezMap[k].lastTerminDate) rezMap[k].lastTerminDate=c.start;
+    }
+    if(c.termIdent && c.start>=today){
+      rezMap[k].zukunftTermine.add(c.termIdent);
+      if(!rezMap[k].nextTerminDate || c.start<rezMap[k].nextTerminDate) rezMap[k].nextTerminDate=c.start;
+    }
+  });
+  const rezepte = Object.values(rezMap).map(r=>{
+    r.erbracht = r.belegteTermine.size;
+    r.hasFuture = r.zukunftTermine.size>0;
+    const isBlanko = isBlankoHM(r.heilmittel);
+    r.istBlanko = isBlanko;
+    r.echteMenge = isBlanko ? getBlankoMax(r.icd) : (r.menge||0);
+    r.rest = Math.max(0, r.echteMenge - r.erbracht);
+    r.istAbgerechnet = !!(r.quittungNr || r.rechnungNr || r.abrechnungsdatum) ||
+      (r.bearbStatus && r.bearbStatus.toLowerCase().includes('abgerechn'));
+    if(r.lastTerminDate) r.tageSeitLetzterTermin = Math.floor((today-r.lastTerminDate)/86400000);
+    return r;
+  });
+  // Folge-Verordnung vorhanden? = neueres Rezept für denselben Patienten existiert
+  const byPat = {};
+  rezepte.forEach(r=>{ (byPat[r.patKey]=byPat[r.patKey]||[]).push(r); });
+  rezepte.forEach(r=>{
+    r.hasFolgeVO = (byPat[r.patKey]||[]).some(o=>
+      o!==r && o.rezDatum && r.rezDatum && o.rezDatum>r.rezDatum);
+  });
+  return rezepte;
+}
+
+// ═══════════════════════════════════════════════════════════
+// VIEW: POTENTIAL-DAUER
+// ═══════════════════════════════════════════════════════════
+function renderPotential(){
+  const today = new Date(); today.setHours(0,0,0,0);
+  // Aktive Rezepte mit Rest-Potenzial (noch nicht fertig, nicht abgerechnet)
+  const aktiv = collectRezepte().filter(r=>!r.istAbgerechnet && r.echteMenge>0 && r.rest>0);
+  aktiv.forEach(r=>{
+    r.restDauerWochen = (r.freq && r.freq>0) ? Math.ceil(r.rest/r.freq) : null;
+    r.endeDatum = r.restDauerWochen!=null ? new Date(today.getTime()+r.restDauerWochen*7*86400000) : null;
+    r.potMin = r.rest*CONFIG.slotMin;
+  });
+  const totalRest = aktiv.reduce((s,r)=>s+r.rest,0);
+  const totalMin = aktiv.reduce((s,r)=>s+r.potMin,0);
+  const mitDauer = aktiv.filter(r=>r.restDauerWochen!=null);
+  const avgWochen = mitDauer.length ? Math.round(mitDauer.reduce((s,r)=>s+r.restDauerWochen,0)/mitDauer.length) : 0;
+  // Ohne Folgetermin zuerst (die drohen zu versanden), dann nach Rest absteigend
+  aktiv.sort((a,b)=> (a.hasFuture-b.hasFuture) || (b.rest-a.rest));
+
+  let h = `<div class="summary">
+    <h2>🎯 Potential-Dauer · Offene Behandlungen &amp; Restlaufzeit</h2>
+    <div class="sg">
+      <div class="si"><div class="si-l">Offene Behandlungen</div><div class="si-v">${totalRest}</div><div class="si-s">planbares Termin-Potenzial</div></div>
+      <div class="si"><div class="si-l">Therapeutenzeit</div><div class="si-v">${(totalMin/60).toFixed(1)} h</div><div class="si-s">${totalMin} min gesamt</div></div>
+      <div class="si"><div class="si-l">Aktive Rezepte</div><div class="si-v">${aktiv.length}</div><div class="si-s">mit Rest-Potenzial</div></div>
+      <div class="si"><div class="si-l">ø Restdauer</div><div class="si-v">${avgWochen} Wo</div><div class="si-s">bei verordneter Frequenz</div></div>
+    </div>
+  </div>`;
+
+  if(!aktiv.length){
+    h += `<div class="empty" style="background:var(--teal-bg);border:1px solid var(--teal);color:var(--teal)"><b>🎉 Kein offenes Potenzial</b><br><span style="font-size:11px">Alle laufenden Rezepte sind abgeschlossen oder verplant.</span></div>`;
+    document.getElementById('content').innerHTML = h; return;
+  }
+
+  h += `<div class="st">📋 Rezepte nach Rest-Potenzial<span class="sub">→ ohne Folgetermin zuerst</span></div>`;
+  h += `<div class="ausl-card" style="padding:8px">`;
+  aktiv.forEach(r=>{
+    const age = r.geb ? Math.floor((Date.now()-new Date(r.geb).getTime())/(365.25*86400000)) : null;
+    const pct = r.echteMenge ? Math.round(r.erbracht/r.echteMenge*100) : 0;
+    const dauerStr = r.restDauerWochen!=null
+      ? `${r.restDauerWochen} Wo${r.endeDatum?' · vsl. bis '+r.endeDatum.toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'2-digit'}):''}`
+      : 'Frequenz unbekannt';
+    const warn = !r.hasFuture;
+    const tel = r.mobil ? `<a class="pr-tel" href="tel:${r.mobil.replace(/[^+\d]/g,'')}">📞 ${r.mobil}</a>` : '';
+    h += `<div class="ac" style="border-left-color:${warn?'var(--accent)':'var(--primary)'};cursor:default">
+      <span style="font-size:16px">${warn?'⚠️':'🎯'}</span>
+      <div class="ac-b">
+        <div class="ac-t">${r.name}${age?' · '+age+'J':''} <span style="font-weight:600;color:var(--muted)">— ${r.heilmittel||'?'}${r.istBlanko?' (Blanko)':''}</span></div>
+        <div class="ac-s">Rest <b>${r.rest}</b> von ${r.echteMenge} (${pct}% erbracht) · ⏱️ ${dauerStr}${warn?' · <b style="color:var(--accent)">kein Folgetermin!</b>':''}${r.icd?' · '+r.icd:''}</div>
+      </div>
+      <span class="ac-p" style="background:${warn?'var(--accent-bg)':'var(--primary-bg)'};color:${warn?'var(--accent)':'var(--primary)'}">${r.rest}×</span>
+      ${tel}
+    </div>`;
+  });
+  h += `</div>`;
+  document.getElementById('content').innerHTML = h;
+}
+
+// ═══════════════════════════════════════════════════════════
+// VIEW: FOLGE-VERORDNUNG NICHT WEITERGEPLANT (+ Doing-Status)
+// ═══════════════════════════════════════════════════════════
+function setFvoFilter(f){ currentFvoFilter=f; renderFolgeVO(); }
+function renderFolgeVO(){
+  // Kandidaten: Serie faktisch abgeschlossen (Rest<=1 oder erbracht>=Menge),
+  // KEIN zukünftiger Termin, KEINE neuere Folge-Verordnung vorhanden.
+  const kandidaten = collectRezepte().filter(r=>{
+    if(r.echteMenge<=0) return false;
+    if(r.erbracht===0) return false;
+    if(r.hasFuture) return false;
+    if(r.hasFolgeVO) return false;
+    return r.erbracht>=r.echteMenge || r.rest<=1;
+  }).sort((a,b)=>(b.tageSeitLetzterTermin||0)-(a.tageSeitLetzterTermin||0));
+
+  // Doing-Status anreichern
+  kandidaten.forEach(r=> r.doing = getDoingStatus(r.rezeptNr));
+  const cntOffen = kandidaten.filter(r=>r.doing==='offen').length;
+  const cntDoing = kandidaten.filter(r=>r.doing==='doing').length;
+  const cntFertig = kandidaten.filter(r=>r.doing==='erledigt').length;
+
+  let h = `<div class="summary">
+    <h2>🔄 Folge-VO nicht weitergeplant</h2>
+    <div class="sg">
+      <div class="si"><div class="si-l">Kandidaten gesamt</div><div class="si-v">${kandidaten.length}</div><div class="si-s">Serie fertig, keine Folge-VO</div></div>
+      <div class="si"><div class="si-l">🔴 Offen</div><div class="si-v">${cntOffen}</div><div class="si-s">noch nichts veranlasst</div></div>
+      <div class="si"><div class="si-l">🟡 In Arbeit</div><div class="si-v">${cntDoing}</div><div class="si-s">Doing-Status</div></div>
+      <div class="si"><div class="si-l">🟢 Erledigt</div><div class="si-v">${cntFertig}</div><div class="si-s">Folge-VO angestoßen</div></div>
+    </div>
+  </div>`;
+
+  h += `<div style="background:var(--amber-bg);border:1px solid var(--amber);border-radius:12px;padding:12px 14px;margin-bottom:14px;font-size:11px;color:var(--dark)">
+    <b style="color:var(--amber);font-family:Montserrat;font-weight:800">ℹ️ Hinweis:</b>
+    Der Doing-Status wird aktuell lokal im Browser gespeichert (Klick auf den Status wechselt offen → in Arbeit → erledigt). Sobald der zusätzliche THEORG-Export vorliegt, kann der Status direkt aus THEORG übernommen werden.</div>`;
+
+  h += `<div class="nr-filters" style="margin-bottom:14px">`;
+  [
+    {f:'offen',l:'🔴 Offen',c:cntOffen},
+    {f:'doing',l:'🟡 In Arbeit',c:cntDoing},
+    {f:'erledigt',l:'🟢 Erledigt',c:cntFertig},
+    {f:'alle',l:'Alle',c:kandidaten.length}
+  ].forEach(x=>{
+    h += `<button class="nr-filter${currentFvoFilter===x.f?' a':''}" onclick="setFvoFilter('${x.f}')">${x.l} (${x.c})</button>`;
+  });
+  h += `</div>`;
+
+  const gefiltert = currentFvoFilter==='alle' ? kandidaten : kandidaten.filter(r=>r.doing===currentFvoFilter);
+  if(!gefiltert.length){
+    h += `<div class="empty">Keine Rezepte in dieser Kategorie 🎉</div>`;
+    document.getElementById('content').innerHTML = h; return;
+  }
+
+  const statusMeta = {offen:{l:'🔴 Offen',c:'var(--accent)',bg:'var(--accent-bg)'}, doing:{l:'🟡 In Arbeit',c:'var(--amber)',bg:'var(--amber-bg)'}, erledigt:{l:'🟢 Erledigt',c:'var(--teal)',bg:'var(--teal-bg)'}};
+  h += `<div class="ausl-card" style="padding:8px">`;
+  gefiltert.forEach(r=>{
+    const age = r.geb ? Math.floor((Date.now()-new Date(r.geb).getTime())/(365.25*86400000)) : null;
+    const sm = statusMeta[r.doing]||statusMeta.offen;
+    const tel = r.mobil ? `<a class="pr-tel" href="tel:${r.mobil.replace(/[^+\d]/g,'')}">📞 ${r.mobil}</a>` : '';
+    const letzter = r.lastTerminDate ? r.lastTerminDate.toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'2-digit'}) : '–';
+    h += `<div class="ac" style="cursor:default">
+      <div class="ac-b">
+        <div class="ac-t">${r.name}${age?' · '+age+'J':''} <span style="font-weight:600;color:var(--muted)">— ${r.heilmittel||'?'}</span></div>
+        <div class="ac-s">${r.erbracht}/${r.echteMenge} erbracht · letzter Termin ${letzter} (vor ${r.tageSeitLetzterTermin||0}d)${r.icd?' · '+r.icd:''}${r.arzt?' · Arzt: '+r.arzt:''}</div>
+      </div>
+      ${tel}
+      <button class="pr-tel" style="background:${sm.bg};color:${sm.c};border:none;cursor:pointer" onclick="cycleDoingStatus('${String(r.rezeptNr).replace(/'/g,"\\'")}')">${sm.l} ⟳</button>
+    </div>`;
+  });
+  h += `</div>`;
+  document.getElementById('content').innerHTML = h;
 }
 
 // ═══════════════════════════════════════════════════════════

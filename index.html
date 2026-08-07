@@ -218,6 +218,20 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--dark);min
 .ausl-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:16px;margin-bottom:16px}
 .ausl-card{background:var(--card);border-radius:var(--radius);padding:24px;border:1px solid var(--border);box-shadow:var(--shadow)}
 .ausl-card h4{font-family:'Montserrat',sans-serif;font-size:12px;font-weight:800;letter-spacing:1px;text-transform:uppercase;color:var(--muted);margin-bottom:16px}
+/* Aufgaben-Cockpit */
+.aufg-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px;margin-bottom:18px}
+.aufg-card{background:var(--card);border:1px solid var(--border);border-left:5px solid var(--primary);border-radius:16px;padding:18px 20px;box-shadow:var(--shadow);cursor:pointer;transition:all .18s;display:flex;flex-direction:column;gap:5px;position:relative;overflow:hidden}
+.aufg-card:hover{transform:translateY(-3px);box-shadow:0 14px 30px rgba(0,0,0,.10)}
+.aufg-card .aufg-ico{font-size:24px;line-height:1}
+.aufg-card .aufg-num{font-family:'Montserrat',sans-serif;font-size:36px;font-weight:900;line-height:1;letter-spacing:-.02em}
+.aufg-card .aufg-ttl{font-family:'Montserrat',sans-serif;font-weight:800;font-size:14px;color:var(--dark)}
+.aufg-card .aufg-sub{font-size:11px;color:var(--muted);line-height:1.4}
+.aufg-card .aufg-go{margin-top:8px;font-size:11px;font-weight:800;color:var(--primary);font-family:'Montserrat',sans-serif}
+.aufg-card.done{border-left-color:var(--teal);opacity:.85}
+.aufg-card.done .aufg-num,.aufg-card.done .aufg-go{color:var(--teal)}
+.tz-wrap{background:var(--card);border-radius:16px;padding:18px 20px;border:1px solid var(--border);box-shadow:var(--shadow);margin-bottom:18px}
+.tz-bar{height:24px;background:var(--border);border-radius:100px;overflow:hidden}
+.tz-fill{height:24px;line-height:24px;text-align:right;padding-right:10px;color:#fff;font-family:'Montserrat',sans-serif;font-weight:800;font-size:12px;border-radius:100px;transition:width .4s}
 .ausl-row{display:flex;align-items:center;gap:12px;margin-bottom:12px}
 .ausl-label{font-family:'Montserrat',sans-serif;font-size:12px;font-weight:700;width:140px;flex-shrink:0}
 .ausl-bar{flex:1;height:28px;background:#f3f4f7;border-radius:8px;overflow:hidden;position:relative}
@@ -305,7 +319,7 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--dark);min
 // ═══════════════════════════════════════════════════════════
 const MG = 20;
 let DATA = null;
-let currentView = 'luecken';
+let currentView = 'aufgaben';
 let currentDate = null;
 let currentTherapist = 'all';
 let currentRezeptCat = 'nr';
@@ -747,6 +761,7 @@ function checkNewGaps(){
 
 function renderMainTabs(){
   let h = '';
+  h += `<button class="m-tab${currentView==='aufgaben'?' a':''}" onclick="switchView('aufgaben')">📋 Aufgaben</button>`;
   h += `<button class="m-tab${currentView==='luecken'?' a':''}" onclick="switchView('luecken')">⚡ Lücken</button>`;
   h += `<button class="m-tab${currentView==='rezepte'?' a':''}" onclick="switchView('rezepte')">💊 Rezepte</button>`;
   h += `<button class="m-tab${currentView==='offene'?' a':''}" onclick="switchView('offene')">💰 Offene Rezepte</button>`;
@@ -771,7 +786,8 @@ function renderViewContent(){
     else renderRezepte();
   } else {
     document.getElementById('dateTabsWrap').style.display='none';
-    if(currentView==='offene')renderOffene();
+    if(currentView==='aufgaben')renderAufgaben();
+    else if(currentView==='offene')renderOffene();
     else if(currentView==='potential')renderPotential();
     else if(currentView==='folgevo')renderFolgeVO();
     else renderControlling();
@@ -822,28 +838,6 @@ function renderLuecken(){
       <div class="si"><div class="si-l">ø Auslastung</div><div class="si-v">${analysis.avgAuslastung}%</div><div class="si-s">Patientenzeit ÷ AZ</div></div>
       <div class="si"><div class="si-l">Therapeuten</div><div class="si-v">${analysis.therapists.length}</div><div class="si-s">${analysis.therapistsWithGaps} mit Lücken</div></div>
     </div>
-  </div>`;
-
-  // ── TAGESZIEL ──────────────────────────────────────────────
-  const totalWz = analysis.therapists.reduce((s,t)=>s+t.wzMin,0);
-  const totalPat = analysis.therapists.reduce((s,t)=>s+t.patientMin,0);
-  const istAus = totalWz>0 ? Math.round(totalPat/totalWz*100) : 0;
-  const ziel = CONFIG.zielAuslastung;
-  const zielMin = totalWz*ziel/100;
-  const fehlMin = Math.max(0, zielMin-totalPat);
-  const fehlTermine = Math.ceil(fehlMin/CONFIG.slotMin);
-  const zielErreicht = istAus>=ziel;
-  const pctOfZiel = ziel>0 ? Math.min(100, Math.round(istAus/ziel*100)) : 0;
-  const zbColor = zielErreicht ? 'var(--teal)' : istAus>=ziel-10 ? 'var(--amber)' : 'var(--accent)';
-  h += `<div class="ausl-card" style="margin-bottom:18px;padding:18px 20px">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px">
-      <div style="font-family:Montserrat;font-weight:800;font-size:14px;color:var(--dark)">🎯 Tagesziel · ${ziel}% Auslastung</div>
-      <div style="font-family:Montserrat;font-weight:900;font-size:15px;color:${zbColor}">
-        ${zielErreicht ? '✅ Ziel erreicht!' : `noch ${fehlTermine} Termin${fehlTermine!==1?'e':''} (${Math.round(fehlMin)} min)`}
-      </div>
-    </div>
-    <div class="ausl-bar" style="height:22px"><div class="ausl-fill" style="width:${pctOfZiel}%;background:${zbColor};height:22px;line-height:22px">${istAus}%</div></div>
-    <div style="font-size:10px;color:var(--muted);margin-top:6px">Ist ${istAus}% · Ziel ${ziel}% · ${Math.round(totalPat)} von ${Math.round(zielMin)} min Ziel-Patientenzeit${currentTherapist==='all'?' (alle Therapeuten)':''}</div>
   </div>`;
 
   if(analysis.totalGapMin>0){
@@ -2034,6 +2028,122 @@ function renderFolgeVO(){
     </div>`;
   });
   h += `</div>`;
+  document.getElementById('content').innerHTML = h;
+}
+
+// ═══════════════════════════════════════════════════════════
+// VIEW: AUFGABEN (Tages-Cockpit für Praxismanager)
+// ═══════════════════════════════════════════════════════════
+// Navigation aus den Aufgaben-Kacheln in die jeweiligen Tabs
+function gotoOffene(f){ currentOffeneFilter=f; switchView('offene'); }
+function gotoFolgeVO(){ currentFvoFilter='offen'; switchView('folgevo'); }
+
+function computeActionItems(){
+  const rez = collectRezepte();
+  // Fertig, aber nicht abgerechnet (Nicht-Blanko)
+  const typA = rez.filter(r=>!r.istAbgerechnet && r.echteMenge>0 && !r.istBlanko && r.erbracht>=r.echteMenge);
+  // Angefangen, kein Folgetermin geplant
+  const typB = rez.filter(r=>!r.istAbgerechnet && r.echteMenge>0 && r.erbracht>0 && r.erbracht<r.echteMenge && !r.hasFuture);
+  // Folge-VO-Kandidaten (Serie faktisch fertig, keine neuere VO) – nur die offenen
+  const folgeVO = rez.filter(r=>r.echteMenge>0 && r.erbracht>0 && !r.hasFuture && !r.hasFolgeVO && (r.erbracht>=r.echteMenge || r.rest<=1));
+  const folgeVOoffen = folgeVO.filter(r=>getDoingStatus(r.rezeptNr)==='offen');
+  // Offenes Behandlungspotenzial
+  const aktiv = rez.filter(r=>!r.istAbgerechnet && r.echteMenge>0 && r.rest>0);
+  const aktivRest = aktiv.reduce((s,r)=>s+r.rest,0);
+  // Lücken am aktuell gewählten (nächsten) Tag
+  const dayCells = DATA.cells.filter(c=>c.dateStr===currentDate);
+  const dayAnal = analyzeDay(dayCells);
+  let gapCount=0, gapMin=0;
+  dayAnal.therapists.forEach(t=>{ gapCount+=t.gaps.length; gapMin+=t.gapTotal; });
+  return {
+    typA:typA.length, typB:typB.length, folgeVO:folgeVOoffen.length,
+    aktivRest, aktivCount:aktiv.length,
+    gapCount, gapMin:Math.round(gapMin), gapSlots:Math.floor(gapMin/CONFIG.slotMin),
+    dayAnal
+  };
+}
+
+function renderAufgaben(){
+  const a = computeActionItems();
+  const dd = new Date(currentDate+'T12:00:00').toLocaleDateString('de-DE',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
+  const totalTasks = a.gapCount + a.typA + a.typB + a.folgeVO;
+
+  // ── Tagesziel (Auslastung des gewählten Tages) ──
+  const totalWz = a.dayAnal.therapists.reduce((s,t)=>s+t.wzMin,0);
+  const totalPat = a.dayAnal.therapists.reduce((s,t)=>s+t.patientMin,0);
+  const istAus = totalWz>0 ? Math.round(totalPat/totalWz*100) : 0;
+  const ziel = CONFIG.zielAuslastung;
+  const zielMin = totalWz*ziel/100;
+  const fehlMin = Math.max(0, zielMin-totalPat);
+  const fehlTermine = Math.ceil(fehlMin/CONFIG.slotMin);
+  const zielErreicht = istAus>=ziel;
+  const pctOfZiel = ziel>0 ? Math.min(100, Math.round(istAus/ziel*100)) : 0;
+  const zbColor = zielErreicht ? 'var(--teal)' : istAus>=ziel-10 ? 'var(--amber)' : 'var(--accent)';
+
+  let h = `<div class="summary">
+    <h2>📋 Aufgaben · ${dd}</h2>
+    <div class="sg">
+      <div class="si"><div class="si-l">Offene To-Dos</div><div class="si-v">${totalTasks}</div><div class="si-s">gesamt zu erledigen</div></div>
+      <div class="si"><div class="si-l">Lücken heute</div><div class="si-v">${a.gapCount}</div><div class="si-s">${a.gapMin} min · ${a.gapSlots} Termine möglich</div></div>
+      <div class="si"><div class="si-l">💰 Zum Abrechnen</div><div class="si-v">${a.typA}</div><div class="si-s">Rezepte fertig</div></div>
+      <div class="si"><div class="si-l">📞 Nachfassen</div><div class="si-v">${a.typB+a.folgeVO}</div><div class="si-s">Termin/Folge-VO</div></div>
+    </div>
+  </div>`;
+
+  // ── Tagesziel-Balken ──
+  h += `<div class="tz-wrap">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px">
+      <div style="font-family:Montserrat;font-weight:800;font-size:15px;color:var(--dark)">🎯 Tagesziel · ${ziel}% Auslastung</div>
+      <div style="font-family:Montserrat;font-weight:900;font-size:16px;color:${zbColor}">
+        ${zielErreicht ? '✅ Ziel erreicht!' : `noch ${fehlTermine} Termin${fehlTermine!==1?'e':''} (${Math.round(fehlMin)} min)`}
+      </div>
+    </div>
+    <div class="tz-bar"><div class="tz-fill" style="width:${Math.max(pctOfZiel,8)}%;background:${zbColor}">${istAus}%</div></div>
+    <div style="font-size:11px;color:var(--muted);margin-top:8px">Ist ${istAus}% · Ziel ${ziel}% · ${Math.round(totalPat)} von ${Math.round(zielMin)} min Ziel-Patientenzeit (alle Therapeuten)</div>
+  </div>`;
+
+  // ── Action-Kacheln ──
+  h += `<div class="st">✅ Deine To-Dos<span class="sub">→ Klick öffnet den passenden Tab</span></div>`;
+  h += `<div class="aufg-grid">`;
+
+  const cards = [
+    { n:a.gapCount, ico:'⚡', color:'var(--accent)',
+      ttl:'Lücken schließen',
+      sub:a.gapCount ? `${a.gapMin} min frei am ${new Date(currentDate+'T12:00:00').toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit'})} · Nachrücker anrufen` : 'Keine offenen Lücken 🎉',
+      go:"switchView('luecken')" },
+    { n:a.typA, ico:'💰', color:'var(--fire)',
+      ttl:'Rezepte abrechnen',
+      sub:a.typA ? 'Komplett behandelt, aber ohne Quittung/Rechnung → einreichen' : 'Alles abgerechnet 🎉',
+      go:"gotoOffene('abr')" },
+    { n:a.typB, ico:'📞', color:'var(--primary)',
+      ttl:'Folgetermin vereinbaren',
+      sub:a.typB ? 'Behandlung läuft, kein nächster Termin → Patient anrufen' : 'Alle verplant 🎉',
+      go:"gotoOffene('ohne')" },
+    { n:a.folgeVO, ico:'🔄', color:'var(--amber)',
+      ttl:'Folge-VO anfordern',
+      sub:a.folgeVO ? 'Serie fertig, keine Anschluss-VO → beim Arzt anfordern' : 'Nichts offen 🎉',
+      go:"gotoFolgeVO()" },
+    { n:a.aktivRest, ico:'🎯', color:'var(--teal)',
+      ttl:'Behandlungs-Potenzial',
+      sub:a.aktivCount ? `${a.aktivRest} offene Behandlungen aus ${a.aktivCount} Rezepten planen` : 'Kein offenes Potenzial',
+      go:"switchView('potential')" }
+  ];
+  cards.forEach(c=>{
+    const done = c.n===0;
+    h += `<div class="aufg-card${done?' done':''}" style="border-left-color:${done?'var(--teal)':c.color}" onclick="${c.go}">
+      <div class="aufg-ico">${done?'✅':c.ico}</div>
+      <div class="aufg-num" style="color:${done?'var(--teal)':c.color}">${c.n}</div>
+      <div class="aufg-ttl">${c.ttl}</div>
+      <div class="aufg-sub">${c.sub}</div>
+      <div class="aufg-go">${done?'Erledigt':'Öffnen →'}</div>
+    </div>`;
+  });
+  h += `</div>`;
+
+  if(totalTasks===0){
+    h += `<div class="empty" style="background:var(--teal-bg);border:1px solid var(--teal);color:var(--teal)"><b>🎉 Alles erledigt!</b><br><span style="font-size:11px">Keine offenen Aufgaben – Lücken gefüllt, Rezepte verplant und abgerechnet.</span></div>`;
+  }
+
   document.getElementById('content').innerHTML = h;
 }
 

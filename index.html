@@ -232,6 +232,42 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--dark);min
 .tz-wrap{background:var(--card);border-radius:16px;padding:18px 20px;border:1px solid var(--border);box-shadow:var(--shadow);margin-bottom:18px}
 .tz-bar{height:24px;background:var(--border);border-radius:100px;overflow:hidden}
 .tz-fill{height:24px;line-height:24px;text-align:right;padding-right:10px;color:#fff;font-family:'Montserrat',sans-serif;font-weight:800;font-size:12px;border-radius:100px;transition:width .4s}
+/* ── Aufgaben-Checkliste ── */
+.task-sec{background:var(--card);border:1px solid var(--border);border-radius:16px;box-shadow:var(--shadow);margin-bottom:14px;overflow:hidden}
+.task-sec-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 16px;background:#fafbfc;flex-wrap:wrap}
+.task-sec-ttl{font-family:'Montserrat',sans-serif;font-weight:800;font-size:14px;color:var(--dark);padding-left:8px}
+.task-sec-cnt{font-size:11px;font-weight:800;color:var(--muted);margin-left:6px}
+.task-open{border:1px solid var(--border);background:#fff;border-radius:100px;padding:5px 12px;font-family:'Montserrat',sans-serif;font-size:11px;font-weight:700;color:var(--primary);cursor:pointer;transition:all .15s}
+.task-open:hover{background:var(--primary);color:#fff;border-color:var(--primary)}
+.task{display:flex;align-items:center;gap:12px;padding:11px 18px;border-top:1px solid var(--border);cursor:pointer;transition:background .12s}
+.task:hover{background:#f7f9fb}
+.task-cb{width:22px;height:22px;flex-shrink:0;border:2px solid var(--border);border-radius:6px;display:flex;align-items:center;justify-content:center;font-weight:900;color:#fff;font-size:14px;transition:all .15s}
+.task.done .task-cb{background:var(--teal);border-color:var(--teal)}
+.task-body{min-width:0}
+.task-main{font-family:'Montserrat',sans-serif;font-weight:700;font-size:13px;color:var(--dark)}
+.task-sub{font-size:11px;color:var(--muted);margin-top:1px}
+.task.done .task-main{text-decoration:line-through;color:var(--muted)}
+.task.done{opacity:.65}
+/* ── Datums-Navigator ── */
+.datenav{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+.dn-btn{width:38px;height:38px;border-radius:12px;border:2px solid var(--border);background:#fff;color:var(--primary);font-size:20px;font-weight:900;cursor:pointer;line-height:1;transition:all .15s}
+.dn-btn:hover:not(:disabled){background:var(--primary);color:#fff;border-color:var(--primary)}
+.dn-btn:disabled{opacity:.35;cursor:not-allowed}
+.dn-center{display:flex;flex-direction:column;align-items:center;gap:3px}
+.dn-lbl{font-family:'Montserrat',sans-serif;font-weight:800;font-size:14px;color:var(--dark)}
+.dn-sel{border:1px solid var(--border);border-radius:8px;padding:3px 8px;font-family:'Montserrat',sans-serif;font-size:11px;font-weight:700;color:var(--muted);background:#fff;cursor:pointer}
+.dn-count{font-size:11px;color:var(--muted);font-weight:700;margin-left:auto}
+/* ── Therapeuten-Dropdown ── */
+.th-dd{position:relative;display:inline-block;margin-bottom:12px}
+.th-dd-btn{border:2px solid var(--border);background:#fff;border-radius:100px;padding:8px 16px;font-family:'Montserrat',sans-serif;font-size:12px;font-weight:700;color:var(--dark);cursor:pointer;display:flex;align-items:center;gap:8px}
+.th-dd-btn:hover{border-color:var(--primary)}
+.th-caret{color:var(--muted);font-size:10px}
+.th-dd-menu{display:none;position:absolute;top:calc(100% + 6px);left:0;z-index:50;background:#fff;border:1px solid var(--border);border-radius:14px;box-shadow:0 12px 34px rgba(0,0,0,.14);padding:8px;min-width:250px;max-height:320px;overflow-y:auto}
+.th-dd-menu.open{display:block}
+.th-opt{display:flex;align-items:center;gap:9px;padding:7px 10px;border-radius:8px;font-size:12px;font-weight:600;color:var(--dark);cursor:pointer;font-family:'Montserrat',sans-serif}
+.th-opt:hover{background:#f5f7fa}
+.th-opt input{width:16px;height:16px;cursor:pointer}
+.th-opt.th-all{border-bottom:1px solid var(--border);margin-bottom:4px;padding-bottom:9px;border-radius:8px 8px 0 0}
 .ausl-row{display:flex;align-items:center;gap:12px;margin-bottom:12px}
 .ausl-label{font-family:'Montserrat',sans-serif;font-size:12px;font-weight:700;width:140px;flex-shrink:0}
 .ausl-bar{flex:1;height:28px;background:#f3f4f7;border-radius:8px;overflow:hidden;position:relative}
@@ -322,6 +358,8 @@ let DATA = null;
 let currentView = 'aufgaben';
 let currentDate = null;
 let currentTherapist = 'all';
+// Mehrfachauswahl Therapeuten: null = alle, Set() = ausgewählte (leer = keine)
+let selectedTherapists = null;
 let currentRezeptCat = 'nr';
 let currentNRFilter = 'all';
 let currentOffeneFilter = 'all';
@@ -332,6 +370,12 @@ const CONFIG = {
   zielAuslastung: 85,   // Tagesziel-Auslastung in %
   slotMin: 20           // Minuten pro buchbarem Termin-Slot
 };
+
+// ── Ausschluss: Rezepte/Patienten die NICHT über THEORG abgerechnet werden ──
+// (z.B. Selbstabrechner). Der Begriff wird zeilenweise in ALLEN Export-Spalten
+// gesucht – egal ob Kostenträger, Kasse o.ä. Klein-/Großschreibung egal.
+// Mehrere Begriffe möglich: ['amanse','beispiel2']
+const EXCLUDE_TERMS = ['amanse'];
 
 // ── Persistenter Speicher (localStorage) ───────────────────
 // Läuft als statische Seite auf GitHub Pages → localStorage verfügbar.
@@ -650,9 +694,16 @@ function parseData(rows, sheetName){
     
     const fr = r[COL.freq1];
     const freqNum = (typeof fr==='number') ? fr : (typeof fr==='string' ? parseFloat(fr) : null);
-    
+
+    // Ausschluss (Selbstabrechner): Begriff irgendwo in der Zeile?
+    let excluded = false;
+    if(EXCLUDE_TERMS.length){
+      const rowStr = r.join('\u0001').toLowerCase();
+      excluded = EXCLUDE_TERMS.some(t=>t && rowStr.includes(t));
+    }
+
     cells.push({
-      dateStr, therapist,
+      dateStr, therapist, excluded,
       start:startDate, end:endDate,
       belegt, belArt, azFlag, bezeichnung,
       termIdent: termIdent||null,
@@ -690,6 +741,7 @@ function parseData(rows, sheetName){
   const today = localDateStr(new Date());
   currentDate = DATA.dates.find(d=>d>=today) || DATA.dates[0];
   currentTherapist = 'all';
+  selectedTherapists = null;
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -794,32 +846,85 @@ function renderViewContent(){
   }
 }
 
+// ── Datums-Navigator: ein Tag, mit ‹ › durchklicken + Dropdown ──
 function renderDateTabs(){
-  let h='';
+  const idx = DATA.dates.indexOf(currentDate);
+  const dd = new Date(currentDate+'T00:00:00').toLocaleDateString('de-DE',{weekday:'long',day:'2-digit',month:'2-digit',year:'numeric'});
+  let opts='';
   DATA.dates.forEach(d=>{
-    const dd = new Date(d+'T00:00:00');
-    const label = dd.toLocaleDateString('de-DE',{weekday:'short',day:'2-digit',month:'2-digit'});
-    h += `<button class="tab${currentDate===d?' a':''}" onclick="setDate('${d}')">${label}</button>`;
+    const lb = new Date(d+'T00:00:00').toLocaleDateString('de-DE',{weekday:'short',day:'2-digit',month:'2-digit'});
+    opts += `<option value="${d}"${d===currentDate?' selected':''}>${lb}</option>`;
   });
+  const h = `<div class="datenav">
+    <button class="dn-btn" onclick="stepDate(-1)"${idx<=0?' disabled':''}>‹</button>
+    <div class="dn-center">
+      <div class="dn-lbl">${dd}</div>
+      <select class="dn-sel" onchange="setDate(this.value)">${opts}</select>
+    </div>
+    <button class="dn-btn" onclick="stepDate(1)"${idx>=DATA.dates.length-1?' disabled':''}>›</button>
+    <div class="dn-count">Tag ${idx+1} / ${DATA.dates.length}</div>
+  </div>`;
   document.getElementById('dateTabs').innerHTML = h;
 }
-
-function renderThTabs(){
-  let h = `<button class="tab${currentTherapist==='all'?' a':''}" onclick="setTherapist('all')">👥 Alle</button>`;
-  DATA.therapists.forEach(t=>{
-    h += `<button class="tab${currentTherapist===t?' a':''}" onclick="setTherapist('${t.replace(/'/g,"\\'")}')">${t}</button>`;
-  });
-  document.getElementById('thTabs').innerHTML = h;
+function stepDate(delta){
+  const i = DATA.dates.indexOf(currentDate);
+  const ni = Math.min(DATA.dates.length-1, Math.max(0, i+delta));
+  setDate(DATA.dates[ni]);
 }
 
-function setDate(d){currentDate=d;renderDateTabs();if(currentView==='luecken')renderLuecken();else renderRezepte();}
-function setTherapist(t){currentTherapist=t;renderThTabs();if(currentView==='luecken')renderLuecken();else renderRezepte();}
+// ── Therapeuten-Mehrfachauswahl (Dropdown mit Checkboxen) ──
+function thLabel(){
+  if(selectedTherapists===null) return 'Alle Therapeuten';
+  if(selectedTherapists.size===0) return 'Keine ausgewählt';
+  if(selectedTherapists.size===1) return [...selectedTherapists][0];
+  return selectedTherapists.size+' ausgewählt';
+}
+function isThSelected(name){ return selectedTherapists===null || selectedTherapists.has(name); }
+function renderThTabs(){
+  let opts='';
+  DATA.therapists.forEach(t=>{
+    const esc = t.replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+    opts += `<label class="th-opt"><input type="checkbox" class="th-cb"${isThSelected(t)?' checked':''} onchange="toggleTh('${esc}',this.checked)"> ${t}</label>`;
+  });
+  const h = `<div class="th-dd">
+    <button class="th-dd-btn" onclick="toggleThMenu(event)">👥 <span id="thLbl">${thLabel()}</span> <span class="th-caret">▾</span></button>
+    <div class="th-dd-menu" id="thMenu">
+      <label class="th-opt th-all"><input type="checkbox" id="thAllCb"${selectedTherapists===null?' checked':''} onchange="setThAll(this.checked)"> <b>Alle auswählen</b></label>
+      <div class="th-opt-list">${opts}</div>
+    </div>
+  </div>`;
+  document.getElementById('thTabs').innerHTML = h;
+}
+function toggleThMenu(e){ if(e) e.stopPropagation(); const m=document.getElementById('thMenu'); if(m) m.classList.toggle('open'); }
+function syncThUI(){
+  const lbl=document.getElementById('thLbl'); if(lbl) lbl.textContent=thLabel();
+  const allcb=document.getElementById('thAllCb'); if(allcb) allcb.checked=(selectedTherapists===null);
+}
+function setThAll(on){
+  selectedTherapists = on ? null : new Set();
+  document.querySelectorAll('#thMenu .th-cb').forEach(cb=>{ cb.checked=on; });
+  syncThUI(); rerenderFiltered();
+}
+function toggleTh(name,on){
+  if(selectedTherapists===null) selectedTherapists = new Set(DATA.therapists);
+  if(on) selectedTherapists.add(name); else selectedTherapists.delete(name);
+  if(selectedTherapists.size===DATA.therapists.length) selectedTherapists=null;
+  syncThUI(); rerenderFiltered();
+}
+
+function setDate(d){ currentDate=d; renderDateTabs(); rerenderFiltered(); }
+function rerenderFiltered(){ if(currentView==='luecken')renderLuecken(); else if(currentView==='rezepte')renderRezepte(); }
 
 function getDayCells(){
   let cells = DATA.cells.filter(c=>c.dateStr===currentDate);
-  if(currentTherapist!=='all') cells = cells.filter(c=>c.therapist===currentTherapist);
+  if(selectedTherapists!==null) cells = cells.filter(c=>selectedTherapists.has(c.therapist));
   return cells;
 }
+// Klick außerhalb schließt das Therapeuten-Dropdown
+document.addEventListener('click', function(ev){
+  const m=document.getElementById('thMenu'); const dd=document.querySelector('.th-dd');
+  if(m && m.classList.contains('open') && dd && !dd.contains(ev.target)) m.classList.remove('open');
+});
 
 // ═══════════════════════════════════════════════════════════
 // VIEW: LÜCKEN
@@ -831,7 +936,7 @@ function renderLuecken(){
   const dd = new Date(currentDate+'T12:00:00').toLocaleDateString('de-DE',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
   
   let h = `<div class="summary">
-    <h2>${currentTherapist==='all'?'Alle Therapeuten':currentTherapist} · ${dd} · Nur Rezept-Patienten</h2>
+    <h2>${thLabel()} · ${dd} · Nur Rezept-Patienten</h2>
     <div class="sg">
       <div class="si"><div class="si-l">Echte Lücken</div><div class="si-v">${Math.round(analysis.totalGapMin)} min</div><div class="si-s">${Math.floor(analysis.totalGapMin/20)} Termine möglich</div></div>
       <div class="si"><div class="si-l">Rezept-Termine</div><div class="si-v">${analysis.terminCount}</div><div class="si-s">${analysis.patientCount} unique Patienten</div></div>
@@ -1481,10 +1586,12 @@ function renderOffene(){
   
   const today = new Date(); today.setHours(0,0,0,0);
   const rezMap = {};
-  
+  const excl = new Set();
+
   // Sammle alle Rezepte
   DATA.cells.forEach(c=>{
     if(!c.rezeptNr || c.belArt!=='R' || !c.patNach)return;
+    if(c.excluded){ excl.add(c.rezeptNr); return; }
     const k = c.rezeptNr;
     if(!rezMap[k]){
       rezMap[k] = {
@@ -1519,6 +1626,7 @@ function renderOffene(){
   });
   
   // Berechne erbrachte vs verordnete Behandlungen
+  excl.forEach(k=>{ delete rezMap[k]; });
   const rezepte = Object.values(rezMap).map(r=>{
     r.erbracht = r.belegteTermine.size;
     r.hasFuture = r.zukunftTermine.size > 0;
@@ -1853,8 +1961,10 @@ function analyzeDayForControlling(cells){
 function collectRezepte(){
   const today = new Date(); today.setHours(0,0,0,0);
   const rezMap = {};
+  const excl = new Set();
   DATA.cells.forEach(c=>{
     if(!c.rezeptNr || c.belArt!=='R' || !c.patNach)return;
+    if(c.excluded){ excl.add(c.rezeptNr); return; }
     const k = c.rezeptNr;
     if(!rezMap[k]){
       rezMap[k] = {
@@ -1879,6 +1989,7 @@ function collectRezepte(){
       if(!rezMap[k].nextTerminDate || c.start<rezMap[k].nextTerminDate) rezMap[k].nextTerminDate=c.start;
     }
   });
+  excl.forEach(k=>{ delete rezMap[k]; });
   const rezepte = Object.values(rezMap).map(r=>{
     r.erbracht = r.belegteTermine.size;
     r.hasFuture = r.zukunftTermine.size>0;
@@ -2038,6 +2149,13 @@ function renderFolgeVO(){
 function gotoOffene(f){ currentOffeneFilter=f; switchView('offene'); }
 function gotoFolgeVO(){ currentFvoFilter='offen'; switchView('folgevo'); }
 
+// ── Abhak-Status (localStorage) ──
+function taskDone(id){ return lsGet('cki_check_'+id, false); }
+function toggleTask(id){ lsSet('cki_check_'+id, !taskDone(id)); renderAufgaben(); }
+function hhmm(d){ return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0'); }
+function jsq(s){ return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'"); }
+function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
 function computeActionItems(){
   const rez = collectRezepte();
   // Fertig, aber nicht abgerechnet (Nicht-Blanko)
@@ -2045,104 +2163,94 @@ function computeActionItems(){
   // Angefangen, kein Folgetermin geplant
   const typB = rez.filter(r=>!r.istAbgerechnet && r.echteMenge>0 && r.erbracht>0 && r.erbracht<r.echteMenge && !r.hasFuture);
   // Folge-VO-Kandidaten (Serie faktisch fertig, keine neuere VO) – nur die offenen
-  const folgeVO = rez.filter(r=>r.echteMenge>0 && r.erbracht>0 && !r.hasFuture && !r.hasFolgeVO && (r.erbracht>=r.echteMenge || r.rest<=1));
-  const folgeVOoffen = folgeVO.filter(r=>getDoingStatus(r.rezeptNr)==='offen');
-  // Offenes Behandlungspotenzial
-  const aktiv = rez.filter(r=>!r.istAbgerechnet && r.echteMenge>0 && r.rest>0);
-  const aktivRest = aktiv.reduce((s,r)=>s+r.rest,0);
-  // Lücken am aktuell gewählten (nächsten) Tag
+  const folgeVO = rez.filter(r=>r.echteMenge>0 && r.erbracht>0 && !r.hasFuture && !r.hasFolgeVO && (r.erbracht>=r.echteMenge || r.rest<=1))
+                     .filter(r=>getDoingStatus(r.rezeptNr)==='offen');
+  // Lücken am aktuell gewählten Tag → einzelne Slots
   const dayCells = DATA.cells.filter(c=>c.dateStr===currentDate);
   const dayAnal = analyzeDay(dayCells);
-  let gapCount=0, gapMin=0;
-  dayAnal.therapists.forEach(t=>{ gapCount+=t.gaps.length; gapMin+=t.gapTotal; });
-  return {
-    typA:typA.length, typB:typB.length, folgeVO:folgeVOoffen.length,
-    aktivRest, aktivCount:aktiv.length,
-    gapCount, gapMin:Math.round(gapMin), gapSlots:Math.floor(gapMin/CONFIG.slotMin),
-    dayAnal
-  };
+  const gaps = [];
+  dayAnal.therapists.forEach(t=>{ (t.gaps||[]).forEach(g=>{ gaps.push({therapist:t.name, start:g.start, end:g.end, min:g.min}); }); });
+  gaps.sort((a,b)=> b.min-a.min);
+  return { typA, typB, folgeVO, gaps };
 }
 
 function renderAufgaben(){
   const a = computeActionItems();
   const dd = new Date(currentDate+'T12:00:00').toLocaleDateString('de-DE',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
-  const totalTasks = a.gapCount + a.typA + a.typB + a.folgeVO;
 
-  // ── Tagesziel (Auslastung des gewählten Tages) ──
-  const totalWz = a.dayAnal.therapists.reduce((s,t)=>s+t.wzMin,0);
-  const totalPat = a.dayAnal.therapists.reduce((s,t)=>s+t.patientMin,0);
-  const istAus = totalWz>0 ? Math.round(totalPat/totalWz*100) : 0;
-  const ziel = CONFIG.zielAuslastung;
-  const zielMin = totalWz*ziel/100;
-  const fehlMin = Math.max(0, zielMin-totalPat);
-  const fehlTermine = Math.ceil(fehlMin/CONFIG.slotMin);
-  const zielErreicht = istAus>=ziel;
-  const pctOfZiel = ziel>0 ? Math.min(100, Math.round(istAus/ziel*100)) : 0;
-  const zbColor = zielErreicht ? 'var(--teal)' : istAus>=ziel-10 ? 'var(--amber)' : 'var(--accent)';
+  // Kategorien → einzelne abhakbare Einträge
+  const sections = [
+    { ico:'⚡', color:'var(--accent)', ttl:'Lücken schließen', go:"switchView('luecken')",
+      items: a.gaps.map(g=>({
+        id:'gap|'+currentDate+'|'+g.therapist+'|'+hhmm(g.start),
+        main:esc(g.therapist)+' · '+hhmm(g.start)+'–'+hhmm(g.end),
+        sub:Math.round(g.min)+' min frei · Nachrücker anrufen' })) },
+    { ico:'💰', color:'var(--fire)', ttl:'Rezepte abrechnen', go:"gotoOffene('abr')",
+      items: a.typA.map(r=>({
+        id:'abr|'+r.rezeptNr,
+        main:esc(r.name),
+        sub:`${r.erbracht}/${r.echteMenge} erbracht${r.heilmittel?' · '+esc(r.heilmittel):''}${r.tageSeitLetzterTermin!=null?' · seit '+r.tageSeitLetzterTermin+' Tagen':''}` })) },
+    { ico:'📞', color:'var(--primary)', ttl:'Folgetermin vereinbaren', go:"gotoOffene('ohne')",
+      items: a.typB.map(r=>({
+        id:'ft|'+r.rezeptNr,
+        main:esc(r.name),
+        sub:`${r.erbracht}/${r.echteMenge} · ${r.mobil?esc(r.mobil):'keine Nummer'}` })) },
+    { ico:'🔄', color:'var(--amber)', ttl:'Folge-VO anfordern', go:"gotoFolgeVO()",
+      items: a.folgeVO.map(r=>({
+        id:'fvo|'+r.rezeptNr,
+        main:esc(r.name),
+        sub:`Serie fertig · Arzt: ${r.arzt?esc(r.arzt):'?'}` })) }
+  ];
+
+  let total=0, done=0;
+  sections.forEach(s=>s.items.forEach(it=>{ total++; if(taskDone(it.id)) done++; }));
+  const pct = total>0 ? Math.round(done/total*100) : 100;
+  const allDone = total>0 && done===total;
+  const barColor = allDone ? 'var(--teal)' : 'var(--primary)';
 
   let h = `<div class="summary">
     <h2>📋 Aufgaben · ${dd}</h2>
     <div class="sg">
-      <div class="si"><div class="si-l">Offene To-Dos</div><div class="si-v">${totalTasks}</div><div class="si-s">gesamt zu erledigen</div></div>
-      <div class="si"><div class="si-l">Lücken heute</div><div class="si-v">${a.gapCount}</div><div class="si-s">${a.gapMin} min · ${a.gapSlots} Termine möglich</div></div>
-      <div class="si"><div class="si-l">💰 Zum Abrechnen</div><div class="si-v">${a.typA}</div><div class="si-s">Rezepte fertig</div></div>
-      <div class="si"><div class="si-l">📞 Nachfassen</div><div class="si-v">${a.typB+a.folgeVO}</div><div class="si-s">Termin/Folge-VO</div></div>
+      <div class="si"><div class="si-l">Offen</div><div class="si-v">${total-done}</div><div class="si-s">noch zu erledigen</div></div>
+      <div class="si"><div class="si-l">Erledigt</div><div class="si-v">${done}</div><div class="si-s">abgehakt</div></div>
+      <div class="si"><div class="si-l">⚡ Lücken heute</div><div class="si-v">${a.gaps.length}</div><div class="si-s">Nachrücker anrufen</div></div>
+      <div class="si"><div class="si-l">💰 Abrechnen</div><div class="si-v">${a.typA.length}</div><div class="si-s">Rezepte fertig</div></div>
     </div>
   </div>`;
 
-  // ── Tagesziel-Balken ──
+  // ── Fortschrittsbalken statt Auslastung ──
   h += `<div class="tz-wrap">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px">
-      <div style="font-family:Montserrat;font-weight:800;font-size:15px;color:var(--dark)">🎯 Tagesziel · ${ziel}% Auslastung</div>
-      <div style="font-family:Montserrat;font-weight:900;font-size:16px;color:${zbColor}">
-        ${zielErreicht ? '✅ Ziel erreicht!' : `noch ${fehlTermine} Termin${fehlTermine!==1?'e':''} (${Math.round(fehlMin)} min)`}
-      </div>
+      <div style="font-family:Montserrat;font-weight:800;font-size:15px;color:var(--dark)">✅ Tagesfortschritt</div>
+      <div style="font-family:Montserrat;font-weight:900;font-size:16px;color:${barColor}">${done} von ${total} erledigt</div>
     </div>
-    <div class="tz-bar"><div class="tz-fill" style="width:${Math.max(pctOfZiel,8)}%;background:${zbColor}">${istAus}%</div></div>
-    <div style="font-size:11px;color:var(--muted);margin-top:8px">Ist ${istAus}% · Ziel ${ziel}% · ${Math.round(totalPat)} von ${Math.round(zielMin)} min Ziel-Patientenzeit (alle Therapeuten)</div>
+    <div class="tz-bar"><div class="tz-fill" style="width:${Math.max(pct,6)}%;background:${barColor}">${pct}%</div></div>
   </div>`;
 
-  // ── Action-Kacheln ──
-  h += `<div class="st">✅ Deine To-Dos<span class="sub">→ Klick öffnet den passenden Tab</span></div>`;
-  h += `<div class="aufg-grid">`;
-
-  const cards = [
-    { n:a.gapCount, ico:'⚡', color:'var(--accent)',
-      ttl:'Lücken schließen',
-      sub:a.gapCount ? `${a.gapMin} min frei am ${new Date(currentDate+'T12:00:00').toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit'})} · Nachrücker anrufen` : 'Keine offenen Lücken 🎉',
-      go:"switchView('luecken')" },
-    { n:a.typA, ico:'💰', color:'var(--fire)',
-      ttl:'Rezepte abrechnen',
-      sub:a.typA ? 'Komplett behandelt, aber ohne Quittung/Rechnung → einreichen' : 'Alles abgerechnet 🎉',
-      go:"gotoOffene('abr')" },
-    { n:a.typB, ico:'📞', color:'var(--primary)',
-      ttl:'Folgetermin vereinbaren',
-      sub:a.typB ? 'Behandlung läuft, kein nächster Termin → Patient anrufen' : 'Alle verplant 🎉',
-      go:"gotoOffene('ohne')" },
-    { n:a.folgeVO, ico:'🔄', color:'var(--amber)',
-      ttl:'Folge-VO anfordern',
-      sub:a.folgeVO ? 'Serie fertig, keine Anschluss-VO → beim Arzt anfordern' : 'Nichts offen 🎉',
-      go:"gotoFolgeVO()" },
-    { n:a.aktivRest, ico:'🎯', color:'var(--teal)',
-      ttl:'Behandlungs-Potenzial',
-      sub:a.aktivCount ? `${a.aktivRest} offene Behandlungen aus ${a.aktivCount} Rezepten planen` : 'Kein offenes Potenzial',
-      go:"switchView('potential')" }
-  ];
-  cards.forEach(c=>{
-    const done = c.n===0;
-    h += `<div class="aufg-card${done?' done':''}" style="border-left-color:${done?'var(--teal)':c.color}" onclick="${c.go}">
-      <div class="aufg-ico">${done?'✅':c.ico}</div>
-      <div class="aufg-num" style="color:${done?'var(--teal)':c.color}">${c.n}</div>
-      <div class="aufg-ttl">${c.ttl}</div>
-      <div class="aufg-sub">${c.sub}</div>
-      <div class="aufg-go">${done?'Erledigt':'Öffnen →'}</div>
-    </div>`;
-  });
-  h += `</div>`;
-
-  if(totalTasks===0){
-    h += `<div class="empty" style="background:var(--teal-bg);border:1px solid var(--teal);color:var(--teal)"><b>🎉 Alles erledigt!</b><br><span style="font-size:11px">Keine offenen Aufgaben – Lücken gefüllt, Rezepte verplant und abgerechnet.</span></div>`;
+  if(total===0){
+    h += `<div class="empty" style="background:var(--teal-bg);border:1px solid var(--teal);color:var(--teal)"><b>🎉 Alles erledigt!</b><br><span style="font-size:11px">Keine offenen Aufgaben für diesen Tag – Lücken gefüllt, Rezepte verplant und abgerechnet.</span></div>`;
+    document.getElementById('content').innerHTML = h;
+    return;
   }
+
+  // ── Abhakbare Listen pro Kategorie ──
+  sections.forEach(s=>{
+    if(!s.items.length) return;
+    const sDone = s.items.filter(it=>taskDone(it.id)).length;
+    h += `<div class="task-sec">
+      <div class="task-sec-head" style="border-left:4px solid ${s.color}">
+        <div class="task-sec-ttl">${s.ico} ${s.ttl} <span class="task-sec-cnt">${sDone}/${s.items.length}</span></div>
+        <button class="task-open" onclick="${s.go}">Tab öffnen →</button>
+      </div>`;
+    s.items.forEach(it=>{
+      const d = taskDone(it.id);
+      h += `<div class="task${d?' done':''}" onclick="toggleTask('${jsq(it.id)}')">
+        <div class="task-cb">${d?'✓':''}</div>
+        <div class="task-body"><div class="task-main">${it.main}</div><div class="task-sub">${it.sub}</div></div>
+      </div>`;
+    });
+    h += `</div>`;
+  });
 
   document.getElementById('content').innerHTML = h;
 }

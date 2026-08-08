@@ -143,6 +143,35 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--dark);min
 .search-wrap{margin-bottom:12px}
 .search-wrap input{width:100%;padding:10px 16px;border:1.5px solid var(--border);border-radius:100px;font-size:13px;font-family:Poppins;outline:none;background:var(--card);color:var(--dark);transition:border .2s}
 .search-wrap input:focus{border-color:var(--primary)}
+.dauer-toggle{display:inline-flex;align-items:center;gap:8px;margin-top:10px;padding:8px 14px;border-radius:100px;border:1.5px solid var(--border);background:var(--card);cursor:pointer;font-family:Montserrat;font-weight:700;font-size:12px;color:var(--muted);user-select:none;transition:all .18s}
+.dauer-toggle:hover{border-color:var(--primary)}
+.dauer-toggle.show{background:var(--primary-bg,#eef2ff);border-color:var(--primary);color:var(--primary)}
+.dauer-toggle .dt-ico{font-size:14px}
+.dauer-toggle .dt-cnt{background:var(--muted);color:#fff;border-radius:100px;padding:1px 9px;font-size:11px;font-weight:900}
+.dauer-toggle.show .dt-cnt{background:var(--primary)}
+.cat-chip{display:inline-block;color:#fff;border-radius:100px;padding:1px 8px;font-size:10px;font-weight:800;font-family:Montserrat;margin-right:3px;margin-bottom:2px}
+.lf-box{background:var(--card);border:1.5px dashed var(--border);border-radius:12px;padding:12px 14px;margin-bottom:14px}
+.focus-banner{background:linear-gradient(90deg,rgba(139,92,246,.12),rgba(139,92,246,.03));border:1px solid rgba(139,92,246,.35);border-radius:12px;padding:10px 14px;margin-bottom:12px;font-size:13.5px;line-height:1.5;color:var(--dark)}
+.focus-banner .fb-dauer{color:var(--muted);font-size:12.5px}
+/* Wochenreport-Tabelle */
+.wr-scroll{overflow-x:auto;margin-bottom:18px;border:1px solid var(--border);border-radius:14px;background:var(--card);box-shadow:var(--shadow)}
+.wr-tab{border-collapse:collapse;width:100%;font-size:12px}
+.wr-tab th,.wr-tab td{padding:8px 10px;text-align:center;white-space:nowrap;border-bottom:1px solid var(--border)}
+.wr-tab thead th{background:#fafbfc;font-family:'Montserrat',sans-serif;font-weight:800;font-size:11px;color:var(--muted);position:sticky;top:0}
+.wr-tab .wr-name{text-align:left;font-weight:700;color:var(--dark);position:sticky;left:0;background:var(--card);z-index:1}
+.wr-tab thead .wr-name{background:#fafbfc}
+.wr-cell.wr-empty{color:var(--muted)}
+/* 90-Tage Ampel */
+.fc-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:10px;margin-bottom:18px}
+.fc-card{background:var(--card);border:1px solid var(--border);border-top:4px solid var(--border);border-radius:12px;padding:12px;text-align:center;box-shadow:var(--shadow)}
+.fc-kw{font-family:'Montserrat',sans-serif;font-weight:800;font-size:12px;color:var(--dark)}
+.fc-amp{font-size:22px;line-height:1;margin:4px 0}
+.fc-rate{font-family:'Montserrat',sans-serif;font-weight:900;font-size:18px}
+.fc-det{font-size:10.5px;color:var(--muted);margin-top:2px}
+.lf-head{font-family:Montserrat;font-weight:800;font-size:12px;color:var(--dark);margin-bottom:8px}
+.lf-ta{width:100%;min-height:56px;border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-family:Poppins;font-size:12px;color:var(--dark);background:var(--bg,#fff);outline:none;resize:vertical;box-sizing:border-box}
+.lf-ta:focus{border-color:var(--primary)}
+.lf-hint{font-size:10px;color:var(--muted);margin-top:5px}
 
 /* Rezept-KPIs */
 .rkpis{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin-bottom:16px}
@@ -232,9 +261,37 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--dark);min
 .tz-wrap{background:var(--card);border-radius:16px;padding:18px 20px;border:1px solid var(--border);box-shadow:var(--shadow);margin-bottom:18px}
 .tz-bar{height:24px;background:var(--border);border-radius:100px;overflow:hidden}
 .tz-fill{height:24px;line-height:24px;text-align:right;padding-right:10px;color:#fff;font-family:'Montserrat',sans-serif;font-weight:800;font-size:12px;border-radius:100px;transition:width .4s}
+.tz-lead{font-size:13px;color:var(--muted);margin-top:6px;line-height:1.5}
+/* Blaue KPI-Kacheln */
+.tz-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin-bottom:16px}
+.tz-kpi{background:linear-gradient(150deg,var(--primary),var(--primary-hover));color:#fff;border-radius:16px;padding:16px 18px;box-shadow:var(--shadow);position:relative;overflow:hidden}
+.tz-kpi-ico{font-size:20px;line-height:1;margin-bottom:6px;opacity:.95}
+.tz-kpi-v{font-family:'Montserrat',sans-serif;font-size:34px;font-weight:900;line-height:1;letter-spacing:-.02em}
+.tz-kpi-l{font-family:'Montserrat',sans-serif;font-weight:800;font-size:13px;margin-top:4px}
+.tz-kpi-s{font-size:11px;opacity:.85;margin-top:2px;line-height:1.3}
+/* Zeitblöcke */
+.tz-blocks{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-bottom:18px}
+.tz-block{background:var(--card);border:1px solid var(--border);border-top:4px solid var(--primary);border-radius:14px;padding:14px 16px;box-shadow:var(--shadow)}
+.tz-block-total{border-top-color:var(--accent);cursor:pointer;transition:transform .15s}
+.tz-block-total:hover{transform:translateY(-2px)}
+.tz-block-head{font-family:'Montserrat',sans-serif;font-weight:800;font-size:13.5px;color:var(--dark);display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.tz-block-time{font-size:11px;color:var(--muted);font-weight:600}
+.tz-block-v{font-family:'Montserrat',sans-serif;font-size:28px;font-weight:900;color:var(--primary);line-height:1.1;margin-top:6px}
+.tz-block-total .tz-block-v{color:var(--accent)}
+.tz-block-u{font-size:12px;font-weight:600;color:var(--muted)}
+.tz-block-s{font-size:11px;color:var(--muted);margin-bottom:6px}
+.tz-slot{font-size:11.5px;color:var(--dark);padding:3px 0;border-top:1px dashed var(--border);display:flex;justify-content:space-between;gap:8px}
+.tz-slot-min{color:var(--accent);font-weight:700}
+.tz-more{color:var(--muted);font-style:italic}
+.tz-abschluss{background:linear-gradient(150deg,#1e293b,#0f172a);color:#e2e8f0;border-radius:16px;padding:16px 18px;margin-bottom:16px;box-shadow:var(--shadow)}
+.tz-ab-ttl{font-family:'Montserrat',sans-serif;font-weight:800;font-size:15px;margin-bottom:4px}
+.tz-ab-body{font-size:13px;line-height:1.5;opacity:.92}
 /* ── Aufgaben-Checkliste ── */
 .task-sec{background:var(--card);border:1px solid var(--border);border-radius:16px;box-shadow:var(--shadow);margin-bottom:14px;overflow:hidden}
-.task-sec-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 16px;background:#fafbfc;flex-wrap:wrap}
+.task-sec-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 16px;background:#fafbfc;flex-wrap:wrap;cursor:pointer;user-select:none;transition:background .12s}
+.task-sec-head:hover{background:#f1f4f8}
+.task-caret{display:inline-block;color:var(--muted);font-size:11px;transition:transform .18s;margin-right:2px}
+.task-sec-head.open .task-caret{transform:rotate(90deg)}
 .task-sec-ttl{font-family:'Montserrat',sans-serif;font-weight:800;font-size:14px;color:var(--dark);padding-left:8px}
 .task-sec-cnt{font-size:11px;font-weight:800;color:var(--muted);margin-left:6px}
 .task-open{border:1px solid var(--border);background:#fff;border-radius:100px;padding:5px 12px;font-family:'Montserrat',sans-serif;font-size:11px;font-weight:700;color:var(--primary);cursor:pointer;transition:all .15s}
@@ -364,6 +421,7 @@ let currentRezeptCat = 'nr';
 let currentNRFilter = 'all';
 let currentOffeneFilter = 'all';
 let currentFvoFilter = 'offen';
+let currentPotFilter = 'alle';
 
 // ── Konfiguration (anpassbar) ──────────────────────────────
 const CONFIG = {
@@ -393,11 +451,11 @@ function localDateStrG(d){
 }
 // Doing-Status je Rezept (Interims-Lösung bis THEORG-Zusatz-Export vorliegt)
 function getDoingStatus(rezeptNr){ return lsGet('cki_doing_'+rezeptNr, 'offen'); }
-function cycleDoingStatus(rezeptNr){
+function cycleDoingStatus(id){
   const order = ['offen','doing','erledigt'];
-  const cur = getDoingStatus(rezeptNr);
+  const cur = getDoingStatus(id);
   const next = order[(order.indexOf(cur)+1)%order.length];
-  lsSet('cki_doing_'+rezeptNr, next);
+  lsSet('cki_doing_'+id, next);
   if(currentView==='folgevo') renderFolgeVO();
 }
 
@@ -633,6 +691,10 @@ function parseTime(v){
 // ═══════════════════════════════════════════════════════════
 // PARSE EXCEL
 // ═══════════════════════════════════════════════════════════
+function patKeyFor(c){ return (c.patNach+'|'+c.patVor+'|'+(c.patGeb?c.patGeb.getTime():'')).toLowerCase(); }
+function isDauerPat(c){ return !!(DATA && DATA.dauerPats && DATA.dauerPats.has(c.patKey||patKeyFor(c))); }
+function isDauerPatKey(k){ return !!(DATA && DATA.dauerPats && DATA.dauerPats.has(k)); }
+
 function parseData(rows, sheetName){
   const headers = rows[0];
   const isV141 = sheetName==='141' || headers[0]==='SatztypFormat';
@@ -643,18 +705,22 @@ function parseData(rows, sheetName){
     bezeichnung:3, azFlag:4,
     datum:5, uhrzeit:6, dauer:7, belegt:8, belArt:9,
     ptKuerzel:15, ptLangtext:16, ptWahrgenommen:20,
-    terminIdent:32, maNach:35, maVor:36,
+    terminIdent:32, dtr:33, maNach:35, maVor:36,
     pNach:41, pVor:42, pGeb:43, pTel1:48, pTel2:49, pMobil:50, pMail:51,
+    artVerord:85, hausbesuch:86, indikation:90,
     rezNrKomplett:81, rezDatum:84, icd:92, diagnose:93, menge1:95, leistung1:96, freq1:97,
+    kasse:122, rezWert:131, zuzahlung:132,
     bearbStatus:131, quittungNr:135, rechnungNr:136, abrechnungsdatum:137,
     artzNach:161
   } : {
     bezeichnung:1, azFlag:2,
     datum:3, uhrzeit:4, dauer:5, belegt:6, belArt:7,
     ptKuerzel:11, ptLangtext:12, ptWahrgenommen:19,
-    terminIdent:20, maNach:23, maVor:24,
+    terminIdent:20, dtr:21, maNach:23, maVor:24,
     pNach:29, pVor:30, pGeb:31, pTel1:36, pTel2:37, pMobil:38, pMail:39,
+    artVerord:73, hausbesuch:74, indikation:78,
     rezNrKomplett:69, rezDatum:71, icd:79, diagnose:80, menge1:82, leistung1:83, freq1:84,
+    kasse:110, rezWert:119, zuzahlung:120,
     bearbStatus:118, quittungNr:122, rechnungNr:123, abrechnungsdatum:124,
     artzNach:145
   };
@@ -704,6 +770,7 @@ function parseData(rows, sheetName){
 
     cells.push({
       dateStr, therapist, excluded,
+      dauertermin: (r[COL.dtr]||'').toString().trim()==='J',
       start:startDate, end:endDate,
       belegt, belArt, azFlag, bezeichnung,
       termIdent: termIdent||null,
@@ -727,15 +794,26 @@ function parseData(rows, sheetName){
       quittungNr: r[COL.quittungNr]||'',
       rechnungNr: r[COL.rechnungNr]||'',
       abrechnungsdatum: r[COL.abrechnungsdatum] ? parseDate(r[COL.abrechnungsdatum]) : null,
-      arzt: r[COL.artzNach]||''
+      arzt: r[COL.artzNach]||'',
+      kasse: (r[COL.kasse]||'').toString().trim(),
+      hausbesuch: (r[COL.hausbesuch]||'').toString().trim()==='1',
+      indikation: (r[COL.indikation]||'').toString().trim(),
+      artVerord: (r[COL.artVerord]||'').toString().trim()
     });
   }
   
   // Datums nur wenn dort jemand wirklich arbeitet
   const dates = [...new Set(cells.filter(c=>c.azFlag).map(c=>c.dateStr))].sort();
   const therapists = [...new Set(cells.filter(c=>c.azFlag&&c.therapist).map(c=>c.therapist))].sort();
-  
-  DATA = {cells, dates, therapists};
+
+  // ── Maske D / Dauerplan auf PATIENTENEBENE ──
+  // Ein Patient "besitzt einen Dauerplan" (Maske D), sobald IRGENDEIN Termin
+  // das THEORG-Flag Dauerterminrezept=J trägt. Diese Info wird dashboardweit genutzt.
+  cells.forEach(c=>{ c.patKey = patKeyFor(c); });
+  const dauerPats = new Set();
+  cells.forEach(c=>{ if(c.dauertermin && c.patKey) dauerPats.add(c.patKey); });
+
+  DATA = {cells, dates, therapists, dauerPats};
   
   // Heute lokal (nicht UTC!)
   const today = localDateStr(new Date());
@@ -813,7 +891,7 @@ function checkNewGaps(){
 
 function renderMainTabs(){
   let h = '';
-  h += `<button class="m-tab${currentView==='aufgaben'?' a':''}" onclick="switchView('aufgaben')">📋 Aufgaben</button>`;
+  h += `<button class="m-tab${currentView==='aufgaben'?' a':''}" onclick="switchView('aufgaben')">🎯 Tagesziel</button>`;
   h += `<button class="m-tab${currentView==='luecken'?' a':''}" onclick="switchView('luecken')">⚡ Lücken</button>`;
   h += `<button class="m-tab${currentView==='rezepte'?' a':''}" onclick="switchView('rezepte')">💊 Rezepte</button>`;
   h += `<button class="m-tab${currentView==='offene'?' a':''}" onclick="switchView('offene')">💰 Offene Rezepte</button>`;
@@ -944,6 +1022,9 @@ function renderLuecken(){
       <div class="si"><div class="si-l">Therapeuten</div><div class="si-v">${analysis.therapists.length}</div><div class="si-s">${analysis.therapistsWithGaps} mit Lücken</div></div>
     </div>
   </div>`;
+
+  h += `<div class="focus-banner">🔁 <b>BVB gegen Dauerplan prüfen:</b> Patienten mit Maske D (Dauerplan) tauchen nicht mehr in den Nachrücker-/Potenzial-Listen auf – für sie ist der Folgetermin bereits fest gebucht. Für Lücken nur Patienten <i>ohne</i> Dauerplan anrufen.</div>`;
+  h += leitfadenBox('luecken','📞 Telefonleitfaden · Lücken / Nachrücker','Text folgt – z.B. Gesprächsleitfaden für Nachrücker-Anruf bei kurzfristiger Lücke …');
 
   if(analysis.totalGapMin>0){
     h += `<div class="st">⚡ Lücken<span class="sub">→ Klick für Nachrücker-Vorschläge</span></div>`;
@@ -1183,6 +1264,7 @@ function analyzeRezepteFull(cellsForDay, allCells){
     if(!rezeptMap[key]){
       rezeptMap[key] = {
         rezeptNr:c.rezeptNr,
+        patKey:c.patKey||patKeyFor(c),
         nach:c.patNach, vor:c.patVor, name:c.patVor+' '+c.patNach,
         geb:c.patGeb, mobil:c.patMobil, mail:c.patMail,
         icd:c.icd, diagnose:c.diagnose,
@@ -1205,7 +1287,10 @@ function analyzeRezepteFull(cellsForDay, allCells){
   // Score-Logik
   const cats = {bvb:[], blanko:[], blankopot:[], folge:[], freq:[], nr:[], all:[]};
   
+  let dauerAusgeblendet = 0;
   Object.values(rezeptMap).forEach(p=>{
+    // Maske D: Patienten mit Dauerplan aus der Planungs-Ansicht ausblenden
+    if(isDauerHidden() && isDauerPatKey(p.patKey||patKeyFor(p))){ dauerAusgeblendet++; return; }
     let isBVB = false, isBlanko = false, isFolge = false, isBlankoOffen = false;
     const reasons = [];
     const badges = [];
@@ -1311,6 +1396,7 @@ function analyzeRezepteFull(cellsForDay, allCells){
   });
   
   cats.nr.sort((a,b)=>b.score-a.score);
+  cats.dauerAusgeblendet = dauerAusgeblendet;
   return cats;
 }
 
@@ -1321,8 +1407,11 @@ function renderRezepte(){
   const cells = getDayCells();
   const r = analyzeRezepteFull(cells, DATA.cells);
   
-  let h = `<div class="search-wrap"><input type="text" id="rzSearch" placeholder="🔍 Patient suchen..." oninput="filterRezeptSearch()"></div>`;
-  
+  let h = `<div class="search-wrap"><input type="text" id="rzSearch" placeholder="🔍 Patient suchen..." oninput="filterRezeptSearch()">${dauerToggleHTML()}</div>`;
+
+  h += `<div class="focus-banner">💎 <b>Fokus: Blankoverordnungen vollständig zu Ende planen.</b> Aktive Blanko-VOs mit noch offenen Behandlungen (💎 Blanko-Pot.) sollten bis zum Ablauf komplett verplant werden.${r.dauerAusgeblendet?` <span class="fb-dauer">· ${r.dauerAusgeblendet} Dauerplan-Patient(en) ausgeblendet</span>`:''}</div>`;
+  h += leitfadenBox('rezepte','📞 Telefonleitfaden · Rezepte / Blanko','Text folgt – z.B. Gesprächsleitfaden für Folge-VO / Blanko-Umstellung beim Arzt …');
+
   h += '<div class="rkpis">';
   const kpis = [
     {k:'nr',l:'🔥 Nachrücker',v:r.nr.length,co:'var(--fire)',s:'einplanbar'},
@@ -1606,9 +1695,12 @@ function renderOffene(){
         belegteTermine: new Set(),
         zukunftTermine: new Set(),
         lastTerminDate: null,
-        nextTerminDate: null
+        nextTerminDate: null,
+        patKey: c.patKey||patKeyFor(c),
+        dauerJ:0, dauerN:0
       };
     }
+    if(c.dauertermin) rezMap[k].dauerJ++; else rezMap[k].dauerN++;
     // Wahrgenommener Termin
     if(c.termIdent && c.belegt){
       rezMap[k].belegteTermine.add(c.termIdent);
@@ -1627,10 +1719,11 @@ function renderOffene(){
   
   // Berechne erbrachte vs verordnete Behandlungen
   excl.forEach(k=>{ delete rezMap[k]; });
-  const rezepte = Object.values(rezMap).map(r=>{
+  let rezepte = Object.values(rezMap).map(r=>{
     r.erbracht = r.belegteTermine.size;
     r.hasFuture = r.zukunftTermine.size > 0;
-    
+    r.istDauer = isDauerPatKey(r.patKey);
+
     // Echte Menge bestimmen: bei Blanko ist Menge=1 oft Platzhalter
     const isBlanko = isBlankoHM(r.heilmittel);
     if(isBlanko){
@@ -1653,7 +1746,9 @@ function renderOffene(){
     }
     return r;
   });
-  
+  lastDauerCount = rezepte.filter(r=>r.istDauer).length;
+  if(isDauerHidden()) rezepte = rezepte.filter(r=>!r.istDauer);
+
   // KATEGORISIEREN: Karteileichen finden
   
   // TYP A: FERTIG aber nicht abgerechnet
@@ -1686,8 +1781,10 @@ function renderOffene(){
     </div>
   </div>`;
   
-  h += `<div class="search-wrap"><input type="text" id="ofSearch" placeholder="🔍 Patient suchen..." oninput="filterOffeneSearch()"></div>`;
-  
+  h += leitfadenBox('offene','📞 Telefonleitfaden · Offene Rezepte / Karteileichen','Text folgt – z.B. Gesprächsleitfaden für Rückholung abgesprungener Patienten / Abrechnungs-Nachfrage …');
+
+  h += `<div class="search-wrap"><input type="text" id="ofSearch" placeholder="🔍 Patient suchen..." oninput="filterOffeneSearch()">${dauerToggleHTML()}</div>`;
+
   h += `<div class="nr-filters" style="margin-bottom:14px">`;
   [
     {f:'all', l:'Alle', c:typA_nichtAbgerechnet.length+typB_ohneFolgetermin.length},
@@ -1817,6 +1914,49 @@ function renderRezeptRow(r, type){
 // ═══════════════════════════════════════════════════════════
 // VIEW: CONTROLLING
 // ═══════════════════════════════════════════════════════════
+// ── ISO-Kalenderwoche (KW) ──
+function isoWeek(d){
+  const t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  const day = t.getUTCDay() || 7;
+  t.setUTCDate(t.getUTCDate() + 4 - day);
+  const yearStart = new Date(Date.UTC(t.getUTCFullYear(),0,1));
+  const week = Math.ceil((((t - yearStart)/86400000) + 1)/7);
+  return { year: t.getUTCFullYear(), week };
+}
+function isoWeekKey(d){ const w=isoWeek(d); return w.year+'-KW'+String(w.week).padStart(2,'0'); }
+function isoWeekLabel(key){ return key.split('-')[1]; }
+const ABWESENHEIT = ['urlaub','fortbildung','krankheit','krank'];
+function isAbwesenheit(bez){ const b=(bez||'').toLowerCase(); return ABWESENHEIT.some(x=>b.includes(x)); }
+
+// Fahrtzeit-Minuten, Abwesenheits-Tage und Wochen-Statistik pro Therapeut
+function computeControllingStats(){
+  const fahrtByTh = {};            // therapist -> Minuten
+  const abwByTh = {};              // therapist -> Set(dateStr) mit Abwesenheit
+  const weekTh = {};               // weekKey -> { work:Set('th|date'), abw:Set('th|date') }
+  DATA.cells.forEach(c=>{
+    if(!c.therapist) return;
+    const wk = isoWeekKey(c.start);
+    if(!weekTh[wk]) weekTh[wk] = { work:new Set(), abw:new Set() };
+    const tdKey = c.therapist+'|'+c.dateStr;
+    if(c.belArt==='F' && c.belegt){
+      const min = Math.max(0,(c.end-c.start)/60000);
+      fahrtByTh[c.therapist] = (fahrtByTh[c.therapist]||0) + min;
+    }
+    if(isAbwesenheit(c.bezeichnung)){
+      (abwByTh[c.therapist] = abwByTh[c.therapist] || new Set()).add(c.dateStr);
+      weekTh[wk].abw.add(tdKey);
+    }
+    if(c.azFlag){ weekTh[wk].work.add(tdKey); }
+  });
+  // Abwesenheits-Tage die zugleich Arbeitstage sind, zählen als Arbeit (Teil-Abwesenheit ignorieren)
+  return { fahrtByTh, abwByTh, weekTh };
+}
+function ampelForRate(rate){
+  if(rate>=0.20) return {c:'#e11d48', l:'Rot', ico:'🔴'};
+  if(rate>=0.10) return {c:'#f59e0b', l:'Gelb', ico:'🟡'};
+  return {c:'#16a34a', l:'Grün', ico:'🟢'};
+}
+
 function renderControlling(){
   const byTh = {};
   DATA.cells.forEach(c=>{
@@ -1918,7 +2058,119 @@ function renderControlling(){
     });
     h += `</div>`;
   }
-  
+
+  // ═══ Fahrtzeiten & Abwesenheit (Section 8) ═══
+  const cs = computeControllingStats();
+  const fahrtRows = Object.entries(cs.fahrtByTh).map(([n,m])=>({name:n,min:Math.round(m)})).sort((a,b)=>b.min-a.min);
+  const fahrtTotal = fahrtRows.reduce((s,x)=>s+x.min,0);
+  const abwRows = Object.entries(cs.abwByTh).map(([n,set])=>({name:n,tage:set.size})).sort((a,b)=>b.tage-a.tage);
+  const abwTotal = abwRows.reduce((s,x)=>s+x.tage,0);
+  const von = DATA.dates[0] ? new Date(DATA.dates[0]+'T12:00:00').toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'numeric'}) : '–';
+
+  h += `<div class="st">🚗 Fahrtzeiten &amp; Abwesenheit <span class="sub">seit ${von}</span></div>`;
+  h += `<div class="sg" style="margin-bottom:14px">
+    <div class="si"><div class="si-l">🚗 Fahrtzeit gesamt</div><div class="si-v">${(fahrtTotal/60).toFixed(1)} h</div><div class="si-s">${fahrtTotal} min · alle MA</div></div>
+    <div class="si"><div class="si-l">🏖️ Abwesenheitstage</div><div class="si-v">${abwTotal}</div><div class="si-s">Urlaub/Fortbildung/Krank</div></div>
+    <div class="si"><div class="si-l">📄 Dokumentation</div><div class="si-v">–</div><div class="si-s">kein Datenfeld im Export</div></div>
+    <div class="si"><div class="si-l">👥 MA mit Fahrtzeit</div><div class="si-v">${fahrtRows.length}</div><div class="si-s">von ${thStats.length} aktiv</div></div>
+  </div>`;
+
+  if(fahrtRows.length){
+    const maxF = fahrtRows[0].min || 1;
+    h += `<div class="ausl-card" style="margin-bottom:16px"><h4>🚗 Fahrtzeit pro Mitarbeiter</h4>`;
+    fahrtRows.forEach(t=>{
+      const pct = Math.round(t.min/maxF*100);
+      h += `<div class="ausl-row"><div class="ausl-label">${esc(t.name)}</div>
+        <div class="ausl-bar"><div class="ausl-fill" style="width:${pct}%;background:var(--amber)">${(t.min/60).toFixed(1)}h</div></div>
+        <div class="ausl-val">${t.min} min</div></div>`;
+    });
+    h += `</div>`;
+  }
+
+  // ═══ Wochenreport pro Mitarbeiter (Section 8) ═══
+  const weekKeys = Object.keys(cs.weekTh).sort();
+  // Auslastung je Therapeut je KW
+  const thWeek = {}; // th -> week -> {pat,wz}
+  DATA.cells.forEach(c=>{
+    if(!c.therapist || !c.azFlag) return;
+    const wk = isoWeekKey(c.start);
+    (thWeek[c.therapist] = thWeek[c.therapist]||{});
+    (thWeek[c.therapist][wk] = thWeek[c.therapist][wk] || {times:new Set(), term:{}});
+  });
+  DATA.cells.forEach(c=>{
+    if(!c.therapist) return;
+    const wk = isoWeekKey(c.start);
+    const rec = thWeek[c.therapist] && thWeek[c.therapist][wk];
+    if(!rec) return;
+    if(c.azFlag) rec.times.add(c.start.getTime());
+    if(c.termIdent && c.belegt && c.belArt==='R'){
+      if(!rec.term[c.termIdent]) rec.term[c.termIdent] = [c.start, c.end];
+      else { if(c.start<rec.term[c.termIdent][0]) rec.term[c.termIdent][0]=c.start; if(c.end>rec.term[c.termIdent][1]) rec.term[c.termIdent][1]=c.end; }
+    }
+  });
+  const thNames = Object.keys(thWeek).sort();
+  if(weekKeys.length && thNames.length){
+    h += `<div class="st">📅 Wochenreport pro Mitarbeiter <span class="sub">Auslastung % je KW</span></div>`;
+    h += `<div class="wr-scroll"><table class="wr-tab"><thead><tr><th class="wr-name">Mitarbeiter</th>`;
+    weekKeys.forEach(wk=>{ h += `<th>${isoWeekLabel(wk)}</th>`; });
+    h += `</tr></thead><tbody>`;
+    thNames.forEach(n=>{
+      h += `<tr><td class="wr-name">${esc(n)}</td>`;
+      weekKeys.forEach(wk=>{
+        const rec = thWeek[n][wk];
+        if(!rec || rec.times.size===0){
+          // Abwesenheit?
+          const abw = cs.weekTh[wk] && [...cs.weekTh[wk].abw].some(k=>k.startsWith(n+'|'));
+          h += `<td class="wr-cell wr-empty">${abw?'🏖️':'–'}</td>`;
+        } else {
+          const wz = rec.times.size*10;
+          const patMin = mergeRanges(Object.values(rec.term)).reduce((s,r)=>s+(r[1]-r[0])/60000,0);
+          const aus = wz>0?Math.round(patMin/wz*100):0;
+          const col = aus>=90?'var(--teal)':aus>=80?'var(--amber)':'var(--accent)';
+          h += `<td class="wr-cell" style="color:${col};font-weight:800">${aus}%</td>`;
+        }
+      });
+      h += `</tr>`;
+    });
+    h += `</tbody></table></div>`;
+  }
+
+  // ═══ 90-Tage Verfügbarkeits-Ampel (Section 9) ═══
+  const heute = new Date(); heute.setHours(0,0,0,0);
+  const bis = new Date(heute.getTime()+90*86400000);
+  // KW-weise: geplante Arbeitstage vs. Abwesenheitstage in den nächsten 90 Tagen
+  const fcWeeks = {};
+  DATA.cells.forEach(c=>{
+    if(!c.therapist) return;
+    if(c.start < heute || c.start > bis) return;
+    const wk = isoWeekKey(c.start);
+    if(!fcWeeks[wk]) fcWeeks[wk] = { work:new Set(), abw:new Set() };
+    const tdKey = c.therapist+'|'+c.dateStr;
+    if(isAbwesenheit(c.bezeichnung)) fcWeeks[wk].abw.add(tdKey);
+    if(c.azFlag) fcWeeks[wk].work.add(tdKey);
+  });
+  const fcKeys = Object.keys(fcWeeks).sort();
+  h += `<div class="st">🚦 90-Tage Verfügbarkeit <span class="sub">Ampel: 🟢 &lt;10% · 🟡 ≥10% · 🔴 ≥20% Abwesenheit</span></div>`;
+  if(fcKeys.length){
+    h += `<div class="fc-grid">`;
+    fcKeys.forEach(wk=>{
+      const w = fcWeeks[wk];
+      const arbeit = w.work.size, abw = w.abw.size;
+      const total = arbeit + abw;
+      const rate = total>0 ? abw/total : 0;
+      const amp = ampelForRate(rate);
+      h += `<div class="fc-card" style="border-top-color:${amp.c}">
+        <div class="fc-kw">${isoWeekLabel(wk)}</div>
+        <div class="fc-amp">${amp.ico}</div>
+        <div class="fc-rate" style="color:${amp.c}">${Math.round(rate*100)}%</div>
+        <div class="fc-det">${abw} Abw. · ${arbeit} Arbeit</div>
+      </div>`;
+    });
+    h += `</div>`;
+  } else {
+    h += `<div class="empty">Keine geplanten Termine/Abwesenheiten in den nächsten 90 Tagen im Export gefunden. Sobald Urlaub &amp; Fortbildung im Voraus in THEORG eingetragen sind, erscheinen sie hier KW-weise mit Ampel.</div>`;
+  }
+
   document.getElementById('content').innerHTML = h;
 }
 
@@ -1958,6 +2210,19 @@ function analyzeDayForControlling(cells){
 // ═══════════════════════════════════════════════════════════
 // REZEPT-SAMMLUNG (geteilt: Potential-Dauer + Folge-VO)
 // ═══════════════════════════════════════════════════════════
+// ── Dauerplan-Patienten (THEORG Spalte "Dauerterminrezept"=J) ──
+// Diese Termine laufen über den Dauerplan und verfälschen die Rezept-Auswertung.
+function isDauerHidden(){ return lsGet('cki_hideDauer', true); }
+function toggleHideDauer(){ lsSet('cki_hideDauer', !isDauerHidden()); renderViewContent(); }
+let lastDauerCount = 0;
+function dauerToggleHTML(){
+  const hidden = isDauerHidden();
+  return `<div class="dauer-toggle${hidden?'':' show'}" onclick="toggleHideDauer()" title="Dauerplan-Patienten (THEORG-Dauertermine) ${hidden?'werden ausgeblendet':'werden angezeigt'}">`
+    + `<span class="dt-ico">${hidden?'🙈':'👁️'}</span>`
+    + `<span class="dt-txt">${hidden?'Dauerpatienten ausgeblendet':'Dauerpatienten sichtbar'}</span>`
+    + `<span class="dt-cnt">${lastDauerCount}</span></div>`;
+}
+
 function collectRezepte(){
   const today = new Date(); today.setHours(0,0,0,0);
   const rezMap = {};
@@ -1977,9 +2242,11 @@ function collectRezepte(){
         rechnungNr:c.rechnungNr, abrechnungsdatum:c.abrechnungsdatum,
         patKey:(c.patNach+'|'+c.patVor+'|'+(c.patGeb?c.patGeb.getTime():'')).toLowerCase(),
         belegteTermine:new Set(), zukunftTermine:new Set(),
-        lastTerminDate:null, nextTerminDate:null
+        lastTerminDate:null, nextTerminDate:null,
+        dauerJ:0, dauerN:0
       };
     }
+    if(c.dauertermin) rezMap[k].dauerJ++; else rezMap[k].dauerN++;
     if(c.termIdent && c.belegt){
       rezMap[k].belegteTermine.add(c.termIdent);
       if(!rezMap[k].lastTerminDate || c.start>rezMap[k].lastTerminDate) rezMap[k].lastTerminDate=c.start;
@@ -1993,6 +2260,7 @@ function collectRezepte(){
   const rezepte = Object.values(rezMap).map(r=>{
     r.erbracht = r.belegteTermine.size;
     r.hasFuture = r.zukunftTermine.size>0;
+    r.istDauer = isDauerPatKey(r.patKey);
     const isBlanko = isBlankoHM(r.heilmittel);
     r.istBlanko = isBlanko;
     r.echteMenge = isBlanko ? getBlankoMax(r.icd) : (r.menge||0);
@@ -2009,65 +2277,153 @@ function collectRezepte(){
     r.hasFolgeVO = (byPat[r.patKey]||[]).some(o=>
       o!==r && o.rezDatum && r.rezDatum && o.rezDatum>r.rezDatum);
   });
-  return rezepte;
+  lastDauerCount = rezepte.filter(r=>r.istDauer).length;
+  return isDauerHidden() ? rezepte.filter(r=>!r.istDauer) : rezepte;
+}
+
+// ═══════════════════════════════════════════════════════════
+// PATIENTEN-AGGREGATION (Potenzial-Dauer & Folge-VO Quartalslogik)
+// ═══════════════════════════════════════════════════════════
+function collectPatienten(){
+  const map = {};
+  DATA.cells.forEach(c=>{
+    if(!c.patNach || c.excluded) return;
+    const k = c.patKey || patKeyFor(c);
+    let p = map[k];
+    if(!p){
+      p = map[k] = {
+        patKey:k, name:(c.patVor+' '+c.patNach).trim(),
+        geb:c.patGeb, mobil:'', mail:'', kasse:'',
+        heilmittel:new Set(), icds:new Set(), hausbesuch:false,
+        rezepte:{}, istDauer:isDauerPatKey(k), therapist:c.therapist||''
+      };
+    }
+    if(!p.mobil && c.patMobil) p.mobil=c.patMobil;
+    if(!p.mail && c.patMail) p.mail=c.patMail;
+    if(!p.kasse && c.kasse) p.kasse=c.kasse;
+    if(c.heilmittel) p.heilmittel.add(c.heilmittel);
+    if(c.icd) p.icds.add(c.icd);
+    if(c.hausbesuch) p.hausbesuch=true;
+    if(c.rezeptNr && c.belArt==='R'){
+      let rz = p.rezepte[c.rezeptNr];
+      if(!rz){ rz = p.rezepte[c.rezeptNr] = { rezeptNr:c.rezeptNr, rezDatum:c.rezDatum, heilmittel:c.heilmittel, icd:c.icd }; }
+      if(!rz.rezDatum && c.rezDatum) rz.rezDatum = c.rezDatum;
+    }
+  });
+  return Object.values(map);
+}
+
+// Welche Dauer-geeigneten Behandlungsarten / Diagnosen hat der Patient?
+// Grundlage: LHB (Langfr. Versorgungsbedarf) / BVB / Blanko / Privat / MLD45 / MLD60 / KG ZNS / Hausbesuch
+function patDauerKategorien(p){
+  const cats = new Set();
+  const hm = [...p.heilmittel];
+  const kasse = (p.kasse||'').toLowerCase();
+  if(kasse.includes('privat') || kasse.includes('beihilfe')) cats.add('Privat');
+  if(p.hausbesuch || hm.some(x=>String(x).trim().toUpperCase()==='HB')) cats.add('Hausbesuch');
+  if(hm.some(x=>/MLD\s*-?\s*60/i.test(x))) cats.add('MLD 60');
+  if(hm.some(x=>/MLD\s*-?\s*45/i.test(x))) cats.add('MLD 45');
+  if(hm.some(x=>/KG\s*ZNS/i.test(x))) cats.add('KG ZNS');
+  if(hm.some(x=>isBlankoHM(x))) cats.add('Blanko');
+  [...p.icds].forEach(icd=>{
+    const b = findBVB(icd);
+    if(b) cats.add(b.t==='LVB' ? 'LHB' : 'BVB');
+    if(findBVBAge70(icd, p.geb)) cats.add('BVB');
+  });
+  return [...cats];
+}
+
+// Quartals-Helfer (fortlaufende Quartalsnummer, für Folge-VO-Logik)
+function quarterOrdinal(d){ return d.getFullYear()*4 + Math.floor(d.getMonth()/3); }
+function quarterLabel(ord){ const y=Math.floor(ord/4); const q=(ord%4)+1; return 'Q'+q+' '+y; }
+
+// ── Telefonleitfaden (Platzhalter, lokal speicherbar) ──
+function leitfadenGet(key){ return lsGet('cki_leitfaden_'+key, ''); }
+function leitfadenSave(key, el){ lsSet('cki_leitfaden_'+key, el.value); }
+function leitfadenBox(key, titel, platzhalter){
+  const val = leitfadenGet(key);
+  return `<div class="lf-box">
+    <div class="lf-head">💬 Telefonleitfaden – ${titel}</div>
+    <textarea class="lf-ta" placeholder="${platzhalter}" oninput="leitfadenSave('${key}',this)">${esc(val)}</textarea>
+    <div class="lf-hint">Platzhalter · Text wird lokal im Browser gespeichert. Endgültige Formulierung folgt später.</div>
+  </div>`;
 }
 
 // ═══════════════════════════════════════════════════════════
 // VIEW: POTENTIAL-DAUER
 // ═══════════════════════════════════════════════════════════
+function setPotFilter(f){ currentPotFilter=f; renderPotential(); }
 function renderPotential(){
-  const today = new Date(); today.setHours(0,0,0,0);
-  // Aktive Rezepte mit Rest-Potenzial (noch nicht fertig, nicht abgerechnet)
-  const aktiv = collectRezepte().filter(r=>!r.istAbgerechnet && r.echteMenge>0 && r.rest>0);
-  aktiv.forEach(r=>{
-    r.restDauerWochen = (r.freq && r.freq>0) ? Math.ceil(r.rest/r.freq) : null;
-    r.endeDatum = r.restDauerWochen!=null ? new Date(today.getTime()+r.restDauerWochen*7*86400000) : null;
-    r.potMin = r.rest*CONFIG.slotMin;
+  // Patienten mit Dauer-geeigneter Behandlungsart/Diagnose, die NOCH KEINE Maske D haben.
+  // Logik: geeignete Behandlungsart + noch keine D-Maske = Potenzial Dauer.
+  const kandidaten = [];
+  collectPatienten().forEach(p=>{
+    if(p.istDauer) return;              // hat schon einen Dauerplan → kein Potenzial mehr
+    const cats = patDauerKategorien(p);
+    if(!cats.length) return;
+    p.dauerCats = cats;
+    p.nRez = Object.keys(p.rezepte).length;
+    kandidaten.push(p);
   });
-  const totalRest = aktiv.reduce((s,r)=>s+r.rest,0);
-  const totalMin = aktiv.reduce((s,r)=>s+r.potMin,0);
-  const mitDauer = aktiv.filter(r=>r.restDauerWochen!=null);
-  const avgWochen = mitDauer.length ? Math.round(mitDauer.reduce((s,r)=>s+r.restDauerWochen,0)/mitDauer.length) : 0;
-  // Ohne Folgetermin zuerst (die drohen zu versanden), dann nach Rest absteigend
-  aktiv.sort((a,b)=> (a.hasFuture-b.hasFuture) || (b.rest-a.rest));
+  // Mehr Rezepte = etabliertere Behandlung = besserer Dauerplan-Kandidat
+  kandidaten.sort((a,b)=> b.nRez-a.nRez || a.name.localeCompare(b.name));
+
+  const catCount = {};
+  kandidaten.forEach(p=>p.dauerCats.forEach(c=>catCount[c]=(catCount[c]||0)+1));
+  const CATS = ['LHB','BVB','Blanko','Privat','MLD 45','MLD 60','KG ZNS','Hausbesuch'];
 
   let h = `<div class="summary">
-    <h2>🎯 Potential-Dauer · Offene Behandlungen &amp; Restlaufzeit</h2>
+    <h2>🎯 Potenzial Dauer · Kandidaten für einen Dauerplan</h2>
     <div class="sg">
-      <div class="si"><div class="si-l">Offene Behandlungen</div><div class="si-v">${totalRest}</div><div class="si-s">planbares Termin-Potenzial</div></div>
-      <div class="si"><div class="si-l">Therapeutenzeit</div><div class="si-v">${(totalMin/60).toFixed(1)} h</div><div class="si-s">${totalMin} min gesamt</div></div>
-      <div class="si"><div class="si-l">Aktive Rezepte</div><div class="si-v">${aktiv.length}</div><div class="si-s">mit Rest-Potenzial</div></div>
-      <div class="si"><div class="si-l">ø Restdauer</div><div class="si-v">${avgWochen} Wo</div><div class="si-s">bei verordneter Frequenz</div></div>
+      <div class="si"><div class="si-l">Kandidaten</div><div class="si-v">${kandidaten.length}</div><div class="si-s">geeignet, noch keine Maske D</div></div>
+      <div class="si"><div class="si-l">🧠 KG ZNS</div><div class="si-v">${catCount['KG ZNS']||0}</div><div class="si-s">neurolog. Dauerpotenzial</div></div>
+      <div class="si"><div class="si-l">💧 MLD 45/60</div><div class="si-v">${(catCount['MLD 45']||0)+(catCount['MLD 60']||0)}</div><div class="si-s">Lymphdrainage-Dauer</div></div>
+      <div class="si"><div class="si-l">📋 LHB/BVB</div><div class="si-v">${(catCount['LHB']||0)+(catCount['BVB']||0)}</div><div class="si-s">langfr. Versorgungsbedarf</div></div>
     </div>
   </div>`;
 
-  if(!aktiv.length){
-    h += `<div class="empty" style="background:var(--teal-bg);border:1px solid var(--teal);color:var(--teal)"><b>🎉 Kein offenes Potenzial</b><br><span style="font-size:11px">Alle laufenden Rezepte sind abgeschlossen oder verplant.</span></div>`;
+  h += `<div style="background:var(--primary-bg,#eef2ff);border:1px solid var(--primary);border-radius:12px;padding:12px 14px;margin-bottom:14px;font-size:11px;color:var(--dark)">
+    <b style="color:var(--primary);font-family:Montserrat;font-weight:800">ℹ️ Logik:</b>
+    Angezeigt werden Patienten mit einer für einen Dauerplan geeigneten Behandlungsart oder Diagnose (LHB, BVB, Blanko, Privat, MLD 45/60, KG ZNS, Hausbesuch), die <b>noch keine Maske D</b> besitzen. Sobald ein Patient die Maske D erhält, verschwindet er automatisch aus dieser Liste.</div>`;
+
+  h += leitfadenBox('potential', 'Dauerplan anbieten', 'z.B.: „Frau/Herr … , da Sie regelmäßig zu uns kommen, können wir einen Dauerplan einrichten – dann sind Ihre Termine langfristig gesichert …"');
+
+  h += `<div class="search-wrap"><input type="text" id="potSearch" placeholder="🔍 Patient suchen..." oninput="filterPotSearch()"></div>`;
+
+  h += `<div class="nr-filters" style="margin-bottom:14px">`;
+  h += `<button class="nr-filter${currentPotFilter==='alle'?' a':''}" onclick="setPotFilter('alle')">Alle (${kandidaten.length})</button>`;
+  CATS.forEach(c=>{ if(catCount[c]) h += `<button class="nr-filter${currentPotFilter===c?' a':''}" onclick="setPotFilter('${c}')">${c} (${catCount[c]})</button>`; });
+  h += `</div>`;
+
+  const gefiltert = currentPotFilter==='alle' ? kandidaten : kandidaten.filter(p=>p.dauerCats.includes(currentPotFilter));
+  if(!gefiltert.length){
+    h += `<div class="empty" style="background:var(--teal-bg);border:1px solid var(--teal);color:var(--teal)"><b>🎉 Kein Dauerpotenzial in dieser Kategorie</b></div>`;
     document.getElementById('content').innerHTML = h; return;
   }
 
-  h += `<div class="st">📋 Rezepte nach Rest-Potenzial<span class="sub">→ ohne Folgetermin zuerst</span></div>`;
-  h += `<div class="ausl-card" style="padding:8px">`;
-  aktiv.forEach(r=>{
-    const age = r.geb ? Math.floor((Date.now()-new Date(r.geb).getTime())/(365.25*86400000)) : null;
-    const pct = r.echteMenge ? Math.round(r.erbracht/r.echteMenge*100) : 0;
-    const dauerStr = r.restDauerWochen!=null
-      ? `${r.restDauerWochen} Wo${r.endeDatum?' · vsl. bis '+r.endeDatum.toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'2-digit'}):''}`
-      : 'Frequenz unbekannt';
-    const warn = !r.hasFuture;
-    const tel = r.mobil ? `<a class="pr-tel" href="tel:${r.mobil.replace(/[^+\d]/g,'')}">📞 ${r.mobil}</a>` : '';
-    h += `<div class="ac" style="border-left-color:${warn?'var(--accent)':'var(--primary)'};cursor:default">
-      <span style="font-size:16px">${warn?'⚠️':'🎯'}</span>
+  const catColor = {'LHB':'var(--primary)','BVB':'var(--primary)','KG ZNS':'var(--accent)','MLD 45':'var(--teal)','MLD 60':'var(--teal)','Blanko':'var(--amber)','Privat':'var(--fire)','Hausbesuch':'var(--muted)'};
+  h += `<div class="ausl-card" style="padding:8px" id="potList">`;
+  gefiltert.forEach(p=>{
+    const age = p.geb ? Math.floor((Date.now()-new Date(p.geb).getTime())/(365.25*86400000)) : null;
+    const tel = p.mobil ? `<a class="pr-tel" href="tel:${p.mobil.replace(/[^+\d]/g,'')}">📞 ${p.mobil}</a>` : '';
+    const chips = p.dauerCats.map(c=>`<span class="cat-chip" style="background:${catColor[c]||'var(--muted)'}">${c}</span>`).join('');
+    h += `<div class="ac" style="border-left-color:var(--primary);cursor:default" data-name="${esc(p.name).toLowerCase()}">
+      <span style="font-size:16px">🎯</span>
       <div class="ac-b">
-        <div class="ac-t">${r.name}${age?' · '+age+'J':''} <span style="font-weight:600;color:var(--muted)">— ${r.heilmittel||'?'}${r.istBlanko?' (Blanko)':''}</span></div>
-        <div class="ac-s">Rest <b>${r.rest}</b> von ${r.echteMenge} (${pct}% erbracht) · ⏱️ ${dauerStr}${warn?' · <b style="color:var(--accent)">kein Folgetermin!</b>':''}${r.icd?' · '+r.icd:''}</div>
+        <div class="ac-t">${esc(p.name)}${age?' · '+age+'J':''}</div>
+        <div class="ac-s">${chips} · ${p.nRez} Rezept${p.nRez!==1?'e':''}${p.kasse?' · '+esc(p.kasse):''}</div>
       </div>
-      <span class="ac-p" style="background:${warn?'var(--accent-bg)':'var(--primary-bg)'};color:${warn?'var(--accent)':'var(--primary)'}">${r.rest}×</span>
       ${tel}
     </div>`;
   });
   h += `</div>`;
   document.getElementById('content').innerHTML = h;
+}
+function filterPotSearch(){
+  const q = (document.getElementById('potSearch').value||'').toLowerCase();
+  document.querySelectorAll('#potList .ac').forEach(el=>{
+    el.style.display = (el.getAttribute('data-name')||'').includes(q) ? '' : 'none';
+  });
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -2075,67 +2431,96 @@ function renderPotential(){
 // ═══════════════════════════════════════════════════════════
 function setFvoFilter(f){ currentFvoFilter=f; renderFolgeVO(); }
 function renderFolgeVO(){
-  // Kandidaten: Serie faktisch abgeschlossen (Rest<=1 oder erbracht>=Menge),
-  // KEIN zukünftiger Termin, KEINE neuere Folge-Verordnung vorhanden.
-  const kandidaten = collectRezepte().filter(r=>{
-    if(r.echteMenge<=0) return false;
-    if(r.erbracht===0) return false;
-    if(r.hasFuture) return false;
-    if(r.hasFolgeVO) return false;
-    return r.erbracht>=r.echteMenge || r.rest<=1;
-  }).sort((a,b)=>(b.tageSeitLetzterTermin||0)-(a.tageSeitLetzterTermin||0));
+  // Quartalslogik: Annahme max. 3 Rezepte pro Quartal. Für jeden Patienten (ohne Maske D)
+  // werden aktuelles + vorheriges Quartal betrachtet → wie viele der 3 möglichen Rezepte
+  // sind im aktuellen Quartal noch offen? Ziel: aktive Patientenbindung / Folge-VO ansprechen.
+  const today = new Date(); today.setHours(0,0,0,0);
+  const qNow = quarterOrdinal(today);
+  const qPrev = qNow-1;
+  const REZ_PRO_Q = 3;
 
-  // Doing-Status anreichern
-  kandidaten.forEach(r=> r.doing = getDoingStatus(r.rezeptNr));
-  const cntOffen = kandidaten.filter(r=>r.doing==='offen').length;
-  const cntDoing = kandidaten.filter(r=>r.doing==='doing').length;
-  const cntFertig = kandidaten.filter(r=>r.doing==='erledigt').length;
+  const kandidaten = [];
+  collectPatienten().forEach(p=>{
+    if(p.istDauer) return;                 // Dauerpatienten raus
+    const rez = Object.values(p.rezepte).filter(r=>r.rezDatum);
+    if(!rez.length) return;
+    let aktQ=0, vorQ=0, lastRez=null;
+    rez.forEach(r=>{
+      const q = quarterOrdinal(r.rezDatum);
+      if(q===qNow) aktQ++;
+      else if(q===qPrev) vorQ++;
+      if(!lastRez || r.rezDatum>lastRez) lastRez=r.rezDatum;
+    });
+    // nur relevante Patienten: hatten zuletzt Aktivität (akt. oder Vorquartal)
+    if(aktQ===0 && vorQ===0) return;
+    p.aktQ=aktQ; p.vorQ=vorQ;
+    p.offenFV = Math.max(0, REZ_PRO_Q - aktQ);
+    p.nRezGesamt = Object.keys(p.rezepte).length;
+    p.lastRez = lastRez;
+    p.doing = getDoingStatus(p.patKey);
+    kandidaten.push(p);
+  });
+  // Priorität: nur 1 Rezept gesamt zuerst (drohen zu versanden), dann offenes Budget, dann ältester
+  kandidaten.sort((a,b)=> (a.nRezGesamt-b.nRezGesamt) || (b.offenFV-a.offenFV) || (b.lastRez-a.lastRez));
+
+  const nurEins = kandidaten.filter(p=>p.nRezGesamt===1).length;
+  const offenBudget = kandidaten.reduce((s,p)=>s+p.offenFV,0);
+  const cntOffen = kandidaten.filter(p=>p.doing==='offen').length;
+  const cntDoing = kandidaten.filter(p=>p.doing==='doing').length;
+  const cntFertig = kandidaten.filter(p=>p.doing==='erledigt').length;
 
   let h = `<div class="summary">
-    <h2>🔄 Folge-VO nicht weitergeplant</h2>
+    <h2>🔄 Folge-VO · Patientenbindung nach Quartal</h2>
     <div class="sg">
-      <div class="si"><div class="si-l">Kandidaten gesamt</div><div class="si-v">${kandidaten.length}</div><div class="si-s">Serie fertig, keine Folge-VO</div></div>
-      <div class="si"><div class="si-l">🔴 Offen</div><div class="si-v">${cntOffen}</div><div class="si-s">noch nichts veranlasst</div></div>
-      <div class="si"><div class="si-l">🟡 In Arbeit</div><div class="si-v">${cntDoing}</div><div class="si-s">Doing-Status</div></div>
-      <div class="si"><div class="si-l">🟢 Erledigt</div><div class="si-v">${cntFertig}</div><div class="si-s">Folge-VO angestoßen</div></div>
+      <div class="si"><div class="si-l">Patienten</div><div class="si-v">${kandidaten.length}</div><div class="si-s">ohne Maske D, aktiv</div></div>
+      <div class="si"><div class="si-l">📇 Nur 1 Rezept</div><div class="si-v">${nurEins}</div><div class="si-s">aktiv binden!</div></div>
+      <div class="si"><div class="si-l">🎫 Offenes FV-Budget</div><div class="si-v">${offenBudget}</div><div class="si-s">mögl. Folge-VO (Q aktuell)</div></div>
+      <div class="si"><div class="si-l">🔴 Offen</div><div class="si-v">${cntOffen}</div><div class="si-s">noch nicht kontaktiert</div></div>
     </div>
   </div>`;
 
-  h += `<div style="background:var(--amber-bg);border:1px solid var(--amber);border-radius:12px;padding:12px 14px;margin-bottom:14px;font-size:11px;color:var(--dark)">
-    <b style="color:var(--amber);font-family:Montserrat;font-weight:800">ℹ️ Hinweis:</b>
-    Der Doing-Status wird aktuell lokal im Browser gespeichert (Klick auf den Status wechselt offen → in Arbeit → erledigt). Sobald der zusätzliche THEORG-Export vorliegt, kann der Status direkt aus THEORG übernommen werden.</div>`;
+  h += `<div style="background:var(--primary-bg,#eef2ff);border:1px solid var(--primary);border-radius:12px;padding:12px 14px;margin-bottom:14px;font-size:11px;color:var(--dark)">
+    <b style="color:var(--primary);font-family:Montserrat;font-weight:800">ℹ️ Quartalslogik:</b>
+    Annahme: bis zu <b>${REZ_PRO_Q} Rezepte pro Quartal</b>. „Offen" = ${REZ_PRO_Q} − Rezepte im aktuellen Quartal (${quarterLabel(qNow)}). Der Doing-Status wird lokal gespeichert (Klick wechselt 🔴→🟡→🟢).</div>`;
+
+  h += leitfadenBox('folgevo', 'Folgeverordnung ansprechen', 'z.B.: „… Ihr aktuelles Rezept ist bald aufgebraucht. Sollen wir schon einen Folgetermin einplanen? Bitte lassen Sie sich von Ihrem Arzt eine Folgeverordnung ausstellen …"');
 
   h += `<div class="nr-filters" style="margin-bottom:14px">`;
   [
     {f:'offen',l:'🔴 Offen',c:cntOffen},
     {f:'doing',l:'🟡 In Arbeit',c:cntDoing},
     {f:'erledigt',l:'🟢 Erledigt',c:cntFertig},
+    {f:'eins',l:'📇 Nur 1 Rezept',c:nurEins},
     {f:'alle',l:'Alle',c:kandidaten.length}
   ].forEach(x=>{
     h += `<button class="nr-filter${currentFvoFilter===x.f?' a':''}" onclick="setFvoFilter('${x.f}')">${x.l} (${x.c})</button>`;
   });
   h += `</div>`;
 
-  const gefiltert = currentFvoFilter==='alle' ? kandidaten : kandidaten.filter(r=>r.doing===currentFvoFilter);
+  let gefiltert = kandidaten;
+  if(currentFvoFilter==='eins') gefiltert = kandidaten.filter(p=>p.nRezGesamt===1);
+  else if(currentFvoFilter!=='alle') gefiltert = kandidaten.filter(p=>p.doing===currentFvoFilter);
   if(!gefiltert.length){
-    h += `<div class="empty">Keine Rezepte in dieser Kategorie 🎉</div>`;
+    h += `<div class="empty">Keine Patienten in dieser Kategorie 🎉</div>`;
     document.getElementById('content').innerHTML = h; return;
   }
 
   const statusMeta = {offen:{l:'🔴 Offen',c:'var(--accent)',bg:'var(--accent-bg)'}, doing:{l:'🟡 In Arbeit',c:'var(--amber)',bg:'var(--amber-bg)'}, erledigt:{l:'🟢 Erledigt',c:'var(--teal)',bg:'var(--teal-bg)'}};
   h += `<div class="ausl-card" style="padding:8px">`;
-  gefiltert.forEach(r=>{
-    const age = r.geb ? Math.floor((Date.now()-new Date(r.geb).getTime())/(365.25*86400000)) : null;
-    const sm = statusMeta[r.doing]||statusMeta.offen;
-    const tel = r.mobil ? `<a class="pr-tel" href="tel:${r.mobil.replace(/[^+\d]/g,'')}">📞 ${r.mobil}</a>` : '';
-    const letzter = r.lastTerminDate ? r.lastTerminDate.toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'2-digit'}) : '–';
-    h += `<div class="ac" style="cursor:default">
+  gefiltert.forEach(p=>{
+    const age = p.geb ? Math.floor((Date.now()-new Date(p.geb).getTime())/(365.25*86400000)) : null;
+    const sm = statusMeta[p.doing]||statusMeta.offen;
+    const tel = p.mobil ? `<a class="pr-tel" href="tel:${p.mobil.replace(/[^+\d]/g,'')}">📞 ${p.mobil}</a>` : '';
+    const letzter = p.lastRez ? p.lastRez.toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'2-digit'}) : '–';
+    const budgeBadge = p.offenFV>0 ? `<span class="ac-p" style="background:var(--primary-bg);color:var(--primary)">${p.offenFV} FV offen</span>` : '';
+    h += `<div class="ac" style="cursor:default;border-left-color:${p.nRezGesamt===1?'var(--accent)':'var(--primary)'}">
       <div class="ac-b">
-        <div class="ac-t">${r.name}${age?' · '+age+'J':''} <span style="font-weight:600;color:var(--muted)">— ${r.heilmittel||'?'}</span></div>
-        <div class="ac-s">${r.erbracht}/${r.echteMenge} erbracht · letzter Termin ${letzter} (vor ${r.tageSeitLetzterTermin||0}d)${r.icd?' · '+r.icd:''}${r.arzt?' · Arzt: '+r.arzt:''}</div>
+        <div class="ac-t">${esc(p.name)}${age?' · '+age+'J':''}${p.nRezGesamt===1?' <span class="cat-chip" style="background:var(--accent)">nur 1 Rezept</span>':''}</div>
+        <div class="ac-s">Vorquartal <b>${p.vorQ}</b> · aktuell <b>${p.aktQ}</b>/${REZ_PRO_Q} · offen <b>${p.offenFV}</b> · letztes Rezept ${letzter}</div>
       </div>
+      ${budgeBadge}
       ${tel}
-      <button class="pr-tel" style="background:${sm.bg};color:${sm.c};border:none;cursor:pointer" onclick="cycleDoingStatus('${String(r.rezeptNr).replace(/'/g,"\\'")}')">${sm.l} ⟳</button>
+      <button class="pr-tel" style="background:${sm.bg};color:${sm.c};border:none;cursor:pointer" onclick="cycleDoingStatus('${jsq(p.patKey)}','folgevo')">${sm.l} ⟳</button>
     </div>`;
   });
   h += `</div>`;
@@ -2152,6 +2537,9 @@ function gotoFolgeVO(){ currentFvoFilter='offen'; switchView('folgevo'); }
 // ── Abhak-Status (localStorage) ──
 function taskDone(id){ return lsGet('cki_check_'+id, false); }
 function toggleTask(id){ lsSet('cki_check_'+id, !taskDone(id)); renderAufgaben(); }
+// ── Kategorie auf-/zuklappen (Standard: zu) ──
+function secOpen(key){ return lsGet('cki_secopen_'+key, false); }
+function toggleSec(key){ lsSet('cki_secopen_'+key, !secOpen(key)); renderAufgaben(); }
 function hhmm(d){ return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0'); }
 function jsq(s){ return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'"); }
 function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
@@ -2174,28 +2562,64 @@ function computeActionItems(){
   return { typA, typB, folgeVO, gaps };
 }
 
+// Lücken eines beliebigen Tages (alle Therapeuten) als flache Liste
+function gapsForDate(dstr){
+  if(!dstr) return [];
+  const cells = DATA.cells.filter(c=>c.dateStr===dstr);
+  const anal = analyzeDay(cells);
+  const gaps = [];
+  anal.therapists.forEach(t=>{ (t.gaps||[]).forEach(g=>{ gaps.push({therapist:t.name, start:g.start, end:g.end, min:g.min}); }); });
+  gaps.sort((a,b)=> a.start-b.start || b.min-a.min);
+  return gaps;
+}
+// Drei Zeitblöcke des Tages
+const TZ_BLOCKS = [
+  {key:'vm', ico:'🌅', ttl:'Vormittag', von:'07:30', bis:'11:30', h0:7.5,  h1:11.5},
+  {key:'mi', ico:'☀️', ttl:'Mittag',    von:'11:30', bis:'16:30', h0:11.5, h1:16.5},
+  {key:'nm', ico:'🌆', ttl:'Nachmittag',von:'16:30', bis:'20:30', h0:16.5, h1:20.5}
+];
+function gapHourOf(g){ return g.start.getHours() + g.start.getMinutes()/60; }
+
 function renderAufgaben(){
   const a = computeActionItems();
   const dd = new Date(currentDate+'T12:00:00').toLocaleDateString('de-DE',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
 
+  // ── Lücken heute + morgen ──
+  const gapsHeute = a.gaps.slice().sort((x,y)=> x.start-y.start);
+  const idxD = DATA.dates.indexOf(currentDate);
+  const morgenStr = (idxD>=0 && idxD+1<DATA.dates.length) ? DATA.dates[idxD+1] : null;
+  const gapsMorgen = gapsForDate(morgenStr);
+  const morgenLabel = morgenStr ? new Date(morgenStr+'T12:00:00').toLocaleDateString('de-DE',{weekday:'short',day:'2-digit',month:'2-digit'}) : '–';
+
+  // ── Blaue KPI-Kacheln ──
+  const rez = collectRezepte(); // bereits Maske-D-gefiltert wenn ausgeblendet
+  const serieEndetBald = rez.filter(r=>!r.istAbgerechnet && r.echteMenge>0 && r.erbracht>0 && r.rest<=1);
+  const dauerCount = (DATA.dauerPats && DATA.dauerPats.size) || 0;
+  const kpis = [
+    {ico:'🔁', l:'Dauerpatienten', v:dauerCount, s:'mit Dauerplan (Maske D)'},
+    {ico:'⏳', l:'Serie endet bald', v:serieEndetBald.length, s:'letzter/vorletzter Termin'},
+    {ico:'⚡', l:'Lücken heute', v:gapsHeute.length, s:'Nachrücker anrufen'},
+    {ico:'📅', l:'Lücken morgen', v:gapsMorgen.length, s:morgenLabel}
+  ];
+
   // Kategorien → einzelne abhakbare Einträge
   const sections = [
-    { ico:'⚡', color:'var(--accent)', ttl:'Lücken schließen', go:"switchView('luecken')",
+    { key:'gap', ico:'⚡', color:'var(--accent)', ttl:'Lücken schließen', go:"switchView('luecken')",
       items: a.gaps.map(g=>({
         id:'gap|'+currentDate+'|'+g.therapist+'|'+hhmm(g.start),
         main:esc(g.therapist)+' · '+hhmm(g.start)+'–'+hhmm(g.end),
         sub:Math.round(g.min)+' min frei · Nachrücker anrufen' })) },
-    { ico:'💰', color:'var(--fire)', ttl:'Rezepte abrechnen', go:"gotoOffene('abr')",
+    { key:'abr', ico:'💰', color:'var(--fire)', ttl:'Rezepte abrechnen', go:"gotoOffene('abr')",
       items: a.typA.map(r=>({
         id:'abr|'+r.rezeptNr,
         main:esc(r.name),
         sub:`${r.erbracht}/${r.echteMenge} erbracht${r.heilmittel?' · '+esc(r.heilmittel):''}${r.tageSeitLetzterTermin!=null?' · seit '+r.tageSeitLetzterTermin+' Tagen':''}` })) },
-    { ico:'📞', color:'var(--primary)', ttl:'Folgetermin vereinbaren', go:"gotoOffene('ohne')",
+    { key:'ft', ico:'📞', color:'var(--primary)', ttl:'Folgetermin vereinbaren', go:"gotoOffene('ohne')",
       items: a.typB.map(r=>({
         id:'ft|'+r.rezeptNr,
         main:esc(r.name),
         sub:`${r.erbracht}/${r.echteMenge} · ${r.mobil?esc(r.mobil):'keine Nummer'}` })) },
-    { ico:'🔄', color:'var(--amber)', ttl:'Folge-VO anfordern', go:"gotoFolgeVO()",
+    { key:'fvo', ico:'🔄', color:'var(--amber)', ttl:'Folge-VO anfordern', go:"gotoFolgeVO()",
       items: a.folgeVO.map(r=>({
         id:'fvo|'+r.rezeptNr,
         main:esc(r.name),
@@ -2209,23 +2633,61 @@ function renderAufgaben(){
   const barColor = allDone ? 'var(--teal)' : 'var(--primary)';
 
   let h = `<div class="summary">
-    <h2>📋 Aufgaben · ${dd}</h2>
-    <div class="sg">
-      <div class="si"><div class="si-l">Offen</div><div class="si-v">${total-done}</div><div class="si-s">noch zu erledigen</div></div>
-      <div class="si"><div class="si-l">Erledigt</div><div class="si-v">${done}</div><div class="si-s">abgehakt</div></div>
-      <div class="si"><div class="si-l">⚡ Lücken heute</div><div class="si-v">${a.gaps.length}</div><div class="si-s">Nachrücker anrufen</div></div>
-      <div class="si"><div class="si-l">💰 Abrechnen</div><div class="si-v">${a.typA.length}</div><div class="si-s">Rezepte fertig</div></div>
-    </div>
+    <h2>🎯 Tagesziel · ${dd}</h2>
+    <div class="tz-lead">Was müssen wir heute tun? Alle offenen Aufgaben aus allen Tabs – zusammengefasst an einem Ort.</div>
   </div>`;
 
-  // ── Fortschrittsbalken statt Auslastung ──
+  // ── Blaue KPI-Kacheln ──
+  h += `<div class="tz-kpis">`;
+  kpis.forEach(k=>{
+    h += `<div class="tz-kpi"><div class="tz-kpi-ico">${k.ico}</div><div class="tz-kpi-v">${k.v}</div><div class="tz-kpi-l">${k.l}</div><div class="tz-kpi-s">${k.s}</div></div>`;
+  });
+  h += `</div>`;
+
+  // ── Tagesabschluss (nach 20:30) ──
+  const now = new Date();
+  const nachDienstschluss = (now.getHours()*60+now.getMinutes()) >= (20*60+30);
+  if(nachDienstschluss){
+    h += `<div class="tz-abschluss">
+      <div class="tz-ab-ttl">🌙 Tagesabschluss</div>
+      <div class="tz-ab-body">Heute <b>${done} von ${total}</b> Aufgaben erledigt${total-done>0?` · <b>${total-done}</b> offen für morgen`:` · <b>alles geschafft ✓</b>`}. Lücken morgen (${morgenLabel}): <b>${gapsMorgen.length}</b>.</div>
+    </div>`;
+  }
+
+  // ── Fortschrittsbalken (Tagesziel-Fortschritt) ──
   h += `<div class="tz-wrap">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px">
-      <div style="font-family:Montserrat;font-weight:800;font-size:15px;color:var(--dark)">✅ Tagesfortschritt</div>
+      <div style="font-family:Montserrat;font-weight:800;font-size:15px;color:var(--dark)">✅ Tagesziel-Fortschritt</div>
       <div style="font-family:Montserrat;font-weight:900;font-size:16px;color:${barColor}">${done} von ${total} erledigt</div>
     </div>
     <div class="tz-bar"><div class="tz-fill" style="width:${Math.max(pct,6)}%;background:${barColor}">${pct}%</div></div>
   </div>`;
+
+  // ── Drei Zeitblöcke + Gesamtansicht (Lücken heute) ──
+  h += `<div class="tz-blocks">`;
+  TZ_BLOCKS.forEach(b=>{
+    const bg = gapsHeute.filter(g=>{ const hr=gapHourOf(g); return hr>=b.h0 && hr<b.h1; });
+    const totMin = Math.round(bg.reduce((s,g)=>s+g.min,0));
+    h += `<div class="tz-block">
+      <div class="tz-block-head">${b.ico} ${b.ttl} <span class="tz-block-time">${b.von}–${b.bis}</span></div>
+      <div class="tz-block-v">${bg.length}<span class="tz-block-u"> Lücken</span></div>
+      <div class="tz-block-s">${totMin} min frei</div>`;
+    bg.slice(0,4).forEach(g=>{
+      h += `<div class="tz-slot">${esc(g.therapist)} · ${hhmm(g.start)}–${hhmm(g.end)} <span class="tz-slot-min">${Math.round(g.min)}′</span></div>`;
+    });
+    if(bg.length>4) h += `<div class="tz-slot tz-more">+${bg.length-4} weitere</div>`;
+    h += `</div>`;
+  });
+  // Gesamtansicht
+  const totAll = Math.round(gapsHeute.reduce((s,g)=>s+g.min,0));
+  h += `<div class="tz-block tz-block-total" onclick="switchView('luecken')">
+    <div class="tz-block-head">📊 Ganztags <span class="tz-block-time">Gesamt</span></div>
+    <div class="tz-block-v">${gapsHeute.length}<span class="tz-block-u"> Lücken</span></div>
+    <div class="tz-block-s">${totAll} min · alle öffnen →</div>
+  </div>`;
+  h += `</div>`;
+
+  h += `<div style="margin-bottom:14px">${dauerToggleHTML()}</div>`;
 
   if(total===0){
     h += `<div class="empty" style="background:var(--teal-bg);border:1px solid var(--teal);color:var(--teal)"><b>🎉 Alles erledigt!</b><br><span style="font-size:11px">Keine offenen Aufgaben für diesen Tag – Lücken gefüllt, Rezepte verplant und abgerechnet.</span></div>`;
@@ -2233,15 +2695,17 @@ function renderAufgaben(){
     return;
   }
 
-  // ── Abhakbare Listen pro Kategorie ──
+  // ── Einklappbare, abhakbare Listen pro Kategorie (Standard: zugeklappt) ──
   sections.forEach(s=>{
     if(!s.items.length) return;
     const sDone = s.items.filter(it=>taskDone(it.id)).length;
+    const open = secOpen(s.key);
     h += `<div class="task-sec">
-      <div class="task-sec-head" style="border-left:4px solid ${s.color}">
-        <div class="task-sec-ttl">${s.ico} ${s.ttl} <span class="task-sec-cnt">${sDone}/${s.items.length}</span></div>
-        <button class="task-open" onclick="${s.go}">Tab öffnen →</button>
-      </div>`;
+      <div class="task-sec-head${open?' open':''}" style="border-left:4px solid ${s.color}" onclick="toggleSec('${s.key}')">
+        <div class="task-sec-ttl"><span class="task-caret">▸</span> ${s.ico} ${s.ttl} <span class="task-sec-cnt">${sDone}/${s.items.length}</span></div>
+        <button class="task-open" onclick="event.stopPropagation();${s.go}">Tab öffnen →</button>
+      </div>
+      <div class="task-list"${open?'':' style="display:none"'}>`;
     s.items.forEach(it=>{
       const d = taskDone(it.id);
       h += `<div class="task${d?' done':''}" onclick="toggleTask('${jsq(it.id)}')">
@@ -2249,7 +2713,7 @@ function renderAufgaben(){
         <div class="task-body"><div class="task-main">${it.main}</div><div class="task-sub">${it.sub}</div></div>
       </div>`;
     });
-    h += `</div>`;
+    h += `</div></div>`;
   });
 
   document.getElementById('content').innerHTML = h;

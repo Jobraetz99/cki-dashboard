@@ -951,15 +951,17 @@ function switchView(v){
 }
 
 function renderViewContent(){
-  if(currentView==='luecken' || currentView==='rezepte'){
+  if(currentView==='luecken'){
+    // Lücken sind tages- & therapeutenbezogen → Navigator + Filter zeigen
     document.getElementById('dateTabsWrap').style.display='block';
     renderDateTabs();
     renderThTabs();
-    if(currentView==='luecken')renderLuecken();
-    else renderRezepte();
+    renderLuecken();
   } else {
+    // Rezepte = ganzer aktiver Bestand → kein Tages-/Therapeuten-Filter
     document.getElementById('dateTabsWrap').style.display='none';
     if(currentView==='aufgaben')renderAufgaben();
+    else if(currentView==='rezepte')renderRezepte();
     else if(currentView==='offene')renderOffene();
     else if(currentView==='potential')renderPotential();
     else if(currentView==='folgevo')renderFolgeVO();
@@ -1305,12 +1307,19 @@ function renderTherapistCard(t){
 // ═══════════════════════════════════════════════════════════
 // REZEPT ANALYSIS — pro Rezept, mit Fortschritt
 // ═══════════════════════════════════════════════════════════
-function analyzeRezepteFull(cellsForDay, allCells){
-  // Sammle alle Rezepte aus den Tages-Zellen
+function analyzeRezepteFull(cellsForDay, allCells, opts){
+  opts = opts || {};
+  const allActive = !!opts.allActive;   // true = ganzer aktiver Rezept-Bestand statt Tages-Ausschnitt
+  const ACTIVE_WINDOW = 28*86400000;    // "aktuell" = letzter Termin ≤ 4 Wochen vor Stichtag
+
+  // Im allActive-Modus die Rezepte aus dem GESAMTEN Bestand ziehen (nicht nur der Tag),
+  // sonst nur aus den Tages-Zellen (z.B. Nachrücker-Vorschlag für eine konkrete Lücke).
+  const seedCells = allActive ? allCells : cellsForDay;
   const rezeptMap = {};
-  cellsForDay.forEach(c=>{
+  seedCells.forEach(c=>{
     if(!c.patNach || !c.rezeptNr)return;
     if(c.belArt!=='R')return;
+    if(c.excluded)return;                          // Selbstabrechner raus
     if(isCheckerExcludedHM(c.heilmittel))return;   // Rehasport/Anamnese raus
     const key = c.rezeptNr;
     if(!rezeptMap[key]){
@@ -1324,26 +1333,40 @@ function analyzeRezepteFull(cellsForDay, allCells){
         rezDatum:c.rezDatum,
         termineHeute: new Set(),
         allTermine: new Set(),
-        weekTermine: new Set()
+        weekTermine: new Set(),
+        lastDate: null
       };
     }
     if(c.termIdent)rezeptMap[key].termineHeute.add(c.termIdent);
   });
 
-  // Woche des gewählten Tages (Mo–So) für den Taktungs-Abgleich
-  const ref = currentDate ? new Date(currentDate+'T12:00:00') : new Date();
+  // Referenz für Taktung + Aktualität. Im allActive-Modus = Stichtag (spätester Termin
+  // im Datensatz), damit "diese Woche" und "aktuell" auch bei etwas älterem Export passen.
+  let ref;
+  if(allActive){
+    let mx = opts.refDate || null;
+    if(!mx){ allCells.forEach(c=>{ if(c.start && (!mx || c.start>mx)) mx = c.start; }); }
+    ref = mx ? new Date(mx) : new Date();
+  } else {
+    ref = currentDate ? new Date(currentDate+'T12:00:00') : new Date();
+  }
+  const refT = ref.getTime();
   const dow = (ref.getDay()+6)%7;                       // 0 = Montag
   const weekStart = new Date(ref); weekStart.setDate(ref.getDate()-dow); weekStart.setHours(0,0,0,0);
   const weekStartT = weekStart.getTime();
   const weekEndT = weekStartT + 7*86400000;             // exklusiv (nächster Montag)
 
-  // Zähle ALLE Termine pro Rezept aus dem GESAMTEN Export + Termine dieser Woche
+  // Zähle ALLE Termine pro Rezept aus dem GESAMTEN Export + Termine dieser Woche + letztes Datum
   allCells.forEach(c=>{
     if(!c.rezeptNr || !rezeptMap[c.rezeptNr])return;
     if(c.belArt!=='R' || !c.belegt || !c.termIdent)return;
     const rm = rezeptMap[c.rezeptNr];
     rm.allTermine.add(c.termIdent);
-    if(c.start){ const t=c.start.getTime(); if(t>=weekStartT && t<weekEndT) rm.weekTermine.add(c.termIdent); }
+    if(c.start){
+      const t=c.start.getTime();
+      if(t>=weekStartT && t<weekEndT) rm.weekTermine.add(c.termIdent);
+      if(!rm.lastDate || c.start>rm.lastDate) rm.lastDate = c.start;
+    }
   });
   
   // Score-Logik
@@ -1365,7 +1388,16 @@ function analyzeRezepteFull(cellsForDay, allCells){
     p.erbracht = erbracht;
     p.total = total;
     p.rest = rest;
-    
+
+    // Aktiv-Filter (nur im allActive-Modus): läuft noch UND aktuell.
+    //   läuft noch = offene Behandlungen (rest>0) oder Blanko/BVB (Kapazität separat)
+    //   aktuell    = letzter Termin ≤ 4 Wochen vor Stichtag
+    if(allActive){
+      const openWork = rest>0 || isBlankoHM(p.heilmittel) || !!findBVB(p.icd);
+      const recent = p.lastDate && (refT - p.lastDate.getTime()) <= ACTIVE_WINDOW;
+      if(!openWork || !recent) return;   // fertig oder eingeschlafen → nicht anzeigen
+    }
+
     const bvb = findBVB(p.icd);
     if(bvb){
       isBVB = true;
@@ -1497,12 +1529,11 @@ function analyzeRezepteFull(cellsForDay, allCells){
 // VIEW: REZEPTE
 // ═══════════════════════════════════════════════════════════
 function renderRezepte(){
-  const cells = getDayCells();
-  const r = analyzeRezepteFull(cells, DATA.cells);
-  
+  const r = analyzeRezepteFull(null, DATA.cells, {allActive:true});
+
   let h = `<div class="search-wrap"><input type="text" id="rzSearch" placeholder="🔍 Patient suchen..." oninput="filterRezeptSearch()">${dauerToggleHTML()}</div>`;
 
-  h += `<div class="focus-banner">💎 <b>Fokus: Blankoverordnungen vollständig zu Ende planen.</b> Aktive Blanko-VOs mit noch offenen Behandlungen (💎 Blanko-Pot.) sollten bis zum Ablauf komplett verplant werden.${r.dauerAusgeblendet?` <span class="fb-dauer">· ${r.dauerAusgeblendet} Dauerplan-Patient(en) ausgeblendet</span>`:''}</div>`;
+  h += `<div class="focus-banner">💎 <b>Fokus: Alle aktiven Rezepte durchgehen</b> — kompletter Bestand mit offenen Behandlungen und letztem Termin in den letzten 4 Wochen (unabhängig von Tag & Therapeut).${r.dauerAusgeblendet?` <span class="fb-dauer">· ${r.dauerAusgeblendet} Dauerplan-Patient(en) ausgeblendet</span>`:''}</div>`;
   h += leitfadenBox('rezepte','📞 Telefonleitfaden · Rezepte / Blanko','Text folgt – z.B. Gesprächsleitfaden für Folge-VO / Blanko-Umstellung beim Arzt …');
 
   h += '<div class="rkpis">';
@@ -1550,9 +1581,8 @@ function setNRFilter(f){
 }
 
 function showRezeptDetail(k){
-  const cells = getDayCells();
-  const rez = analyzeRezepteFull(cells, DATA.cells);
-  
+  const rez = analyzeRezepteFull(null, DATA.cells, {allActive:true});
+
   const titles = {nr:'🔥 Top-Nachrücker',bvb:'🏥 BVB/LVB-Patienten',blanko:'💊 Auf Blanko umstellen · Schulter-Patienten',blankopot:'💎 Blanko-Potenzial · noch verplanbar',bvbpot:'🔼 BVB-Potenzial · Frequenz nicht ausgeschöpft',untertaktet:'🐌 Zu selten · könnten öfter kommen',all:'📋 Alle Patienten mit Rezept'};
   let items = rez[k];
   const isNR = k==='nr';

@@ -523,6 +523,26 @@ function parseFreqRange(raw){
   return null;
 }
 
+// Telefonnummer aus Mobil/Tel1/Tel2 wählen. Excel schießt lange Nummern in
+// Exponential-Schreibweise ("4,92215E+12") — dabei gehen Ziffern verloren, also
+// unbrauchbar. Solche Werte überspringen wir und nehmen die nächste saubere Nummer.
+function isBrokenPhone(v){ return /\d[.,]\d+\s*E\+?\d+/i.test(String(v==null?'':v)); }
+function pickPhone(...cands){
+  for(const c of cands){
+    const s = String(c==null?'':c).trim();
+    if(!s || isBrokenPhone(s)) continue;
+    return s;
+  }
+  return '';
+}
+
+// Leistungen, die im Rezept-Checker nichts verloren haben (kein Heilmittel-VO
+// im klassischen Sinn): Rehasport und Anamnese komplett ausblenden.
+function isCheckerExcludedHM(hm){
+  const s = String(hm==null?'':hm).toUpperCase().replace(/[\s\-\.]/g,'');
+  return s.startsWith('REHASPORT') || s.startsWith('ANAMNESE');
+}
+
 function isShoulder(c){if(!c)return false;return String(c).includes('M75')||String(c).includes('S42')||String(c).includes('S43')||String(c).includes('S46');}
 
 // Post-OP-Marker (Z98, Z89, S-Codes als Akutverletzung)
@@ -800,7 +820,7 @@ function parseData(rows, sheetName){
       patNach: r[COL.pNach]||'',
       patVor: r[COL.pVor]||'',
       patGeb: r[COL.pGeb] ? parseDate(r[COL.pGeb]) : null,
-      patMobil: r[COL.pMobil]||r[COL.pTel1]||r[COL.pTel2]||'',
+      patMobil: pickPhone(r[COL.pMobil], r[COL.pTel1], r[COL.pTel2]),
       patMail: r[COL.pMail]||'',
       leistKuerzel: r[COL.ptKuerzel]||'',
       leistLang: r[COL.ptLangtext]||'',
@@ -1291,6 +1311,7 @@ function analyzeRezepteFull(cellsForDay, allCells){
   cellsForDay.forEach(c=>{
     if(!c.patNach || !c.rezeptNr)return;
     if(c.belArt!=='R')return;
+    if(isCheckerExcludedHM(c.heilmittel))return;   // Rehasport/Anamnese raus
     const key = c.rezeptNr;
     if(!rezeptMap[key]){
       rezeptMap[key] = {
@@ -1677,7 +1698,7 @@ function showRezeptDetail(k){
         <div class="pr-i">
           <div class="pr-n">${p.name} ${ageStr ? `<span style="font-size:9px;color:var(--muted);font-weight:600;margin-left:6px">${ageStr}</span>` : ''} <span style="font-size:9px;color:${col};font-weight:700;margin-left:6px">${p.icd||'—'}</span></div>
           <div class="pr-d">
-            <b>${p.heilmittel||'?'}</b> · Soll ${p.freq?`ab ${p.freq}`:'?'}${p.freqMax&&p.freqMax!==p.freq?`–${p.freqMax}`:''}×/Wo · <b style="color:${col}">diese Woche ${p.weekCount}×</b> (möglich bis ${p.freqMax}×)
+            <b>${p.heilmittel||'?'}</b> · Soll ${p.freq?(p.freqMax&&p.freqMax!==p.freq?`${p.freq}–${p.freqMax}`:`${p.freq}`):'?'}×/Wo · <b style="color:${col}">diese Woche ${p.weekCount}×</b> (möglich bis ${p.freqMax}×)
             <br><b style="color:${col}">${p.unterSoll?'⚠ unter Soll-Frequenz':'🐌 unter möglicher Frequenz'} — noch ${p.rest} Beh. offen → öfter takten</b>
           </div>
           <div class="progress-mini"><div class="progress-mini-f" style="width:${pct}%;background:${col}"></div></div>
@@ -1803,6 +1824,7 @@ function renderOffene(){
   DATA.cells.forEach(c=>{
     if(!c.rezeptNr || c.belArt!=='R' || !c.patNach)return;
     if(c.excluded){ excl.add(c.rezeptNr); return; }
+    if(isCheckerExcludedHM(c.heilmittel))return;   // Rehasport/Anamnese raus
     const k = c.rezeptNr;
     if(!rezMap[k]){
       rezMap[k] = {
@@ -2341,6 +2363,7 @@ function collectRezepte(){
   DATA.cells.forEach(c=>{
     if(!c.rezeptNr || c.belArt!=='R' || !c.patNach)return;
     if(c.excluded){ excl.add(c.rezeptNr); return; }
+    if(isCheckerExcludedHM(c.heilmittel))return;   // Rehasport/Anamnese raus
     const k = c.rezeptNr;
     if(!rezMap[k]){
       rezMap[k] = {

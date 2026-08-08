@@ -500,6 +500,29 @@ function isBlankoHM(hm){
   return s.includes('-BV') || s.includes('BV-') || s.includes('BLANKO');
 }
 
+// Frequenz-Bereich robust parsen. Achtung: THEORG/Excel zerschießt Bereiche
+// wie "1-3" zu Datums-Krücken ("01. Mrz" = 1-3, "01. Feb" = 1-2). Tag = Untergrenze,
+// Monat = Obergrenze. Rückgabe: {min,max} pro Woche, oder null.
+function parseFreqRange(raw){
+  if(raw==null)return null;
+  const s = String(raw).trim();
+  if(!s)return null;
+  // echter Bereich "1-3" / "1–3"
+  let m = s.match(/^(\d+)\s*[-–]\s*(\d+)/);
+  if(m)return {min:+m[1], max:+m[2]};
+  // Excel-Datums-Krücke: "01. Mrz" -> min=Tag, max=Monatsnummer
+  const MON={jan:1,feb:2,mrz:3,mär:3,apr:4,mai:5,jun:6,jul:7,aug:8,sep:9,okt:10,nov:11,dez:12};
+  m = s.match(/^(\d{1,2})\.\s*([A-Za-zäÄ]+)/);
+  if(m){
+    const mo = MON[m[2].toLowerCase().slice(0,3)];
+    if(mo)return {min:+m[1], max:mo};
+  }
+  // Einzelzahl
+  const n = parseFloat(s);
+  if(!isNaN(n) && n<10)return {min:n, max:n};
+  return null;
+}
+
 function isShoulder(c){if(!c)return false;return String(c).includes('M75')||String(c).includes('S42')||String(c).includes('S43')||String(c).includes('S46');}
 
 // Post-OP-Marker (Z98, Z89, S-Codes als Akutverletzung)
@@ -758,8 +781,7 @@ function parseData(rows, sheetName){
     startDate.setHours(h, m, 0, 0);
     const endDate = new Date(startDate.getTime()+dauer*60000);
     
-    const fr = r[COL.freq1];
-    const freqNum = (typeof fr==='number') ? fr : (typeof fr==='string' ? parseFloat(fr) : null);
+    const frRange = parseFreqRange(r[COL.freq1]);
 
     // Ausschluss (Selbstabrechner): Begriff irgendwo in der Zeile?
     let excluded = false;
@@ -789,7 +811,8 @@ function parseData(rows, sheetName){
       diagnose: r[COL.diagnose]||'',
       menge: r[COL.menge1] ? parseInt(r[COL.menge1]) : null,
       heilmittel: r[COL.leistung1]||'',
-      frequenz: (freqNum && !isNaN(freqNum) && freqNum<10) ? freqNum : null,
+      frequenz: frRange ? frRange.min : null,
+      freqMax: frRange ? frRange.max : null,
       bearbStatus: r[COL.bearbStatus]||'',
       quittungNr: r[COL.quittungNr]||'',
       rechnungNr: r[COL.rechnungNr]||'',
@@ -1276,7 +1299,7 @@ function analyzeRezepteFull(cellsForDay, allCells){
         nach:c.patNach, vor:c.patVor, name:c.patVor+' '+c.patNach,
         geb:c.patGeb, mobil:c.patMobil, mail:c.patMail,
         icd:c.icd, diagnose:c.diagnose,
-        menge:c.menge, heilmittel:c.heilmittel, freq:c.frequenz, arzt:c.arzt,
+        menge:c.menge, heilmittel:c.heilmittel, freq:c.frequenz, freqMax:c.freqMax, arzt:c.arzt,
         rezDatum:c.rezDatum,
         termineHeute: new Set(),
         allTermine: new Set()
@@ -1293,13 +1316,13 @@ function analyzeRezepteFull(cellsForDay, allCells){
   });
   
   // Score-Logik
-  const cats = {bvb:[], blanko:[], blankopot:[], folge:[], freq:[], nr:[], all:[]};
-  
+  const cats = {bvb:[], blanko:[], blankopot:[], bvbpot:[], freq:[], nr:[], all:[]};
+
   let dauerAusgeblendet = 0;
   Object.values(rezeptMap).forEach(p=>{
     // Maske D: Patienten mit Dauerplan aus der Planungs-Ansicht ausblenden
     if(isDauerHidden() && isDauerPatKey(p.patKey||patKeyFor(p))){ dauerAusgeblendet++; return; }
-    let isBVB = false, isBlanko = false, isFolge = false, isBlankoOffen = false;
+    let isBVB = false, isBlanko = false, isBvbPot = false, isBlankoOffen = false;
     const reasons = [];
     const badges = [];
     let score = 0;
@@ -1372,12 +1395,22 @@ function analyzeRezepteFull(cellsForDay, allCells){
       }
     }
     
-    // Folgerezept-Empfehlung bei BVB + kleinem Rezept
-    if(isBVB && p.menge && p.menge<=10){
-      reasons.push(`Folge: bis ${(p.freq||2)*12} Einh.`);
-      badges.push({t:'Folge ↑',c:'c-blue'});
-      isFolge = true;
-      score += 2;
+    // 🔼 BVB-POTENZIAL: BVB-VO, deren Frequenz nicht ausgeschöpft ist.
+    //   Eine BVB-VO darf über 12 Wochen laufen → max. Behandlungen = obere Frequenz × 12.
+    //   (Freq. 1-2 → 24 möglich, 1-3 → 36 möglich.) Stehen deutlich weniger auf dem
+    //   Rezept, besteht Potenzial für ein größeres Folge-VO.
+    if(isBVB && p.freqMax && p.menge){
+      const maxMoeglich = p.freqMax * 12;
+      const offen = maxMoeglich - p.menge;
+      if(offen > 0){
+        isBvbPot = true;
+        p.bvbFreqMax = p.freqMax;
+        p.bvbMaxMoeglich = maxMoeglich;
+        p.bvbOffen = offen;
+        reasons.push(`BVB-Pot.: nur ${p.menge} von bis zu ${maxMoeglich} (Freq. bis ${p.freqMax}×/Wo × 12 Wo) → größeres Folge-VO möglich`);
+        badges.push({t:`Pot. +${offen}`,c:'c-blue'});
+        score += 2;
+      }
     }
     
     // Frequenz
@@ -1397,7 +1430,7 @@ function analyzeRezepteFull(cellsForDay, allCells){
     
     if(isBVB)cats.bvb.push(p);
     if(isBlanko)cats.blanko.push(p);
-    if(isFolge)cats.folge.push(p);
+    if(isBvbPot)cats.bvbpot.push(p);
     if(p.freq && p.freq>=2)cats.freq.push(p);
     if(score >= 2)cats.nr.push(p);
     cats.all.push(p);
@@ -1423,10 +1456,9 @@ function renderRezepte(){
   h += '<div class="rkpis">';
   const kpis = [
     {k:'nr',l:'🔥 Nachrücker',v:r.nr.length,co:'var(--fire)',s:'einplanbar'},
-    {k:'bvb',l:'🏥 BVB/LVB',v:r.bvb.length,co:'var(--green)',s:'Budget-neutral'},
     {k:'blanko',l:'💊 Auf Blanko',v:r.blanko.length,co:'var(--purple)',s:'umstellen'},
     {k:'blankopot',l:'💎 Blanko-Pot.',v:r.blankopot.length,co:'var(--accent)',s:'noch verplanbar'},
-    {k:'folge',l:'🔼 Folge ↑',v:r.folge.length,co:'var(--primary)',s:'Größeres VO'},
+    {k:'bvbpot',l:'🔼 BVB-Pot.',v:r.bvbpot.length,co:'var(--primary)',s:'Freq. nicht ausgeschöpft'},
     {k:'freq',l:'📈 Frequent',v:r.freq.length,co:'var(--amber)',s:'≥2x/Woche'},
     {k:'all',l:'📋 Alle',v:r.all.length,co:'var(--dark)',s:'mit Rezept'}
   ];
@@ -1469,7 +1501,7 @@ function showRezeptDetail(k){
   const cells = getDayCells();
   const rez = analyzeRezepteFull(cells, DATA.cells);
   
-  const titles = {nr:'🔥 Top-Nachrücker',bvb:'🏥 BVB/LVB-Patienten',blanko:'💊 Auf Blanko umstellen · Schulter-Patienten',blankopot:'💎 Blanko-Potenzial · noch verplanbar',folge:'🔼 Folgerezept-Empfehlung',freq:'📈 Hohe Frequenz',all:'📋 Alle Patienten mit Rezept'};
+  const titles = {nr:'🔥 Top-Nachrücker',bvb:'🏥 BVB/LVB-Patienten',blanko:'💊 Auf Blanko umstellen · Schulter-Patienten',blankopot:'💎 Blanko-Potenzial · noch verplanbar',bvbpot:'🔼 BVB-Potenzial · Frequenz nicht ausgeschöpft',freq:'📈 Hohe Frequenz',all:'📋 Alle Patienten mit Rezept'};
   let items = rez[k];
   const isNR = k==='nr';
   const isBP = k==='blankopot';
@@ -1569,6 +1601,31 @@ function showRezeptDetail(k){
           </div>
         </div>
         ${p.mobil?`<a href="tel:${p.mobil}" class="pr-tel">📞 ${p.mobil}</a>`:''}
+      </div>`;
+    });
+  } else if(k==='bvbpot'){
+    // BVB-POTENZIAL: BVB-VO, deren Frequenz nicht ausgeschöpft ist
+    h += `<div style="background:var(--primary-bg,#eef2ff);border-radius:12px;padding:12px 14px;margin-bottom:10px;font-size:11px;color:var(--dark);line-height:1.6">
+      <b style="color:var(--primary);font-family:Montserrat;font-weight:800">🔼 Frequenz nicht ausgeschöpft:</b>
+      Eine BVB-Verordnung darf über <b>12 Wochen</b> laufen — max. Behandlungen = <b>obere Frequenz × 12</b>
+      (Freq. 1-2 → 24, 1-3 → 36). Stehen deutlich weniger auf dem Rezept, beim Arzt ein größeres Folge-VO anstoßen.
+    </div>`;
+    // Höchstes Potenzial (offene Behandlungen) zuerst
+    const sortedItems = [...items].sort((a,b)=>(b.bvbOffen||0)-(a.bvbOffen||0));
+    sortedItems.forEach(p=>{
+      const age = p.geb ? Math.floor((Date.now()-new Date(p.geb).getTime())/(365.25*86400000)) : null;
+      const ageStr = age ? `${age}J` : '';
+      const pct = p.bvbMaxMoeglich ? Math.min(100, Math.round((p.menge/p.bvbMaxMoeglich)*100)) : 0;
+      h += `<div class="pr">
+        <div class="pr-i">
+          <div class="pr-n">${p.name} ${ageStr ? `<span style="font-size:9px;color:var(--muted);font-weight:600;margin-left:6px">${ageStr}</span>` : ''} <span style="font-size:9px;color:var(--primary);font-weight:700;margin-left:6px">${p.icd||'—'}</span></div>
+          <div class="pr-d">
+            <b>${p.heilmittel||'?'}</b> · Rezept: <b>${p.menge}</b> Beh. · Freq. bis <b>${p.bvbFreqMax}×/Wo</b>
+            <br><b style="color:var(--primary)">🔼 Möglich bis ${p.bvbMaxMoeglich} Beh. → noch ${p.bvbOffen} über größeres Folge-VO</b>
+          </div>
+          <div class="progress-mini"><div class="progress-mini-f" style="width:${pct}%;background:var(--primary)"></div></div>
+        </div>
+        ${p.mobil?`<a href="tel:${String(p.mobil).replace(/[^+\\d]/g,'')}" class="pr-tel">📞 ${p.mobil}</a>`:''}
       </div>`;
     });
   } else if(k==='blankoOLD'){

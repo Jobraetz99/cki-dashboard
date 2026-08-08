@@ -1162,12 +1162,19 @@ function analyzeDay(cells){
     const realGaps = gaps.map(g=>({start:g.start,end:g.end,min:(g.end-g.start)/60000})).filter(g=>g.min>=MG);
     const gapTotal = realGaps.reduce((s,g)=>s+g.min,0);
     totalGapMin += gapTotal;
-    
-    const aus = wzMin>0 ? Math.min(100,Math.round(patientMin/wzMin*100)) : (termine.length>0?100:0);
-    
+
+    // ── Auslastung nach Kilian-Logik ──
+    // Arbeitszeit (wzMin) = bezahlte Zeit (AZ=J), inkl. Fahrtzeit, ohne unbezahlte Freizeit/Pause.
+    // Echte Leerzeit = bezahlte Slots in denen WIRKLICH nichts steht (kein Patient, keine Fahrt).
+    // Fahrtzeit ist produktive Arbeit und darf die Auslastung NICHT drücken.
+    const freeMin  = Object.values(timeStatus).filter(s=>s.isFree).length  * 10; // echte Leerzeit
+    const fahrtMin = Object.values(timeStatus).filter(s=>s.isPause).length * 10; // Fahrtzeit (belArt F)
+    const produktivMin = Math.max(0, wzMin - freeMin); // alles außer echter Leerzeit
+    const aus = wzMin>0 ? Math.min(100, Math.round(produktivMin/wzMin*100)) : (termine.length>0?100:0);
+
     therapists.push({
       name: th.name, azStart, azEnd, wzMin, termine, gaps:realGaps, gapTotal,
-      patientMin, aus, cells:th.cells, azWorkCells, timeStatus
+      patientMin, fahrtMin, freeMin, produktivMin, aus, cells:th.cells, azWorkCells, timeStatus
     });
   });
   
@@ -1227,6 +1234,7 @@ function renderTherapistCard(t){
     <div class="tm">
       <span>🕐 <b>${fmt(t.azStart)}–${fmt(t.azEnd)}</b></span>
       <span>👤 <b>${t.termine.length}</b> Patienten</span>
+      ${t.fahrtMin>0?`<span>🚗 <b>${Math.round(t.fahrtMin)}</b> min Fahrt</span>`:''}
       <span>📊 <b style="color:${aColor}">${t.aus}%</b></span>
     </div>
     <div class="tw">
@@ -1245,7 +1253,7 @@ function renderTherapistCard(t){
   
   h += `<div class="aw">
     <div class="ab"><div class="af" style="width:${t.aus}%;background:${aColor}"></div></div>
-    <div class="ai"><span>${Math.round(t.wzMin)} min Arbeitszeit</span><span style="color:${aColor};font-weight:800">${t.aus}%</span></div>
+    <div class="ai"><span>${Math.round(t.wzMin)} min Arbeitszeit${t.freeMin>0?` · ${Math.round(t.freeMin)} min echte Lücke`:''}</span><span style="color:${aColor};font-weight:800">${t.aus}%</span></div>
   </div></div>`;
   
   return h;
@@ -1958,38 +1966,27 @@ function ampelForRate(rate){
 }
 
 function renderControlling(){
-  const byTh = {};
-  DATA.cells.forEach(c=>{
-    if(!c.therapist)return;
-    if(!byTh[c.therapist])byTh[c.therapist] = {};
-    if(!byTh[c.therapist][c.dateStr])byTh[c.therapist][c.dateStr] = [];
-    byTh[c.therapist][c.dateStr].push(c);
-  });
-  
-  const thStats = Object.entries(byTh).map(([name,days])=>{
-    let totalPat = 0, totalWz = 0;
-    Object.entries(days).forEach(([d,cells])=>{
-      const azWorkCells = cells.filter(c=>c.azFlag);
-      if(!azWorkCells.length)return;
-      // Gruppiere nach Uhrzeit (vermeidet Mehrfach-Slot-Duplikate)
-      const uniqueTimes = new Set(azWorkCells.map(c=>c.start.getTime()));
-      const wzMin = uniqueTimes.size * 10;
-      
-      const termineMap = {};
-      cells.forEach(c=>{
-        if(c.termIdent && c.belegt && c.belArt==='R'){
-          if(!termineMap[c.termIdent]){termineMap[c.termIdent]={start:c.start,end:c.end};}
-          else {if(c.start<termineMap[c.termIdent].start)termineMap[c.termIdent].start=c.start;if(c.end>termineMap[c.termIdent].end)termineMap[c.termIdent].end=c.end;}
-        }
-      });
-      const merged = mergeRanges(Object.values(termineMap).map(t=>[t.start,t.end]));
-      const patMin = merged.reduce((s,r)=>s+(r[1]-r[0])/60000,0);
-      totalPat += patMin;
-      totalWz += wzMin;
+  // Auslastung konsistent zur Lücken-Ansicht: produktive Zeit (inkl. Fahrtzeit) ÷ Arbeitszeit.
+  // Echte Leerzeit drückt die Auslastung, Fahrtzeit nicht.
+  const thAgg = {}; // name -> {prod, wz, pat, fahrt, days:Set}
+  DATA.dates.forEach(d=>{
+    const dayCells = DATA.cells.filter(c=>c.dateStr===d);
+    const anal = analyzeDay(dayCells);
+    anal.therapists.forEach(t=>{
+      const a = thAgg[t.name] = thAgg[t.name] || {prod:0, wz:0, pat:0, fahrt:0, days:new Set()};
+      a.prod  += t.produktivMin||0;
+      a.wz    += t.wzMin||0;
+      a.pat   += t.patientMin||0;
+      a.fahrt += t.fahrtMin||0;
+      a.days.add(d);
     });
-    const avgAus = totalWz>0?Math.round(totalPat/totalWz*100):0;
-    return {name, avgAus, totalPat, totalWz, days:Object.keys(days).length};
-  }).sort((a,b)=>b.avgAus-a.avgAus).filter(t=>t.totalWz>0);
+  });
+  const thStats = Object.entries(thAgg).map(([name,a])=>({
+    name,
+    avgAus: a.wz>0?Math.round(a.prod/a.wz*100):0,
+    totalPat: a.pat, totalWz: a.wz, totalProd: a.prod, totalFahrt: a.fahrt,
+    days: a.days.size
+  })).sort((x,y)=>y.avgAus-x.avgAus).filter(t=>t.totalWz>0);
   
   const overallAus = thStats.length ? Math.round(thStats.reduce((s,t)=>s+t.avgAus,0)/thStats.length) : 0;
   const totalTermine = new Set();
@@ -2012,7 +2009,7 @@ function renderControlling(){
     h += `<div class="ausl-row">
       <div class="ausl-label">${t.name}</div>
       <div class="ausl-bar"><div class="ausl-fill" style="width:${t.avgAus}%;background:${color}">${t.avgAus}%</div></div>
-      <div class="ausl-val">${Math.round(t.totalPat)}/${Math.round(t.totalWz)}min</div>
+      <div class="ausl-val" title="Patientenzeit ${Math.round(t.totalPat)} min · Fahrtzeit ${Math.round(t.totalFahrt)} min · Arbeitszeit ${Math.round(t.totalWz)} min">${Math.round(t.totalProd)}/${Math.round(t.totalWz)}min${t.totalFahrt>0?` · 🚗${Math.round(t.totalFahrt)}`:''}</div>
     </div>`;
   });
   h += `</div>`;

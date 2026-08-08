@@ -1302,21 +1302,31 @@ function analyzeRezepteFull(cellsForDay, allCells){
         menge:c.menge, heilmittel:c.heilmittel, freq:c.frequenz, freqMax:c.freqMax, arzt:c.arzt,
         rezDatum:c.rezDatum,
         termineHeute: new Set(),
-        allTermine: new Set()
+        allTermine: new Set(),
+        recentTermine: new Set(),
+        recentWeeks: new Set()
       };
     }
     if(c.termIdent)rezeptMap[key].termineHeute.add(c.termIdent);
   });
-  
-  // Zähle ALLE Termine pro Rezept aus dem GESAMTEN Export
+
+  // Bezugstag = gewählter Tag (Ende); Fenster = letzte 4 Wochen davor
+  const refTime = currentDate ? new Date(currentDate+'T23:59:59').getTime() : Date.now();
+  const winStart = refTime - 28*86400000;
+
+  // Zähle ALLE Termine pro Rezept aus dem GESAMTEN Export + Termine der letzten 4 Wochen
   allCells.forEach(c=>{
     if(!c.rezeptNr || !rezeptMap[c.rezeptNr])return;
     if(c.belArt!=='R' || !c.belegt || !c.termIdent)return;
-    rezeptMap[c.rezeptNr].allTermine.add(c.termIdent);
+    const rm = rezeptMap[c.rezeptNr];
+    rm.allTermine.add(c.termIdent);
+    if(c.start){ const t=c.start.getTime();
+      if(t>=winStart && t<=refTime){ rm.recentTermine.add(c.termIdent); rm.recentWeeks.add(Math.floor((refTime-t)/(7*86400000))); }
+    }
   });
   
   // Score-Logik
-  const cats = {bvb:[], blanko:[], blankopot:[], bvbpot:[], freq:[], nr:[], all:[]};
+  const cats = {bvb:[], blanko:[], blankopot:[], bvbpot:[], untertaktet:[], nr:[], all:[]};
 
   let dauerAusgeblendet = 0;
   Object.values(rezeptMap).forEach(p=>{
@@ -1413,10 +1423,29 @@ function analyzeRezepteFull(cellsForDay, allCells){
       }
     }
     
-    // Frequenz
-    if(p.freq && p.freq>=2){
-      score += 1;
-      if(p.freq>=3){badges.push({t:p.freq+'x/Wo',c:'c-blue'});score += 1;}
+    // 🐌 ZU SELTEN / UNTERTAKTET: kommt seltener als möglich (freqMax),
+    //   und ganz besonders wer sogar unter der Soll-Untergrenze (freq) liegt.
+    //   Ist-Taktung = Termine der letzten 4 Wochen ÷ 4.
+    //   Aktivitäts-Filter gegen Urlaub/Aussetzer: nur wer in mind. 3 der letzten
+    //   4 Wochen tatsächlich da war (also regelmäßig kommt), wird berücksichtigt.
+    //   Toleranz 0,5: erst ab einer echten halben Behandlung/Woche Lücke zählen.
+    const recentN = p.recentTermine.size;
+    const activeWeeks = p.recentWeeks.size;
+    const istRate = recentN / 4;              // Termine pro Woche
+    p.istRate = istRate;
+    p.recentN = recentN;
+    p.activeWeeks = activeWeeks;
+    let isUnter = false;
+    if(p.freqMax && rest>=2 && activeWeeks>=3 && istRate <= p.freqMax - 0.5){
+      isUnter = true;
+      p.untertaktet = true;
+      p.unterSoll = !!(p.freq && istRate <= p.freq - 0.5);   // klar unter verordneter Untergrenze
+      p.freqLuecke = +(p.freqMax - istRate).toFixed(2);
+      reasons.push(p.unterSoll
+        ? `⚠ Zu selten: ${istRate.toFixed(2)}×/Wo — unter Soll (ab ${p.freq}×) · möglich bis ${p.freqMax}×/Wo`
+        : `Untertaktet: ${istRate.toFixed(2)}×/Wo — möglich bis ${p.freqMax}×/Wo`);
+      badges.push({t:p.unterSoll?'⚠ unter Soll':'untertaktet', c:p.unterSoll?'c-fire':'c-amber'});
+      score += p.unterSoll ? 2 : 1;
     }
     
     // Mobil
@@ -1431,12 +1460,17 @@ function analyzeRezepteFull(cellsForDay, allCells){
     if(isBVB)cats.bvb.push(p);
     if(isBlanko)cats.blanko.push(p);
     if(isBvbPot)cats.bvbpot.push(p);
-    if(p.freq && p.freq>=2)cats.freq.push(p);
+    if(isUnter)cats.untertaktet.push(p);
     if(score >= 2)cats.nr.push(p);
     cats.all.push(p);
   });
   
   cats.nr.sort((a,b)=>b.score-a.score);
+  // Untertaktet: zuerst die unter der Soll-Frequenz, dann die am stärksten Untertakteten
+  cats.untertaktet.sort((a,b)=>{
+    if(!!b.unterSoll !== !!a.unterSoll) return (b.unterSoll?1:0)-(a.unterSoll?1:0);
+    return (a.istRate/(a.freqMax||1)) - (b.istRate/(b.freqMax||1));
+  });
   cats.dauerAusgeblendet = dauerAusgeblendet;
   return cats;
 }
@@ -1459,7 +1493,7 @@ function renderRezepte(){
     {k:'blanko',l:'💊 Auf Blanko',v:r.blanko.length,co:'var(--purple)',s:'umstellen'},
     {k:'blankopot',l:'💎 Blanko-Pot.',v:r.blankopot.length,co:'var(--accent)',s:'noch verplanbar'},
     {k:'bvbpot',l:'🔼 BVB-Pot.',v:r.bvbpot.length,co:'var(--primary)',s:'Freq. nicht ausgeschöpft'},
-    {k:'freq',l:'📈 Frequent',v:r.freq.length,co:'var(--amber)',s:'≥2x/Woche'},
+    {k:'untertaktet',l:'🐌 Zu selten',v:r.untertaktet.length,co:'var(--amber)',s:'könnten öfter kommen'},
     {k:'all',l:'📋 Alle',v:r.all.length,co:'var(--dark)',s:'mit Rezept'}
   ];
   kpis.forEach(x=>{
@@ -1501,7 +1535,7 @@ function showRezeptDetail(k){
   const cells = getDayCells();
   const rez = analyzeRezepteFull(cells, DATA.cells);
   
-  const titles = {nr:'🔥 Top-Nachrücker',bvb:'🏥 BVB/LVB-Patienten',blanko:'💊 Auf Blanko umstellen · Schulter-Patienten',blankopot:'💎 Blanko-Potenzial · noch verplanbar',bvbpot:'🔼 BVB-Potenzial · Frequenz nicht ausgeschöpft',freq:'📈 Hohe Frequenz',all:'📋 Alle Patienten mit Rezept'};
+  const titles = {nr:'🔥 Top-Nachrücker',bvb:'🏥 BVB/LVB-Patienten',blanko:'💊 Auf Blanko umstellen · Schulter-Patienten',blankopot:'💎 Blanko-Potenzial · noch verplanbar',bvbpot:'🔼 BVB-Potenzial · Frequenz nicht ausgeschöpft',untertaktet:'🐌 Zu selten · könnten öfter kommen',all:'📋 Alle Patienten mit Rezept'};
   let items = rez[k];
   const isNR = k==='nr';
   const isBP = k==='blankopot';
@@ -1624,6 +1658,32 @@ function showRezeptDetail(k){
             <br><b style="color:var(--primary)">🔼 Möglich bis ${p.bvbMaxMoeglich} Beh. → noch ${p.bvbOffen} über größeres Folge-VO</b>
           </div>
           <div class="progress-mini"><div class="progress-mini-f" style="width:${pct}%;background:var(--primary)"></div></div>
+        </div>
+        ${p.mobil?`<a href="tel:${String(p.mobil).replace(/[^+\\d]/g,'')}" class="pr-tel">📞 ${p.mobil}</a>`:''}
+      </div>`;
+    });
+  } else if(k==='untertaktet'){
+    // ZU SELTEN: kommt unter möglicher Frequenz; unter Soll ganz oben
+    const nUnterSoll = items.filter(p=>p.unterSoll).length;
+    h += `<div style="background:var(--amber-bg,#fff7ed);border-radius:12px;padding:12px 14px;margin-bottom:10px;font-size:11px;color:var(--dark);line-height:1.6">
+      <b style="color:var(--amber);font-family:Montserrat;font-weight:800">🐌 Könnten öfter kommen:</b>
+      Ist-Taktung = Termine der letzten 4 Wochen ÷ 4. Angezeigt werden nur Patienten, die <b>regelmäßig kommen</b>
+      (in mind. 3 der letzten 4 Wochen da – also nicht im Urlaub) und trotzdem <b>seltener als möglich</b> (obere Frequenz).
+      <b style="color:var(--fire)">Ganz oben (${nUnterSoll}) die, die sogar unter ihrer verordneten Soll-Frequenz liegen.</b>
+    </div>`;
+    items.forEach(p=>{
+      const age = p.geb ? Math.floor((Date.now()-new Date(p.geb).getTime())/(365.25*86400000)) : null;
+      const ageStr = age ? `${age}J` : '';
+      const col = p.unterSoll ? 'var(--fire)' : 'var(--amber)';
+      const pct = p.freqMax ? Math.min(100, Math.round((p.istRate/p.freqMax)*100)) : 0;
+      h += `<div class="pr"${p.unterSoll?' style="border-left:3px solid var(--fire)"':''}>
+        <div class="pr-i">
+          <div class="pr-n">${p.name} ${ageStr ? `<span style="font-size:9px;color:var(--muted);font-weight:600;margin-left:6px">${ageStr}</span>` : ''} <span style="font-size:9px;color:${col};font-weight:700;margin-left:6px">${p.icd||'—'}</span></div>
+          <div class="pr-d">
+            <b>${p.heilmittel||'?'}</b> · Soll ${p.freq?`ab ${p.freq}`:'?'}${p.freqMax&&p.freqMax!==p.freq?`–${p.freqMax}`:''}×/Wo · <b style="color:${col}">ist ${p.istRate.toFixed(2)}×/Wo</b> (${p.recentN} Term./4 Wo)
+            <br><b style="color:${col}">${p.unterSoll?'⚠ unter Soll-Frequenz':'🐌 unter möglicher Frequenz'} — noch ${p.rest} Beh. offen → öfter takten</b>
+          </div>
+          <div class="progress-mini"><div class="progress-mini-f" style="width:${pct}%;background:${col}"></div></div>
         </div>
         ${p.mobil?`<a href="tel:${String(p.mobil).replace(/[^+\\d]/g,'')}" class="pr-tel">📞 ${p.mobil}</a>`:''}
       </div>`;

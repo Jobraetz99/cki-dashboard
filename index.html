@@ -485,6 +485,26 @@ const BVB_AGE70 = {
   'R32':{n:'Harninkontinenz'},'R42':{n:'Schwindel'},'R52.1':{n:'Chron. Schmerz'}
 };
 
+// ── Heilmittelkatalog: orientierende Behandlungsmenge (je Verordnungsfall)
+//    und Höchstmenge je Verordnung, pro Diagnosegruppe (Physiotherapie).
+//    GESICHERT: WS, EX, LY.  VORLÄUFIG (bitte final gegen G-BA-Katalog prüfen): ZN, PN, CS, AT, SO.
+const KAT_ORIENT  = { WS:18, EX:18, LY:30, ZN:30, PN:30, CS:30, AT:18, SO:18 };
+const KAT_HOECHST = { WS:6,  EX:6,  LY:6,  ZN:10, PN:10, CS:10, AT:6,  SO:6  };
+const KAT_SICHER  = { WS:true, EX:true, LY:true }; // gesicherte Katalogwerte
+const KAT_NAME    = { WS:'Wirbelsäule', EX:'Extremitäten/Gelenke', LY:'Lymphabfluss',
+  ZN:'ZNS', PN:'periphere Nerven', CS:'chron. Schmerz', AT:'Atmungsorgane', SO:'Sonstige' };
+// Diagnosegruppe = erste 2 Buchstaben des Indikationsschlüssels (z.B. "WSa" → "WS")
+function diagnosegruppe(ind){ const m=String(ind||'').toUpperCase().match(/^([A-Z]{2})/); return m?m[1]:''; }
+function icd3Steller(icd){ return String(icd||'').replace(/[^A-Za-z0-9].*/,'').slice(0,3); }
+// Doing-Status je Verordnungsfall (lokal gespeichert)
+function getFallStatus(key){ return lsGet('cki_fall_'+key, 'offen'); }
+function cycleFallStatus(key){
+  const order=['offen','doing','erledigt'];
+  const next=order[(order.indexOf(getFallStatus(key))+1)%order.length];
+  lsSet('cki_fall_'+key, next);
+  if(currentView==='folgevo') renderFolgeVO();
+}
+
 // Heilmittel-Dauern
 const HM_DAUER = {
   'KG':20,'KG-BV':20,'MT':20,'KGG':60,'KG-Gerät':60,
@@ -1936,14 +1956,12 @@ function renderOffene(){
     .sort((a,b)=>(b.tageSeitLetzterTermin||0)-(a.tageSeitLetzterTermin||0));
   const grpOffen = kandidaten.filter(r=>r.rest>0)
     .sort((a,b)=>(b.tageSeitLetzterTermin||0)-(a.tageSeitLetzterTermin||0));
-  const aeltest = Math.max(...kandidaten.map(r=>r.tageSeitLetzterTermin||0), 0);
 
   let h = `<div class="summary">
     <h2>🪦 Offene Rezepte · seit ${threshold/7|0} Wochen kein Termin</h2>
     <div class="sg">
       <div class="si"><div class="si-l">💰 Fertig, nicht abgerechnet</div><div class="si-v">${grpFertig.length}</div><div class="si-s">Geld liegt auf der Straße!</div></div>
       <div class="si"><div class="si-l">📞 Offene Behandlungen</div><div class="si-v">${grpOffen.length}</div><div class="si-s">Rezept noch nicht ausgeschöpft</div></div>
-      <div class="si"><div class="si-l">📅 Ältester Fall</div><div class="si-v">${aeltest}d</div><div class="si-s">Tage seit letztem Termin</div></div>
       <div class="si"><div class="si-l">💵 Gesamt</div><div class="si-v">${kandidaten.length}</div><div class="si-s">Rezepte zum Aktivieren</div></div>
     </div>
   </div>`;
@@ -2592,99 +2610,175 @@ function filterPotSearch(){
 // VIEW: FOLGE-VERORDNUNG NICHT WEITERGEPLANT (+ Doing-Status)
 // ═══════════════════════════════════════════════════════════
 function setFvoFilter(f){ currentFvoFilter=f; renderFolgeVO(); }
-function renderFolgeVO(){
-  // Quartalslogik: Annahme max. 3 Rezepte pro Quartal. Für jeden Patienten (ohne Maske D)
-  // werden aktuelles + vorheriges Quartal betrachtet → wie viele der 3 möglichen Rezepte
-  // sind im aktuellen Quartal noch offen? Ziel: aktive Patientenbindung / Folge-VO ansprechen.
-  const today = new Date(); today.setHours(0,0,0,0);
-  const qNow = quarterOrdinal(today);
-  const qPrev = qNow-1;
-  const REZ_PRO_Q = 3;
 
-  const kandidaten = [];
-  collectPatienten().forEach(p=>{
-    if(p.istDauer) return;                 // Dauerpatienten raus
-    const rez = Object.values(p.rezepte).filter(r=>r.rezDatum);
-    if(!rez.length) return;
-    let aktQ=0, vorQ=0, lastRez=null;
-    rez.forEach(r=>{
-      const q = quarterOrdinal(r.rezDatum);
-      if(q===qNow) aktQ++;
-      else if(q===qPrev) vorQ++;
-      if(!lastRez || r.rezDatum>lastRez) lastRez=r.rezDatum;
-    });
-    // nur relevante Patienten: hatten zuletzt Aktivität (akt. oder Vorquartal)
-    if(aktQ===0 && vorQ===0) return;
-    p.aktQ=aktQ; p.vorQ=vorQ;
-    p.offenFV = Math.max(0, REZ_PRO_Q - aktQ);
-    p.nRezGesamt = Object.keys(p.rezepte).length;
-    p.lastRez = lastRez;
-    p.doing = getDoingStatus(p.patKey);
-    kandidaten.push(p);
+// Baut aus DATA.cells die offenen Verordnungsfälle mit Potential-Berechnung.
+// Verordnungsfall = Patient + ICD-3-Steller (+ Diagnosegruppe), 6-Monats-Kette.
+// Potential = orientierende Behandlungsmenge − bereits verordnete Einheiten.
+function computeVerordnungsfaelle(){
+  // Stichtag = spätester belegter Termin (Export läuft der Realzeit hinterher)
+  let stichtag=null;
+  DATA.cells.forEach(c=>{ if(c.belegt && c.start && (!stichtag||c.start>stichtag)) stichtag=c.start; });
+  if(!stichtag) stichtag=new Date();
+  const stEnd=new Date(stichtag); stEnd.setHours(23,59,59,999); const stT=stEnd.getTime();
+  const SIXM=183*864e5;
+  // 1) pro Rezept aggregieren
+  const rez={};
+  DATA.cells.forEach(c=>{
+    if(c.belArt!=='R' || !c.rezeptNr || !c.patNach) return;
+    if(c.excluded || isCheckerExcludedHM(c.heilmittel)) return;
+    const k=c.rezeptNr;
+    if(!rez[k]) rez[k]={
+      rezeptNr:c.rezeptNr, patKey:c.patKey||patKeyFor(c), name:(c.patVor+' '+c.patNach).trim(),
+      geb:c.patGeb, mobil:c.patMobil||'', icd:c.icd||'', ind:c.indikation||'',
+      menge:c.menge||0, rezDatum:c.rezDatum||null, heilmittel:c.heilmittel,
+      blanko:isBlankoHM(c.heilmittel), bel:new Set()
+    };
+    if(!rez[k].ind && c.indikation) rez[k].ind=c.indikation;
+    if(c.termIdent && c.belegt) rez[k].bel.add(c.termIdent);
   });
-  // Priorität: nur 1 Rezept gesamt zuerst (drohen zu versanden), dann offenes Budget, dann ältester
-  kandidaten.sort((a,b)=> (a.nRezGesamt-b.nRezGesamt) || (b.offenFV-a.offenFV) || (b.lastRez-a.lastRez));
+  // 2) Rezepte → Verordnungsfälle (Patient + ICD-3-Steller), Diagnosegruppe aus irgendeinem Rezept
+  const byCase={};
+  Object.values(rez).forEach(r=>{
+    r.erbracht=r.bel.size; r.gruppe=diagnosegruppe(r.ind); r.icdRoot=icd3Steller(r.icd);
+    const key=r.patKey+'|'+r.icdRoot;
+    (byCase[key]=byCase[key]||[]).push(r);
+  });
+  const faelle=[];
+  Object.entries(byCase).forEach(([key,list])=>{
+    list.sort((a,b)=>(a.rezDatum||0)-(b.rezDatum||0));
+    // aktuellste Kette (Fall) bilden: > 6 Monate Lücke = neuer Fall
+    let chain=[];
+    for(let i=0;i<list.length;i++){
+      const prev=chain[chain.length-1];
+      if(chain.length && list[i].rezDatum && prev.rezDatum && (list[i].rezDatum-prev.rezDatum)>SIXM) chain=[];
+      chain.push(list[i]);
+    }
+    const lastRez=chain[chain.length-1].rezDatum;
+    if(!lastRez) return;
+    if((stT-lastRez.getTime())>SIXM) return;               // Fall geschlossen (>6 Mon. kein Rezept)
+    if(isDauerPatKey(chain[0].patKey)) return;             // Dauerpatienten raus
+    let gruppe=''; for(const r of chain){ if(r.gruppe){ gruppe=r.gruppe; break; } }
+    const anyBlanko=chain.some(r=>r.blanko);
+    const verordnet=chain.reduce((s,r)=>s+(r.menge||0),0);
+    const erbracht=chain.reduce((s,r)=>s+r.erbracht,0);
+    const icd=chain.map(r=>r.icd).find(x=>x)||'';
+    const bvb=findBVB(icd) || (findBVBAge70(icd, chain[0].geb) ? {t:'BVB',n:'ab 70'} : null);
+    // Katalog-Zuordnung
+    let orient=null, hoechst=null, quelle='';
+    if(KAT_ORIENT[gruppe]){ orient=KAT_ORIENT[gruppe]; hoechst=KAT_HOECHST[gruppe]; quelle='katalog'; }
+    else if(anyBlanko){ orient=getBlankoMax(icd); hoechst=orient; quelle='blanko'; }  // Blanko: eine VO deckt die Menge
+    const headroom = orient!=null ? Math.max(0, orient-verordnet) : null;
+    const nochRezepte = (orient!=null && hoechst) ? Math.ceil(headroom/hoechst) : null;
+    const ausschoepf = orient ? Math.min(100, Math.round(verordnet/orient*100)) : null;
+    faelle.push({
+      key, patKey:chain[0].patKey, name:chain[0].name, geb:chain[0].geb, mobil:chain[0].mobil,
+      icd, gruppe, anzRez:chain.length, verordnet, erbracht, lastRez,
+      bvb: bvb?bvb.t:'', bvbName: bvb?bvb.n:'',
+      orient, hoechst, headroom, nochRezepte, ausschoepf, quelle,
+      hatKatalog: orient!=null,
+      status: getFallStatus(key)
+    });
+  });
+  return {stichtag, faelle};
+}
 
-  const nurEins = kandidaten.filter(p=>p.nRezGesamt===1).length;
-  const offenBudget = kandidaten.reduce((s,p)=>s+p.offenFV,0);
-  const cntOffen = kandidaten.filter(p=>p.doing==='offen').length;
-  const cntDoing = kandidaten.filter(p=>p.doing==='doing').length;
-  const cntFertig = kandidaten.filter(p=>p.doing==='erledigt').length;
+function renderFolgeVO(){
+  const {stichtag, faelle} = computeVerordnungsfaelle();
+  const fmtDE = d => d ? d.toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'numeric'}) : '–';
+
+  const bewertbar = faelle.filter(f=>f.hatKatalog && !f.bvb);
+  const mitPotential = bewertbar.filter(f=>f.headroom>0);
+  const ausgeschoepft = bewertbar.filter(f=>f.headroom===0);
+  const bvbFaelle = faelle.filter(f=>f.bvb);
+  const ohneKatalog = faelle.filter(f=>!f.hatKatalog && !f.bvb);
+  const summeNochRez = mitPotential.reduce((s,f)=>s+(f.nochRezepte||0),0);
+
+  // Sortierung: größtes ungenutztes Potential zuerst
+  mitPotential.sort((a,b)=> (b.headroom-a.headroom) || (b.lastRez-a.lastRez));
+  ausgeschoepft.sort((a,b)=> (b.lastRez-a.lastRez));
+  bvbFaelle.sort((a,b)=> (b.lastRez-a.lastRez));
 
   let h = `<div class="summary">
-    <h2>🔄 Folge-VO · Patientenbindung nach Quartal</h2>
+    <h2>🎯 Folge-VO · Behandlungspotential nach Heilmittelrichtlinie</h2>
     <div class="sg">
-      <div class="si"><div class="si-l">Patienten</div><div class="si-v">${kandidaten.length}</div><div class="si-s">ohne Maske D, aktiv</div></div>
-      <div class="si"><div class="si-l">📇 Nur 1 Rezept</div><div class="si-v">${nurEins}</div><div class="si-s">aktiv binden!</div></div>
-      <div class="si"><div class="si-l">🎫 Offenes FV-Budget</div><div class="si-v">${offenBudget}</div><div class="si-s">mögl. Folge-VO (Q aktuell)</div></div>
-      <div class="si"><div class="si-l">🔴 Offen</div><div class="si-v">${cntOffen}</div><div class="si-s">noch nicht kontaktiert</div></div>
+      <div class="si"><div class="si-l">Offene Verordnungsfälle</div><div class="si-v">${bewertbar.length}</div><div class="si-s">mit Katalog-Zuordnung</div></div>
+      <div class="si"><div class="si-l">💡 Ungenutztes Potential</div><div class="si-v">${mitPotential.length}</div><div class="si-s">orient. Menge nicht ausgeschöpft</div></div>
+      <div class="si"><div class="si-l">🎫 Noch mögliche Rezepte</div><div class="si-v">${summeNochRez}</div><div class="si-s">bis zur orient. Menge</div></div>
+      <div class="si"><div class="si-l">♾️ BVB / LVB</div><div class="si-v">${bvbFaelle.length}</div><div class="si-s">budgetfrei, faktisch offen</div></div>
     </div>
   </div>`;
 
-  h += `<div style="background:var(--primary-bg,#eef2ff);border:1px solid var(--primary);border-radius:12px;padding:12px 14px;margin-bottom:14px;font-size:11px;color:var(--dark)">
-    <b style="color:var(--primary);font-family:Montserrat;font-weight:800">ℹ️ Quartalslogik:</b>
-    Annahme: bis zu <b>${REZ_PRO_Q} Rezepte pro Quartal</b>. „Offen" = ${REZ_PRO_Q} − Rezepte im aktuellen Quartal (${quarterLabel(qNow)}). Der Doing-Status wird lokal gespeichert (Klick wechselt 🔴→🟡→🟢).</div>`;
+  h += `<div style="background:var(--primary-bg,#eef2ff);border:1px solid var(--primary);border-radius:12px;padding:12px 14px;margin-bottom:12px;font-size:11px;color:var(--dark);line-height:1.6">
+    <b style="color:var(--primary);font-family:Montserrat;font-weight:800">ℹ️ So wird gerechnet:</b>
+    Je <b>Verordnungsfall</b> (Patient + ICD-3-Steller + Diagnosegruppe, neue Kette nach 6 Monaten ohne Rezept) wird die <b>orientierende Behandlungsmenge</b> des Heilmittelkatalogs mit den bereits <b>verordneten</b> Einheiten verglichen. „Noch X Rezepte" = verbleibende Menge ÷ Höchstmenge je Verordnung. Stichtag = letzter belegter Termin (<b>${fmtDE(stichtag)}</b>), Dauerpatienten (Maske D) ausgeblendet.
+    <br><span style="color:var(--amber)"><b>⚠️ Katalogwerte:</b> WS / EX / LY gesichert · ZN, PN, CS, AT, SO <b>vorläufig</b> – bitte final gegen den G-BA-Heilmittelkatalog prüfen.</span></div>`;
 
-  h += leitfadenBox('folgevo', 'Folgeverordnung ansprechen', 'z.B.: „… Ihr aktuelles Rezept ist bald aufgebraucht. Sollen wir schon einen Folgetermin einplanen? Bitte lassen Sie sich von Ihrem Arzt eine Folgeverordnung ausstellen …"');
+  h += leitfadenBox('folgevo', 'Folgeverordnung ansprechen', 'z.B.: „… Ihr aktuelles Rezept ist bald aufgebraucht und Sie haben laut Heilmittelrichtlinie noch Behandlungspotential. Sollen wir schon einen Folgetermin einplanen? Bitte lassen Sie sich von Ihrem Arzt eine Folgeverordnung ausstellen …"');
 
   h += `<div class="nr-filters" style="margin-bottom:14px">`;
   [
-    {f:'offen',l:'🔴 Offen',c:cntOffen},
-    {f:'doing',l:'🟡 In Arbeit',c:cntDoing},
-    {f:'erledigt',l:'🟢 Erledigt',c:cntFertig},
-    {f:'eins',l:'📇 Nur 1 Rezept',c:nurEins},
-    {f:'alle',l:'Alle',c:kandidaten.length}
+    {f:'offen', l:'💡 Ungenutztes Potential', c:mitPotential.length},
+    {f:'bvb',   l:'♾️ BVB / LVB',            c:bvbFaelle.length},
+    {f:'voll',  l:'✅ Ausgeschöpft',          c:ausgeschoepft.length},
+    {f:'ohne',  l:'❔ Ohne Diagnosegruppe',   c:ohneKatalog.length}
   ].forEach(x=>{
     h += `<button class="nr-filter${currentFvoFilter===x.f?' a':''}" onclick="setFvoFilter('${x.f}')">${x.l} (${x.c})</button>`;
   });
   h += `</div>`;
 
-  let gefiltert = kandidaten;
-  if(currentFvoFilter==='eins') gefiltert = kandidaten.filter(p=>p.nRezGesamt===1);
-  else if(currentFvoFilter!=='alle') gefiltert = kandidaten.filter(p=>p.doing===currentFvoFilter);
-  if(!gefiltert.length){
-    h += `<div class="empty">Keine Patienten in dieser Kategorie 🎉</div>`;
-    document.getElementById('content').innerHTML = h; return;
-  }
-
   const statusMeta = {offen:{l:'🔴 Offen',c:'var(--accent)',bg:'var(--accent-bg)'}, doing:{l:'🟡 In Arbeit',c:'var(--amber)',bg:'var(--amber-bg)'}, erledigt:{l:'🟢 Erledigt',c:'var(--teal)',bg:'var(--teal-bg)'}};
-  h += `<div class="ausl-card" style="padding:8px">`;
-  gefiltert.forEach(p=>{
-    const age = p.geb ? Math.floor((Date.now()-new Date(p.geb).getTime())/(365.25*86400000)) : null;
-    const sm = statusMeta[p.doing]||statusMeta.offen;
-    const tel = p.mobil ? `<a class="pr-tel" href="tel:${p.mobil.replace(/[^+\d]/g,'')}">📞 ${p.mobil}</a>` : '';
-    const letzter = p.lastRez ? p.lastRez.toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'2-digit'}) : '–';
-    const budgeBadge = p.offenFV>0 ? `<span class="ac-p" style="background:var(--primary-bg);color:var(--primary)">${p.offenFV} FV offen</span>` : '';
-    h += `<div class="ac" style="cursor:default;border-left-color:${p.nRezGesamt===1?'var(--accent)':'var(--primary)'}">
-      <div class="ac-b">
-        <div class="ac-t">${esc(p.name)}${age?' · '+age+'J':''}${p.nRezGesamt===1?' <span class="cat-chip" style="background:var(--accent)">nur 1 Rezept</span>':''}</div>
-        <div class="ac-s">Vorquartal <b>${p.vorQ}</b> · aktuell <b>${p.aktQ}</b>/${REZ_PRO_Q} · offen <b>${p.offenFV}</b> · letztes Rezept ${letzter}</div>
+
+  // Karten-Renderer für einen Fall (mit Potential-Balken)
+  const renderFall = (f, mode) => {
+    const age = f.geb ? Math.floor((stichtag.getTime()-new Date(f.geb).getTime())/(365.25*86400000)) : null;
+    const sm = statusMeta[f.status]||statusMeta.offen;
+    const tel = f.mobil ? `<a class="pr-tel" href="tel:${String(f.mobil).replace(/[^+\d]/g,'')}">📞 ${esc(f.mobil)}</a>` : '';
+    const grpChip = f.gruppe ? `<span class="cat-chip" style="background:var(--primary)">${esc(f.gruppe)}${KAT_SICHER[f.gruppe]?'':' *'}</span>` : '';
+    let mitte='';
+    if(mode==='bvb'){
+      mitte = `<div class="ac-s">${esc(f.bvbName||f.bvb)} · <b style="color:var(--teal)">budgetfrei</b> · ${f.verordnet} verordnet / ${f.erbracht} erbracht · letztes Rezept ${fmtDE(f.lastRez)}</div>`;
+    } else if(mode==='ohne'){
+      mitte = `<div class="ac-s">Indikationsschlüssel im Export leer – nicht bewertbar · ${f.verordnet} verordnet / ${f.erbracht} erbracht · letztes Rezept ${fmtDE(f.lastRez)}</div>`;
+    } else {
+      const pct = f.ausschoepf||0;
+      const barCol = pct>=90?'var(--accent)':pct>=60?'var(--amber)':'var(--teal)';
+      const nochTxt = f.nochRezepte>0
+        ? `<b style="color:var(--primary)">noch ${f.nochRezepte} Rezept${f.nochRezepte>1?'e':''} möglich</b>`
+        : `<b style="color:var(--accent)">orient. Menge erreicht</b>`;
+      mitte = `<div class="ac-s" style="margin-bottom:4px">${f.verordnet} / ${f.orient} Einheiten verordnet · ${f.erbracht} erbracht · ${nochTxt} · letztes Rezept ${fmtDE(f.lastRez)}</div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <div style="flex:1;height:7px;background:var(--border,#e5e7eb);border-radius:100px;overflow:hidden">
+            <div style="width:${pct}%;height:100%;background:${barCol};border-radius:100px"></div>
+          </div>
+          <span style="font-family:Montserrat;font-weight:800;font-size:10px;color:${barCol};min-width:34px;text-align:right">${pct}%</span>
+        </div>`;
+    }
+    const borderCol = mode==='bvb'?'var(--teal)':(f.headroom>0?'var(--primary)':'var(--border)');
+    return `<div class="ac" style="cursor:default;border-left-color:${borderCol};align-items:flex-start;flex-wrap:wrap">
+      <div class="ac-b" style="min-width:60%">
+        <div class="ac-t">${esc(f.name)}${age?' · '+age+'J':''} ${grpChip} <span style="color:var(--muted,#94a3b8);font-weight:600;font-size:10px">${esc(f.icd)}</span></div>
+        ${mitte}
       </div>
-      ${budgeBadge}
       ${tel}
-      <button class="pr-tel" style="background:${sm.bg};color:${sm.c};border:none;cursor:pointer" onclick="cycleDoingStatus('${jsq(p.patKey)}','folgevo')">${sm.l} ⟳</button>
+      <button class="pr-tel" style="background:${sm.bg};color:${sm.c};border:none;cursor:pointer" onclick="cycleFallStatus('${jsq(f.key)}')">${sm.l} ⟳</button>
     </div>`;
-  });
+  };
+
+  let liste, mode;
+  if(currentFvoFilter==='bvb'){ liste=bvbFaelle; mode='bvb'; }
+  else if(currentFvoFilter==='voll'){ liste=ausgeschoepft; mode='pot'; }
+  else if(currentFvoFilter==='ohne'){ liste=ohneKatalog; mode='ohne'; }
+  else { liste=mitPotential; mode='pot'; }
+
+  if(!liste.length){
+    h += `<div class="empty">Keine Fälle in dieser Kategorie 🎉</div>`;
+    document.getElementById('content').innerHTML=h; return;
+  }
+  if(currentFvoFilter==='bvb'){
+    h += `<div style="background:var(--teal-bg);border:1px solid var(--teal);border-radius:10px;padding:10px 12px;margin-bottom:10px;font-size:11px;color:var(--dark)">Diese Diagnosen sind <b>besonderer/langfristiger Verordnungsbedarf</b> – außerhalb des Budgets, praktisch unbegrenzt verordenbar. Behandlung nicht abreißen lassen.</div>`;
+  }
+  h += `<div class="ausl-card" style="padding:8px">`;
+  liste.slice(0,400).forEach(f=>{ h += renderFall(f, mode); });
   h += `</div>`;
   document.getElementById('content').innerHTML = h;
 }

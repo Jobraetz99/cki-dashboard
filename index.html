@@ -1855,11 +1855,18 @@ function renderOffene(){
   const threshold = WEEKS[currentOffeneFilter];
 
   // 1) Stichtag: spätester wahrgenommener (belegter) Termin im gesamten Export
-  let stichtag = null;
-  DATA.cells.forEach(c=>{ if(c.belegt && c.start && (!stichtag || c.start>stichtag)) stichtag = c.start; });
+  //    + spätester Termin überhaupt (belegt ODER geplant) → daran erkennt man, ob der
+  //      Export Zukunftstermine enthält (dann kann "hat Folgetermin?" geprüft werden).
+  let stichtag = null, maxAll = null;
+  DATA.cells.forEach(c=>{
+    if(!c.start) return;
+    if(c.belegt && (!stichtag || c.start>stichtag)) stichtag = c.start;
+    if(!maxAll || c.start>maxAll) maxAll = c.start;
+  });
   if(!stichtag) stichtag = new Date();
   const stEnd = new Date(stichtag); stEnd.setHours(23,59,59,999);
   const stT = stEnd.getTime();
+  const hatZukunftsdaten = !!(maxAll && maxAll.getTime() > stT);
   const fmtDE = d => d ? d.toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'numeric'}) : '–';
 
   // 2) Rezepte aggregieren
@@ -1945,6 +1952,14 @@ function renderOffene(){
     <b style="color:var(--dark)">Stichtag:</b> ${fmtDE(stichtag)} (spätester wahrgenommener Termin im Export – dient als „heute“, weil der Export nicht tagesaktuell ist).
     &nbsp;·&nbsp; <b style="color:var(--dark)">${dauerRaus}</b> Dauerpatienten (Maske D) ausgeblendet – bei ihnen plant Theorg keine Termine aufs Rezept.
   </div>`;
+
+  if(!hatZukunftsdaten){
+    h += `<div style="background:var(--amber-bg);border:1px solid var(--amber);border-radius:10px;padding:10px 12px;margin-bottom:12px;font-size:11px;color:var(--dark);line-height:1.5">
+      <b style="color:var(--amber);font-family:Montserrat;font-weight:800">⚠️ Export enthält keine Zukunftstermine</b><br>
+      Die Daten enden am Stichtag (${fmtDE(stichtag)}) – es gibt keine geplanten Termine danach. „Hat Folgetermin?" kann daher nicht geprüft werden, es zählt nur, wie lange der letzte Termin her ist.
+      Für die volle Logik in Theorg mit Enddatum in der Zukunft exportieren (z. B. bis 31.12.), dann kommen die geplanten Termine mit.
+    </div>`;
+  }
 
   h += leitfadenBox('offene','📞 Telefonleitfaden · Offene Rezepte','Text folgt – z.B. Gesprächsleitfaden für Rückholung abgesprungener Patienten / Abrechnungs-Nachfrage …');
 

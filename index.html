@@ -419,7 +419,7 @@ let currentTherapist = 'all';
 let selectedTherapists = null;
 let currentRezeptCat = 'nr';
 let currentNRFilter = 'all';
-let currentOffeneFilter = 'all';
+let currentOffeneFilter = 'w4';
 let currentFvoFilter = 'offen';
 let currentPotFilter = 'alle';
 
@@ -1842,19 +1842,33 @@ function showGapNR(gapId, gapMin, thName, gapStartISO){
 // VIEW: OFFENE REZEPTE
 // ═══════════════════════════════════════════════════════════
 function renderOffene(){
-  // KARTEILEICHEN: Rezepte die hängen geblieben sind
-  // Typ A: FERTIG aber nicht abgerechnet (6/6 aber keine Quittung/Rechnung)
-  // Typ B: ANGEFANGEN aber keine zukünftigen Termine (4/6 + nichts geplant)
-  
-  const today = new Date(); today.setHours(0,0,0,0);
+  // OFFENE REZEPTE — Rezepte mit Handlungsbedarf, deren letzter Termin schon eine Weile her ist.
+  // Aufnahme wenn:  (nicht abgerechnet)  ODER  (noch offene Behandlungen, rest>0)
+  //   UND letzter wahrgenommener Termin >= X Wochen her  UND  kein Zukunftstermin geplant.
+  // Stichtag = spätester wahrgenommener Termin im Export (der Export hinkt der Echtzeit hinterher,
+  //   deshalb nicht das echte Heute als Bezug nehmen).
+  // Dauerpatienten (Maske D) komplett raus — bei ihnen werden in Theorg keine Termine aufs Rezept geplant.
+  // Rehasport/Anamnese raus. Blanko-VOs sind enthalten (echte Menge via getBlankoMax).
+
+  const WEEKS = { w2:14, w4:28, w6:42 };
+  if(!(currentOffeneFilter in WEEKS)) currentOffeneFilter = 'w4';
+  const threshold = WEEKS[currentOffeneFilter];
+
+  // 1) Stichtag: spätester wahrgenommener (belegter) Termin im gesamten Export
+  let stichtag = null;
+  DATA.cells.forEach(c=>{ if(c.belegt && c.start && (!stichtag || c.start>stichtag)) stichtag = c.start; });
+  if(!stichtag) stichtag = new Date();
+  const stEnd = new Date(stichtag); stEnd.setHours(23,59,59,999);
+  const stT = stEnd.getTime();
+  const fmtDE = d => d ? d.toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'numeric'}) : '–';
+
+  // 2) Rezepte aggregieren
   const rezMap = {};
   const excl = new Set();
-
-  // Sammle alle Rezepte
   DATA.cells.forEach(c=>{
-    if(!c.rezeptNr || c.belArt!=='R' || !c.patNach)return;
+    if(!c.rezeptNr || c.belArt!=='R' || !c.patNach) return;
     if(c.excluded){ excl.add(c.rezeptNr); return; }
-    if(isCheckerExcludedHM(c.heilmittel))return;   // Rehasport/Anamnese raus
+    if(isCheckerExcludedHM(c.heilmittel)) return;   // Rehasport/Anamnese raus
     const k = c.rezeptNr;
     if(!rezMap[k]){
       rezMap[k] = {
@@ -1869,142 +1883,111 @@ function renderOffene(){
         belegteTermine: new Set(),
         zukunftTermine: new Set(),
         lastTerminDate: null,
-        nextTerminDate: null,
-        patKey: c.patKey||patKeyFor(c),
-        dauerJ:0, dauerN:0
+        patKey: c.patKey||patKeyFor(c)
       };
     }
-    if(c.dauertermin) rezMap[k].dauerJ++; else rezMap[k].dauerN++;
     // Wahrgenommener Termin
     if(c.termIdent && c.belegt){
       rezMap[k].belegteTermine.add(c.termIdent);
-      if(!rezMap[k].lastTerminDate || c.start>rezMap[k].lastTerminDate){
-        rezMap[k].lastTerminDate = c.start;
-      }
+      if(!rezMap[k].lastTerminDate || c.start>rezMap[k].lastTerminDate) rezMap[k].lastTerminDate = c.start;
     }
-    // Zukünftiger Termin (geplant, ab heute)
-    if(c.termIdent && c.start>=today){
-      rezMap[k].zukunftTermine.add(c.termIdent);
-      if(!rezMap[k].nextTerminDate || c.start<rezMap[k].nextTerminDate){
-        rezMap[k].nextTerminDate = c.start;
-      }
-    }
+    // Zukünftiger Termin: geplant NACH dem Stichtag
+    if(c.termIdent && c.start && c.start.getTime()>stT) rezMap[k].zukunftTermine.add(c.termIdent);
   });
-  
-  // Berechne erbrachte vs verordnete Behandlungen
   excl.forEach(k=>{ delete rezMap[k]; });
+
+  // 3) Kennzahlen je Rezept
   let rezepte = Object.values(rezMap).map(r=>{
     r.erbracht = r.belegteTermine.size;
     r.hasFuture = r.zukunftTermine.size > 0;
     r.istDauer = isDauerPatKey(r.patKey);
-
-    // Echte Menge bestimmen: bei Blanko ist Menge=1 oft Platzhalter
     const isBlanko = isBlankoHM(r.heilmittel);
-    if(isBlanko){
-      r.echteMenge = getBlankoMax(r.icd);
-      r.istBlanko = true;
-    } else {
-      r.echteMenge = r.menge || 0;
-      r.istBlanko = false;
-    }
-    
+    if(isBlanko){ r.echteMenge = getBlankoMax(r.icd); r.istBlanko = true; }
+    else { r.echteMenge = r.menge || 0; r.istBlanko = false; }
     r.rest = Math.max(0, r.echteMenge - r.erbracht);
-    
-    // Abrechnungsstatus
     r.istAbgerechnet = !!(r.quittungNr || r.rechnungNr || r.abrechnungsdatum) ||
                        (r.bearbStatus && r.bearbStatus.toLowerCase().includes('abgerechn'));
-    
-    // Tage seit letztem Termin
-    if(r.lastTerminDate){
-      r.tageSeitLetzterTermin = Math.floor((today-r.lastTerminDate)/86400000);
-    }
+    r.tageSeitLetzterTermin = r.lastTerminDate
+      ? Math.floor((stT - r.lastTerminDate.getTime())/86400000) : null;
     return r;
   });
-  lastDauerCount = rezepte.filter(r=>r.istDauer).length;
-  if(isDauerHidden()) rezepte = rezepte.filter(r=>!r.istDauer);
 
-  // KATEGORISIEREN: Karteileichen finden
-  
-  // TYP A: FERTIG aber nicht abgerechnet
-  // → erbracht >= echteMenge UND nicht abgerechnet
-  const typA_nichtAbgerechnet = rezepte.filter(r=>{
-    if(r.istAbgerechnet) return false;
-    if(r.echteMenge <= 0) return false;
-    if(r.istBlanko) return false; // Blanko muss man anders bewerten
-    return r.erbracht >= r.echteMenge;
-  }).sort((a,b)=>(b.tageSeitLetzterTermin||0)-(a.tageSeitLetzterTermin||0));
-  
-  // TYP B: ANGEFANGEN aber keine zukünftigen Termine
-  // → erbracht > 0, noch Rest offen, keine zukünftigen Termine
-  const typB_ohneFolgetermin = rezepte.filter(r=>{
-    if(r.istAbgerechnet) return false;
-    if(r.echteMenge <= 0) return false;
-    if(r.erbracht === 0) return false;
-    if(r.erbracht >= r.echteMenge) return false; // ist in Typ A
-    if(r.hasFuture) return false; // hat Folgetermin
-    return true;
-  }).sort((a,b)=>(b.tageSeitLetzterTermin||0)-(a.tageSeitLetzterTermin||0));
-  
+  // 4) Dauerpatienten KOMPLETT raus (kein Toggle)
+  const dauerRaus = rezepte.filter(r=>r.istDauer).length;
+  rezepte = rezepte.filter(r=>!r.istDauer);
+
+  // 5) Basis-Pool: gestartet, kein Zukunftstermin, Handlungsbedarf, letzter Termin bekannt
+  const basePool = rezepte.filter(r=>
+    r.erbracht>0 && !r.hasFuture && r.tageSeitLetzterTermin!=null &&
+    (!r.istAbgerechnet || r.rest>0)
+  );
+  const cntFor = t => basePool.filter(r=>r.tageSeitLetzterTermin>=t).length;
+
+  // 6) Kandidaten nach gewähltem Schwellwert + zwei Anzeige-Gruppen
+  const kandidaten = basePool.filter(r=>r.tageSeitLetzterTermin>=threshold);
+  const grpFertig = kandidaten.filter(r=>r.erbracht>=r.echteMenge && !r.istAbgerechnet)
+    .sort((a,b)=>(b.tageSeitLetzterTermin||0)-(a.tageSeitLetzterTermin||0));
+  const grpOffen = kandidaten.filter(r=>r.rest>0)
+    .sort((a,b)=>(b.tageSeitLetzterTermin||0)-(a.tageSeitLetzterTermin||0));
+  const aeltest = Math.max(...kandidaten.map(r=>r.tageSeitLetzterTermin||0), 0);
+
   let h = `<div class="summary">
-    <h2>🪦 Karteileichen · Hängengebliebene Rezepte</h2>
+    <h2>🪦 Offene Rezepte · seit ${threshold/7|0} Wochen kein Termin</h2>
     <div class="sg">
-      <div class="si"><div class="si-l">💰 Fertig, nicht abgerechnet</div><div class="si-v">${typA_nichtAbgerechnet.length}</div><div class="si-s">Geld liegt auf der Straße!</div></div>
-      <div class="si"><div class="si-l">📞 Ohne Folgetermin</div><div class="si-v">${typB_ohneFolgetermin.length}</div><div class="si-s">Patient ist abgesprungen</div></div>
-      <div class="si"><div class="si-l">📅 Älteste Karteileiche</div><div class="si-v">${Math.max(...rezepte.filter(r=>!r.istAbgerechnet&&r.lastTerminDate).map(r=>r.tageSeitLetzterTermin||0), 0)}d</div><div class="si-s">Tage seit letztem Termin</div></div>
-      <div class="si"><div class="si-l">💵 Potenzial</div><div class="si-v">${typA_nichtAbgerechnet.length + typB_ohneFolgetermin.length}</div><div class="si-s">Rezepte zum Aktivieren</div></div>
+      <div class="si"><div class="si-l">💰 Fertig, nicht abgerechnet</div><div class="si-v">${grpFertig.length}</div><div class="si-s">Geld liegt auf der Straße!</div></div>
+      <div class="si"><div class="si-l">📞 Offene Behandlungen</div><div class="si-v">${grpOffen.length}</div><div class="si-s">Rezept noch nicht ausgeschöpft</div></div>
+      <div class="si"><div class="si-l">📅 Ältester Fall</div><div class="si-v">${aeltest}d</div><div class="si-s">Tage seit letztem Termin</div></div>
+      <div class="si"><div class="si-l">💵 Gesamt</div><div class="si-v">${kandidaten.length}</div><div class="si-s">Rezepte zum Aktivieren</div></div>
     </div>
   </div>`;
-  
-  h += leitfadenBox('offene','📞 Telefonleitfaden · Offene Rezepte / Karteileichen','Text folgt – z.B. Gesprächsleitfaden für Rückholung abgesprungener Patienten / Abrechnungs-Nachfrage …');
 
-  h += `<div class="search-wrap"><input type="text" id="ofSearch" placeholder="🔍 Patient suchen..." oninput="filterOffeneSearch()">${dauerToggleHTML()}</div>`;
+  h += `<div style="background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:12px;font-size:11px;color:var(--muted);line-height:1.5">
+    <b style="color:var(--dark)">Stichtag:</b> ${fmtDE(stichtag)} (spätester wahrgenommener Termin im Export – dient als „heute“, weil der Export nicht tagesaktuell ist).
+    &nbsp;·&nbsp; <b style="color:var(--dark)">${dauerRaus}</b> Dauerpatienten (Maske D) ausgeblendet – bei ihnen plant Theorg keine Termine aufs Rezept.
+  </div>`;
+
+  h += leitfadenBox('offene','📞 Telefonleitfaden · Offene Rezepte','Text folgt – z.B. Gesprächsleitfaden für Rückholung abgesprungener Patienten / Abrechnungs-Nachfrage …');
+
+  h += `<div class="search-wrap"><input type="text" id="ofSearch" placeholder="🔍 Patient suchen..." oninput="filterOffeneSearch()"></div>`;
 
   h += `<div class="nr-filters" style="margin-bottom:14px">`;
   [
-    {f:'all', l:'Alle', c:typA_nichtAbgerechnet.length+typB_ohneFolgetermin.length},
-    {f:'abr', l:'💰 Nicht abgerechnet', c:typA_nichtAbgerechnet.length},
-    {f:'ohne', l:'📞 Ohne Folgetermin', c:typB_ohneFolgetermin.length}
+    {f:'w2', l:'⏱️ seit 2 Wochen', t:14},
+    {f:'w4', l:'📅 seit 4 Wochen', t:28},
+    {f:'w6', l:'🗓️ seit 6 Wochen', t:42}
   ].forEach(x=>{
-    h += `<button class="nr-filter${currentOffeneFilter===x.f?' a':''}" onclick="setOffeneFilter('${x.f}')">${x.l} (${x.c})</button>`;
+    h += `<button class="nr-filter${currentOffeneFilter===x.f?' a':''}" onclick="setOffeneFilter('${x.f}')">${x.l} (${cntFor(x.t)})</button>`;
   });
   h += `</div>`;
-  
-  // TYP A rendern
-  if(currentOffeneFilter==='all' || currentOffeneFilter==='abr'){
-    if(typA_nichtAbgerechnet.length){
-      h += `<div class="subgroup">
-        <div class="subgroup-h"><span class="crit">💰 FERTIG aber NICHT ABGERECHNET</span> <span class="cnt">— Rezept komplett behandelt, aber noch keine Quittung/Rechnung (${typA_nichtAbgerechnet.length})</span></div>
-        <div style="background:var(--fire-bg);border-radius:10px;padding:10px 12px;margin-bottom:8px;font-size:11px;color:var(--dark)">
-          <b style="color:var(--fire);font-family:Montserrat;font-weight:800">🎯 Aktion:</b> 
-          Diese Rezepte sind komplett erbracht. Quittung erstellen → bei Kasse einreichen → Geld einkassieren!
-        </div>`;
-      typA_nichtAbgerechnet.forEach(r => h += renderKarteileiche(r, 'abr'));
-      h += `</div>`;
-    } else if(currentOffeneFilter==='abr'){
-      h += `<div class="empty">Keine fertigen Rezepte ohne Abrechnung 🎉</div>`;
-    }
+
+  // Gruppe: fertig, nicht abgerechnet
+  if(grpFertig.length){
+    h += `<div class="subgroup">
+      <div class="subgroup-h"><span class="crit">💰 FERTIG aber NICHT ABGERECHNET</span> <span class="cnt">— Rezept komplett behandelt, aber noch keine Quittung/Rechnung (${grpFertig.length})</span></div>
+      <div style="background:var(--fire-bg);border-radius:10px;padding:10px 12px;margin-bottom:8px;font-size:11px;color:var(--dark)">
+        <b style="color:var(--fire);font-family:Montserrat;font-weight:800">🎯 Aktion:</b>
+        Diese Rezepte sind komplett erbracht. Quittung erstellen → bei Kasse einreichen → Geld einkassieren!
+      </div>`;
+    grpFertig.forEach(r => h += renderKarteileiche(r, 'abr'));
+    h += `</div>`;
   }
-  
-  // TYP B rendern
-  if(currentOffeneFilter==='all' || currentOffeneFilter==='ohne'){
-    if(typB_ohneFolgetermin.length){
-      h += `<div class="subgroup">
-        <div class="subgroup-h"><span class="miss">📞 ANGEFANGEN ohne FOLGETERMIN</span> <span class="cnt">— Behandlung läuft, kein nächster Termin geplant (${typB_ohneFolgetermin.length})</span></div>
-        <div style="background:var(--accent-bg);border-radius:10px;padding:10px 12px;margin-bottom:8px;font-size:11px;color:var(--dark)">
-          <b style="color:var(--accent);font-family:Montserrat;font-weight:800">🎯 Aktion:</b> 
-          Diese Patienten haben Termine erbracht, aber keine weiteren geplant. Anrufen → neuen Termin vereinbaren → Rezept abschließen!
-        </div>`;
-      typB_ohneFolgetermin.forEach(r => h += renderKarteileiche(r, 'ohne'));
-      h += `</div>`;
-    } else if(currentOffeneFilter==='ohne'){
-      h += `<div class="empty">Alle angefangenen Rezepte haben Folgetermine 🎉</div>`;
-    }
+
+  // Gruppe: noch offene Behandlungen
+  if(grpOffen.length){
+    h += `<div class="subgroup">
+      <div class="subgroup-h"><span class="miss">📞 NOCH OFFENE BEHANDLUNGEN</span> <span class="cnt">— Rezept noch nicht ausgeschöpft, kein Folgetermin geplant (${grpOffen.length})</span></div>
+      <div style="background:var(--accent-bg);border-radius:10px;padding:10px 12px;margin-bottom:8px;font-size:11px;color:var(--dark)">
+        <b style="color:var(--accent);font-family:Montserrat;font-weight:800">🎯 Aktion:</b>
+        Diese Patienten haben noch Behandlungen frei, aber keinen weiteren Termin. Anrufen → neuen Termin vereinbaren → Rezept abschließen!
+      </div>`;
+    grpOffen.forEach(r => h += renderKarteileiche(r, 'ohne'));
+    h += `</div>`;
   }
-  
-  if(!typA_nichtAbgerechnet.length && !typB_ohneFolgetermin.length){
-    h += `<div class="empty" style="background:var(--teal-bg);border:1px solid var(--teal);color:var(--teal)"><b>🎉 Keine Karteileichen!</b><br><span style="font-size:11px">Alle Rezepte werden bearbeitet, sind verplant oder abgerechnet.</span></div>`;
+
+  if(!kandidaten.length){
+    h += `<div class="empty" style="background:var(--teal-bg);border:1px solid var(--teal);color:var(--teal)"><b>🎉 Nichts offen!</b><br><span style="font-size:11px">Kein Rezept mit ${threshold/7|0}+ Wochen ohne Termin, das noch Handlungsbedarf hätte.</span></div>`;
   }
-  
+
   document.getElementById('content').innerHTML = h;
 }
 
@@ -2695,7 +2678,7 @@ function renderFolgeVO(){
 // VIEW: AUFGABEN (Tages-Cockpit für Praxismanager)
 // ═══════════════════════════════════════════════════════════
 // Navigation aus den Aufgaben-Kacheln in die jeweiligen Tabs
-function gotoOffene(f){ currentOffeneFilter=f; switchView('offene'); }
+function gotoOffene(f){ currentOffeneFilter=(f==='w2'||f==='w4'||f==='w6')?f:'w4'; switchView('offene'); }
 function gotoFolgeVO(){ currentFvoFilter='offen'; switchView('folgevo'); }
 
 // ── Abhak-Status (localStorage) ──

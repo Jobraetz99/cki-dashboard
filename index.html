@@ -2616,10 +2616,15 @@ function setFvoFilter(f){ currentFvoFilter=f; renderFolgeVO(); }
 // Potential = orientierende Behandlungsmenge − bereits verordnete Einheiten.
 function computeVerordnungsfaelle(){
   // Stichtag = spätester belegter Termin (Export läuft der Realzeit hinterher)
-  let stichtag=null;
-  DATA.cells.forEach(c=>{ if(c.belegt && c.start && (!stichtag||c.start>stichtag)) stichtag=c.start; });
+  let stichtag=null, maxAll=null;
+  DATA.cells.forEach(c=>{
+    if(!c.start) return;
+    if(c.belegt && (!stichtag||c.start>stichtag)) stichtag=c.start;
+    if(!maxAll || c.start>maxAll) maxAll=c.start;
+  });
   if(!stichtag) stichtag=new Date();
   const stEnd=new Date(stichtag); stEnd.setHours(23,59,59,999); const stT=stEnd.getTime();
+  const hatZukunftsdaten = !!(maxAll && maxAll.getTime() > stT);
   const SIXM=183*864e5;
   // 1) pro Rezept aggregieren
   const rez={};
@@ -2631,15 +2636,19 @@ function computeVerordnungsfaelle(){
       rezeptNr:c.rezeptNr, patKey:c.patKey||patKeyFor(c), name:(c.patVor+' '+c.patNach).trim(),
       geb:c.patGeb, mobil:c.patMobil||'', icd:c.icd||'', ind:c.indikation||'',
       menge:c.menge||0, rezDatum:c.rezDatum||null, heilmittel:c.heilmittel,
-      blanko:isBlankoHM(c.heilmittel), bel:new Set()
+      blanko:isBlankoHM(c.heilmittel), bel:new Set(), fut:new Set(), nextTermin:null
     };
     if(!rez[k].ind && c.indikation) rez[k].ind=c.indikation;
     if(c.termIdent && c.belegt) rez[k].bel.add(c.termIdent);
+    if(c.termIdent && c.start && c.start.getTime()>stT){
+      rez[k].fut.add(c.termIdent);
+      if(!rez[k].nextTermin || c.start<rez[k].nextTermin) rez[k].nextTermin=c.start;
+    }
   });
   // 2) Rezepte → Verordnungsfälle (Patient + ICD-3-Steller), Diagnosegruppe aus irgendeinem Rezept
   const byCase={};
   Object.values(rez).forEach(r=>{
-    r.erbracht=r.bel.size; r.gruppe=diagnosegruppe(r.ind); r.icdRoot=icd3Steller(r.icd);
+    r.erbracht=r.bel.size; r.geplant=r.fut.size; r.gruppe=diagnosegruppe(r.ind); r.icdRoot=icd3Steller(r.icd);
     const key=r.patKey+'|'+r.icdRoot;
     (byCase[key]=byCase[key]||[]).push(r);
   });
@@ -2661,7 +2670,10 @@ function computeVerordnungsfaelle(){
     const anyBlanko=chain.some(r=>r.blanko);
     const verordnet=chain.reduce((s,r)=>s+(r.menge||0),0);
     const erbracht=chain.reduce((s,r)=>s+r.erbracht,0);
+    const geplant=chain.reduce((s,r)=>s+r.geplant,0);
+    const restVerordnet=Math.max(0, verordnet-erbracht-geplant); // verordnete, noch nicht verplante Einheiten
     const icd=chain.map(r=>r.icd).find(x=>x)||'';
+    let nextTermin=null; chain.forEach(r=>{ if(r.nextTermin && (!nextTermin||r.nextTermin<nextTermin)) nextTermin=r.nextTermin; });
     const bvb=findBVB(icd) || (findBVBAge70(icd, chain[0].geb) ? {t:'BVB',n:'ab 70'} : null);
     // Katalog-Zuordnung
     let orient=null, hoechst=null, quelle='';
@@ -2672,80 +2684,121 @@ function computeVerordnungsfaelle(){
     const ausschoepf = orient ? Math.min(100, Math.round(verordnet/orient*100)) : null;
     faelle.push({
       key, patKey:chain[0].patKey, name:chain[0].name, geb:chain[0].geb, mobil:chain[0].mobil,
-      icd, gruppe, anzRez:chain.length, verordnet, erbracht, lastRez,
+      icd, gruppe, anzRez:chain.length, verordnet, erbracht, geplant, restVerordnet, lastRez,
       bvb: bvb?bvb.t:'', bvbName: bvb?bvb.n:'',
       orient, hoechst, headroom, nochRezepte, ausschoepf, quelle,
       hatKatalog: orient!=null,
+      hasFuture: !!nextTermin, nextTermin,
       status: getFallStatus(key)
     });
   });
-  return {stichtag, faelle};
+  return {stichtag, faelle, hatZukunftsdaten};
+}
+
+// Handlungsstatus je Verordnungsfall = welcher konkrete nächste Schritt?
+//   folgevo : Potential offen (orient. Menge nicht ausgeschöpft) → Folge-VO vom Arzt holen
+//             Sonderfall nurEineVO: erst 1 VO im Fall, viel Potential → stärkstes Signal
+//   planen  : kein Potential mehr, aber verordnete Einheiten noch nicht verplant → Termine machen
+//   fertig  : verordnete Menge verplant UND orient. Menge ausgeschöpft → nichts zu tun
+function handlungsstatus(f){
+  if(f.headroom>0) return 'folgevo';
+  if(f.restVerordnet>0) return 'planen';
+  return 'fertig';
 }
 
 function renderFolgeVO(){
-  const {stichtag, faelle} = computeVerordnungsfaelle();
+  const {stichtag, faelle, hatZukunftsdaten} = computeVerordnungsfaelle();
   const fmtDE = d => d ? d.toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'numeric'}) : '–';
+  const fmtShort = d => d ? d.toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit'}) : '–';
 
   const bewertbar = faelle.filter(f=>f.hatKatalog && !f.bvb);
-  const mitPotential = bewertbar.filter(f=>f.headroom>0);
-  const ausgeschoepft = bewertbar.filter(f=>f.headroom===0);
+  bewertbar.forEach(f=>{ f.handlung=handlungsstatus(f); f.nurEineVO=(f.anzRez===1); });
+  const folgevo  = bewertbar.filter(f=>f.handlung==='folgevo');   // Potential offen
+  const erst1    = folgevo.filter(f=>f.nurEineVO);                 // erst 1 VO, Potential offen
+  const planen   = bewertbar.filter(f=>f.handlung==='planen');    // nur verplanen
+  const fertig   = bewertbar.filter(f=>f.handlung==='fertig');    // vollständig
   const bvbFaelle = faelle.filter(f=>f.bvb);
   const ohneKatalog = faelle.filter(f=>!f.hatKatalog && !f.bvb);
-  const summeNochRez = mitPotential.reduce((s,f)=>s+(f.nochRezepte||0),0);
+  const summeNochRez = folgevo.reduce((s,f)=>s+(f.nochRezepte||0),0);
 
-  // Sortierung: größtes ungenutztes Potential zuerst
-  mitPotential.sort((a,b)=> (b.headroom-a.headroom) || (b.lastRez-a.lastRez));
-  ausgeschoepft.sort((a,b)=> (b.lastRez-a.lastRez));
+  const byPot = (a,b)=> (b.headroom-a.headroom) || (b.lastRez-a.lastRez);
+  folgevo.sort((a,b)=> (a.nurEineVO===b.nurEineVO?0:(a.nurEineVO?-1:1)) || byPot(a,b)); // erst-1-VO zuerst
+  erst1.sort(byPot);
+  planen.sort((a,b)=> (b.restVerordnet-a.restVerordnet) || (b.lastRez-a.lastRez));
+  fertig.sort((a,b)=> (b.lastRez-a.lastRez));
   bvbFaelle.sort((a,b)=> (b.lastRez-a.lastRez));
 
   let h = `<div class="summary">
-    <h2>🎯 Folge-VO · Behandlungspotential nach Heilmittelrichtlinie</h2>
+    <h2>🎯 Folge-VO · Handlungssteps je Verordnungsfall</h2>
     <div class="sg">
       <div class="si"><div class="si-l">Offene Verordnungsfälle</div><div class="si-v">${bewertbar.length}</div><div class="si-s">mit Katalog-Zuordnung</div></div>
-      <div class="si"><div class="si-l">💡 Ungenutztes Potential</div><div class="si-v">${mitPotential.length}</div><div class="si-s">orient. Menge nicht ausgeschöpft</div></div>
-      <div class="si"><div class="si-l">🎫 Noch mögliche Rezepte</div><div class="si-v">${summeNochRez}</div><div class="si-s">bis zur orient. Menge</div></div>
-      <div class="si"><div class="si-l">♾️ BVB / LVB</div><div class="si-v">${bvbFaelle.length}</div><div class="si-s">budgetfrei, faktisch offen</div></div>
+      <div class="si"><div class="si-l">🎫 Folge-VO holen</div><div class="si-v">${folgevo.length}</div><div class="si-s">Potential nicht ausgeschöpft</div></div>
+      <div class="si"><div class="si-l">📇 Erst 1 VO</div><div class="si-v">${erst1.length}</div><div class="si-s">größtes ungenutztes Potential</div></div>
+      <div class="si"><div class="si-l">✅ Vollständig</div><div class="si-v">${fertig.length}</div><div class="si-s">nichts zu tun</div></div>
     </div>
   </div>`;
 
+  if(!hatZukunftsdaten){
+    h += `<div style="background:var(--amber-bg);border:1px solid var(--amber);border-radius:12px;padding:12px 14px;margin-bottom:12px;font-size:11px;color:var(--dark);line-height:1.6">
+      <b style="color:var(--amber);font-family:Montserrat;font-weight:800">⚠️ Export enthält keine Zukunftstermine.</b>
+      Der Export endet am Stichtag (<b>${fmtDE(stichtag)}</b>), danach stehen keine geplanten Termine. „Noch zu verplanen" zählt daher aktuell alle verordneten Einheiten, die noch nicht <b>erbracht</b> sind (geplante, aber noch nicht stattgefundene Termine kann er nicht sehen). Bitte den Export mit <b>Enddatum in der Zukunft</b> ziehen (z.B. bis 31.12.), dann wird „verplant vs. offen" exakt.</div>`;
+  }
+
   h += `<div style="background:var(--primary-bg,#eef2ff);border:1px solid var(--primary);border-radius:12px;padding:12px 14px;margin-bottom:12px;font-size:11px;color:var(--dark);line-height:1.6">
-    <b style="color:var(--primary);font-family:Montserrat;font-weight:800">ℹ️ So wird gerechnet:</b>
-    Je <b>Verordnungsfall</b> (Patient + ICD-3-Steller + Diagnosegruppe, neue Kette nach 6 Monaten ohne Rezept) wird die <b>orientierende Behandlungsmenge</b> des Heilmittelkatalogs mit den bereits <b>verordneten</b> Einheiten verglichen. „Noch X Rezepte" = verbleibende Menge ÷ Höchstmenge je Verordnung. Stichtag = letzter belegter Termin (<b>${fmtDE(stichtag)}</b>), Dauerpatienten (Maske D) ausgeblendet.
+    <b style="color:var(--primary);font-family:Montserrat;font-weight:800">ℹ️ Handlungslogik je Verordnungsfall:</b>
+    <b>🎫 Folge-VO holen</b> = orientierende Behandlungsmenge noch nicht ausgeschöpft → neue VO vom Arzt (Sonderfall <b>📇 erst 1 VO</b> = viel Potential offen). <b>📅 Nur verplanen</b> = keine weitere VO nötig, aber verordnete Einheiten noch nicht terminiert. <b>✅ Vollständig</b> = verplant und ausgeschöpft. Verordnungsfall = Patient + ICD-3-Steller + Diagnosegruppe, neue Kette nach 6 Monaten. Stichtag <b>${fmtDE(stichtag)}</b>, Dauerpatienten (Maske D) ausgeblendet.
     <br><span style="color:var(--amber)"><b>⚠️ Katalogwerte:</b> WS / EX / LY gesichert · ZN, PN, CS, AT, SO <b>vorläufig</b> – bitte final gegen den G-BA-Heilmittelkatalog prüfen.</span></div>`;
 
   h += leitfadenBox('folgevo', 'Folgeverordnung ansprechen', 'z.B.: „… Ihr aktuelles Rezept ist bald aufgebraucht und Sie haben laut Heilmittelrichtlinie noch Behandlungspotential. Sollen wir schon einen Folgetermin einplanen? Bitte lassen Sie sich von Ihrem Arzt eine Folgeverordnung ausstellen …"');
 
   h += `<div class="nr-filters" style="margin-bottom:14px">`;
   [
-    {f:'offen', l:'💡 Ungenutztes Potential', c:mitPotential.length},
-    {f:'bvb',   l:'♾️ BVB / LVB',            c:bvbFaelle.length},
-    {f:'voll',  l:'✅ Ausgeschöpft',          c:ausgeschoepft.length},
-    {f:'ohne',  l:'❔ Ohne Diagnosegruppe',   c:ohneKatalog.length}
+    {f:'erst1', l:'📇 Erst 1 VO',        c:erst1.length},
+    {f:'offen', l:'🎫 Folge-VO holen',   c:folgevo.length},
+    {f:'planen',l:'📅 Nur verplanen',    c:planen.length},
+    {f:'voll',  l:'✅ Vollständig',       c:fertig.length},
+    {f:'bvb',   l:'♾️ BVB / LVB',        c:bvbFaelle.length},
+    {f:'ohne',  l:'❔ Ohne Diagnosegruppe',c:ohneKatalog.length}
   ].forEach(x=>{
     h += `<button class="nr-filter${currentFvoFilter===x.f?' a':''}" onclick="setFvoFilter('${x.f}')">${x.l} (${x.c})</button>`;
   });
   h += `</div>`;
 
   const statusMeta = {offen:{l:'🔴 Offen',c:'var(--accent)',bg:'var(--accent-bg)'}, doing:{l:'🟡 In Arbeit',c:'var(--amber)',bg:'var(--amber-bg)'}, erledigt:{l:'🟢 Erledigt',c:'var(--teal)',bg:'var(--teal-bg)'}};
+  // Handlungs-Badge (nächster Schritt) je Fall
+  const handlungMeta = {
+    folgevo:{l:'🎫 Folge-VO holen', c:'var(--primary)'},
+    planen: {l:'📅 Termine verplanen', c:'var(--accent)'},
+    fertig: {l:'✅ vollständig', c:'var(--teal)'}
+  };
 
-  // Karten-Renderer für einen Fall (mit Potential-Balken)
+  // Karten-Renderer für einen Fall
   const renderFall = (f, mode) => {
     const age = f.geb ? Math.floor((stichtag.getTime()-new Date(f.geb).getTime())/(365.25*86400000)) : null;
     const sm = statusMeta[f.status]||statusMeta.offen;
     const tel = f.mobil ? `<a class="pr-tel" href="tel:${String(f.mobil).replace(/[^+\d]/g,'')}">📞 ${esc(f.mobil)}</a>` : '';
     const grpChip = f.gruppe ? `<span class="cat-chip" style="background:var(--primary)">${esc(f.gruppe)}${KAT_SICHER[f.gruppe]?'':' *'}</span>` : '';
-    let mitte='';
+    let mitte='', handlungBadge='', borderCol='var(--border)';
     if(mode==='bvb'){
+      borderCol='var(--teal)';
       mitte = `<div class="ac-s">${esc(f.bvbName||f.bvb)} · <b style="color:var(--teal)">budgetfrei</b> · ${f.verordnet} verordnet / ${f.erbracht} erbracht · letztes Rezept ${fmtDE(f.lastRez)}</div>`;
     } else if(mode==='ohne'){
       mitte = `<div class="ac-s">Indikationsschlüssel im Export leer – nicht bewertbar · ${f.verordnet} verordnet / ${f.erbracht} erbracht · letztes Rezept ${fmtDE(f.lastRez)}</div>`;
     } else {
+      const hm = handlungMeta[f.handlung]||handlungMeta.folgevo;
+      borderCol = hm.c;
+      handlungBadge = `<span class="cat-chip" style="background:${hm.c}">${hm.l}</span>`
+        + (f.nurEineVO && f.handlung==='folgevo' ? ` <span class="cat-chip" style="background:var(--accent)">📇 erst 1 VO</span>` : '')
+        + (f.hasFuture ? ` <span class="cat-chip" style="background:var(--teal)">📅 ${fmtShort(f.nextTermin)}</span>` : '');
       const pct = f.ausschoepf||0;
       const barCol = pct>=90?'var(--accent)':pct>=60?'var(--amber)':'var(--teal)';
-      const nochTxt = f.nochRezepte>0
-        ? `<b style="color:var(--primary)">noch ${f.nochRezepte} Rezept${f.nochRezepte>1?'e':''} möglich</b>`
-        : `<b style="color:var(--accent)">orient. Menge erreicht</b>`;
-      mitte = `<div class="ac-s" style="margin-bottom:4px">${f.verordnet} / ${f.orient} Einheiten verordnet · ${f.erbracht} erbracht · ${nochTxt} · letztes Rezept ${fmtDE(f.lastRez)}</div>
+      // konkreter Handlungssatz
+      let step='';
+      if(f.handlung==='folgevo') step = `<b style="color:var(--primary)">→ Folge-VO holen · noch ${f.nochRezepte} Rezept${f.nochRezepte>1?'e':''} möglich (${f.headroom} Einh. bis orient. Menge)</b>`;
+      else if(f.handlung==='planen') step = `<b style="color:var(--accent)">→ ${f.restVerordnet} verordnete Einh. noch verplanen</b>`;
+      else step = `<b style="color:var(--teal)">→ verplant &amp; ausgeschöpft – nichts zu tun</b>`;
+      mitte = `<div class="ac-s" style="margin-bottom:3px">${step}</div>
+        <div class="ac-s" style="margin-bottom:4px">${f.anzRez} VO · ${f.verordnet}/${f.orient} verordnet · ${f.erbracht} erbracht${f.geplant>0?' · '+f.geplant+' geplant':''}${f.restVerordnet>0?' · '+f.restVerordnet+' offen':''} · letztes Rezept ${fmtDE(f.lastRez)}</div>
         <div style="display:flex;align-items:center;gap:8px">
           <div style="flex:1;height:7px;background:var(--border,#e5e7eb);border-radius:100px;overflow:hidden">
             <div style="width:${pct}%;height:100%;background:${barCol};border-radius:100px"></div>
@@ -2753,10 +2806,9 @@ function renderFolgeVO(){
           <span style="font-family:Montserrat;font-weight:800;font-size:10px;color:${barCol};min-width:34px;text-align:right">${pct}%</span>
         </div>`;
     }
-    const borderCol = mode==='bvb'?'var(--teal)':(f.headroom>0?'var(--primary)':'var(--border)');
     return `<div class="ac" style="cursor:default;border-left-color:${borderCol};align-items:flex-start;flex-wrap:wrap">
       <div class="ac-b" style="min-width:60%">
-        <div class="ac-t">${esc(f.name)}${age?' · '+age+'J':''} ${grpChip} <span style="color:var(--muted,#94a3b8);font-weight:600;font-size:10px">${esc(f.icd)}</span></div>
+        <div class="ac-t">${esc(f.name)}${age?' · '+age+'J':''} ${grpChip} <span style="color:var(--muted,#94a3b8);font-weight:600;font-size:10px">${esc(f.icd)}</span> ${handlungBadge}</div>
         ${mitte}
       </div>
       ${tel}
@@ -2766,9 +2818,11 @@ function renderFolgeVO(){
 
   let liste, mode;
   if(currentFvoFilter==='bvb'){ liste=bvbFaelle; mode='bvb'; }
-  else if(currentFvoFilter==='voll'){ liste=ausgeschoepft; mode='pot'; }
+  else if(currentFvoFilter==='erst1'){ liste=erst1; mode='pot'; }
+  else if(currentFvoFilter==='planen'){ liste=planen; mode='pot'; }
+  else if(currentFvoFilter==='voll'){ liste=fertig; mode='pot'; }
   else if(currentFvoFilter==='ohne'){ liste=ohneKatalog; mode='ohne'; }
-  else { liste=mitPotential; mode='pot'; }
+  else { liste=folgevo; mode='pot'; }
 
   if(!liste.length){
     h += `<div class="empty">Keine Fälle in dieser Kategorie 🎉</div>`;

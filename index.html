@@ -329,6 +329,34 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--dark);min
 .tz-person{display:inline-flex;align-items:center;gap:7px;background:var(--card);border:1px solid var(--border);border-radius:100px;padding:5px 12px 5px 5px;box-shadow:var(--shadow);font-size:12px;font-weight:700;color:var(--dark)}
 .tz-person .asg-chip{cursor:default;width:24px;height:24px}
 .tz-person-n{font-size:11px;color:var(--muted);font-weight:700}
+/* ── Tagesziel: Umschalter Liste ↔ Kalender ── */
+.tz-modebar{display:inline-flex;background:var(--card);border:1px solid var(--border);border-radius:12px;padding:4px;gap:4px;margin-bottom:14px;box-shadow:var(--shadow)}
+.tz-mode{border:none;background:transparent;color:var(--muted);font-family:'Montserrat',sans-serif;font-weight:800;font-size:12.5px;padding:8px 16px;border-radius:9px;cursor:pointer;transition:all .15s}
+.tz-mode:hover{color:var(--dark)}
+.tz-mode.a{background:var(--primary);color:#fff;box-shadow:0 2px 6px rgba(79,70,229,.3)}
+/* ── Tagesplan (Kalender-Ansicht) ── */
+.tp-nav{display:flex;align-items:center;gap:12px;margin-bottom:14px}
+.tp-nav-c{flex:1;text-align:center}
+.tp-nav-day{font-family:'Montserrat',sans-serif;font-weight:800;font-size:15px;color:var(--dark)}
+.tp-nav-sub{font-size:11.5px;color:var(--muted);font-weight:700;margin-top:2px}
+.tp-hint{background:var(--primary-bg,#eef2ff);border:1px solid var(--primary);border-radius:12px;padding:12px 14px;font-size:12px;color:var(--dark);line-height:1.5}
+.tp-card{display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap;background:var(--card);border:1px solid var(--border);border-left:4px solid var(--primary);border-radius:14px;padding:12px 14px;margin-bottom:10px;box-shadow:var(--shadow)}
+.tp-time{flex-shrink:0;min-width:52px;font-family:'Montserrat',sans-serif;font-weight:900;font-size:17px;color:var(--primary);line-height:1.1}
+.tp-main{flex:1;min-width:200px}
+.tp-pat{font-family:'Montserrat',sans-serif;font-weight:800;font-size:14px;color:var(--dark)}
+.tp-th{font-weight:700;font-size:12px;color:var(--muted)}
+.tp-leist{font-size:11.5px;color:var(--muted);margin-top:1px}
+.tp-tasks{margin-top:8px;display:flex;flex-direction:column;gap:6px}
+.tp-task{display:flex;align-items:center;gap:9px;background:var(--bg,#f8fafc);border:1px solid var(--border);border-radius:10px;padding:6px 9px}
+.tp-task.done{opacity:.6}
+.tp-task-cb{flex-shrink:0;width:20px;height:20px;border-radius:6px;border:2px solid var(--border);background:#fff;color:var(--teal);font-weight:900;font-size:13px;display:flex;align-items:center;justify-content:center;cursor:pointer}
+.tp-task.done .tp-task-cb{background:var(--teal);border-color:var(--teal);color:#fff}
+.tp-task-body{flex:1;cursor:pointer;display:flex;flex-direction:column}
+.tp-task-txt{font-size:12.5px;font-weight:700;color:var(--dark)}
+.tp-task.done .tp-task-txt{text-decoration:line-through}
+.tp-task-sub{font-size:11px;color:var(--muted)}
+.tp-tel{flex-basis:100%;font-size:12px;font-weight:700;color:var(--primary);text-decoration:none;margin-left:64px}
+.tp-tel:hover{text-decoration:underline}
 /* ── Datums-Navigator ── */
 .datenav{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px}
 .dn-btn{width:38px;height:38px;border-radius:12px;border:2px solid var(--border);background:#fff;color:var(--primary);font-size:20px;font-weight:900;cursor:pointer;line-height:1;transition:all .15s}
@@ -3053,6 +3081,8 @@ function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,
 // ── Team & Verantwortliche (geteilt über SharePoint-Speicher) ──────────────
 const TEAM_PALETTE = ['#4f46e5','#0891b2','#059669','#d97706','#db2777','#7c3aed','#dc2626','#0d9488'];
 let tzOnlyMine = false;                                   // Laufzeit-Filter „nur meine"
+let tzMode = lsGet('cki_tzmode','liste');                 // Tagesziel-Ansicht: 'liste' | 'kalender'
+function setTzMode(m){ tzMode = (m==='kalender'?'kalender':'liste'); lsSet('cki_tzmode', tzMode); renderAufgaben(); }
 function getTeam(){ const t=lsGet('cki_team',[]); return Array.isArray(t)?t:[]; }
 function saveTeam(arr){ lsSet('cki_team',arr); }
 function teamColor(name){ const t=getTeam(); const i=t.findIndex(m=>m.n===name); return TEAM_PALETTE[(i<0?String(name).length:i)%TEAM_PALETTE.length]; }
@@ -3096,7 +3126,138 @@ function getMe(){ const me=lsGet('cki_me',null); if(me!==null) return me;
   const d=detectMsUser().toLowerCase(); const hit=getTeam().find(m=>d&&(d.indexOf(m.n.toLowerCase())>=0||m.n.toLowerCase().indexOf(d.split(' ')[0])>=0));
   return hit?hit.n:''; }
 function setMe(val){ lsSetRaw('cki_me',val); renderAufgaben(); }   // lsSetRaw → kein Team-Sync
+// Meldet den eingeloggten Microsoft-Nutzer automatisch an: trägt den eigenen
+// Namen ins Team ein (falls noch nicht vorhanden) und setzt „ich bin …" auf sich
+// selbst – so greift der „nur meine"-Filter ohne Handeintippen. Braucht KEINE
+// Extra-Berechtigung (liest nur den eigenen ID-Token, keine Org-Liste).
+function autoRegisterMe(){
+  try{
+    const nm = detectMsUser(); if(!nm) return;
+    const team = getTeam();
+    if(!team.some(m=>m.n.toLowerCase()===nm.toLowerCase())){ team.push({n:nm}); saveTeam(team); }
+    if(lsGet('cki_me',null)===null) lsSetRaw('cki_me', nm);
+    if(currentView==='aufgaben' && DATA) renderAufgaben();
+  }catch(e){}
+}
 function toggleOnlyMine(v){ tzOnlyMine=!!v; renderAufgaben(); }
+
+// ── Tagesplan (Kalender-Ansicht der Tagesziel-Seite) ──────────
+// Tag im Kalender vor-/zurückblättern (bleibt in DATA.dates); danach neu rendern.
+function tzStepDay(delta){
+  if(!DATA || !DATA.dates.length) return;
+  let i = DATA.dates.indexOf(currentDate);
+  if(i<0){ // aktueller Tag nicht im Export → nächstgelegenen wählen
+    i = DATA.dates.findIndex(d=>d>=currentDate); if(i<0) i = DATA.dates.length-1;
+  }
+  const ni = Math.min(DATA.dates.length-1, Math.max(0, i+delta));
+  currentDate = DATA.dates[ni]; renderAufgaben();
+}
+function tzSetDay(d){ if(d){ currentDate=d; renderAufgaben(); } }
+// Patienten mit Dauer-Potenzial (geeignet, aber noch keine Maske D) → Set von patKeys
+function dauerKandidatKeys(){
+  const keys = new Set();
+  try{
+    collectPatienten().forEach(p=>{
+      if(p.istDauer) return;
+      if(patDauerKategorien(p).length) keys.add(p.patKey);
+    });
+  }catch(e){}
+  return keys;
+}
+// Baut die Kalender-/Tagesplan-Ansicht: alle Patienten mit Termin am gewählten Tag,
+// bei denen wirklich etwas zu tun ist (Abrechnen / Folgetermin / Folge-VO / Dauer-Potenzial).
+// Nutzt dieselben Aufgaben-IDs wie die Listenansicht → Abhaken & Zuweisen sind synchron.
+function buildTagesplan(a, rez){
+  const day = currentDate;
+  const dd = new Date(day+'T12:00:00').toLocaleDateString('de-DE',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
+  const idxD = DATA.dates.indexOf(day);
+  const inExport = idxD>=0;
+
+  // 1) Aufgaben-Nachschlag je Patient (patKey → Liste von {id, cat, ico, txt, sub})
+  const byKey = {};
+  const push = (key, t)=>{ if(!key) return; (byKey[key]=byKey[key]||[]).push(t); };
+  a.typA.forEach(r=>push(r.patKey, {id:'abr|'+r.rezeptNr, cat:'abr', ico:'💰', txt:'Rezept abrechnen',
+    sub:`${r.erbracht}/${r.echteMenge} erbracht${r.heilmittel?' · '+esc(r.heilmittel):''}`}));
+  a.typB.forEach(r=>push(r.patKey, {id:'ft|'+r.rezeptNr, cat:'ft', ico:'📞', txt:'Folgetermin vereinbaren',
+    sub:`${r.erbracht}/${r.echteMenge} · Serie läuft`}));
+  a.folgeVO.forEach(r=>push(r.patKey, {id:'fvo|'+r.rezeptNr, cat:'fvo', ico:'🔄', txt:'Folge-VO anfordern',
+    sub:`Serie fertig · Arzt: ${r.arzt?esc(r.arzt):'?'}`}));
+  const dauerKeys = dauerKandidatKeys();
+
+  // 2) Termine des Tages nach Patient bündeln
+  const patAppt = {};
+  DATA.cells.forEach(c=>{
+    if(c.dateStr!==day) return;
+    if(c.belArt!=='R' || !c.patNach || !c.termIdent || !c.belegt) return;
+    const k = c.patKey; if(!k) return;
+    let p = patAppt[k];
+    if(!p){ p = patAppt[k] = { key:k, name:(c.patVor+' '+c.patNach).trim(), start:c.start, therapist:c.therapist||'', mobil:c.patMobil||'', leist:new Set() }; }
+    if(c.start < p.start) p.start = c.start;
+    if(!p.mobil && c.patMobil) p.mobil = c.patMobil;
+    if(c.leistLang) p.leist.add(c.leistLang); else if(c.leistKuerzel) p.leist.add(c.leistKuerzel);
+  });
+
+  // 3) Nur Patienten mit mindestens einer offenen Aufgabe
+  const me = getMe();
+  let liste = Object.values(patAppt).map(p=>{
+    const tasks = (byKey[p.key]||[]).slice();
+    if(dauerKeys.has(p.key)) tasks.push({id:'dauer|'+p.key, cat:'dauer', ico:'🎯', txt:'Dauerplan ansprechen', sub:'kommt regelmäßig · noch keine Maske D'});
+    return Object.assign(p, {tasks});
+  }).filter(p=>p.tasks.length>0);
+  liste.sort((x,y)=> x.start-y.start || x.name.localeCompare(y.name));
+
+  // „nur meine": Patienten behalten, bei denen mind. eine Aufgabe mir gehört
+  if(tzOnlyMine && me) liste = liste.filter(p=>p.tasks.some(t=>effectiveAssignee(t.id,t.cat)===me));
+
+  const totOffen = liste.reduce((s,p)=>s+p.tasks.filter(t=>!taskDone(t.id)).length,0);
+
+  // 4) Kopf mit Tagesnavigation
+  let h = `<div class="tp-nav">
+    <button class="dn-btn" onclick="tzStepDay(-1)"${idxD<=0?' disabled':''}>‹</button>
+    <div class="tp-nav-c"><div class="tp-nav-day">${dd}</div>
+      <div class="tp-nav-sub">${liste.length} Patient${liste.length===1?'':'en'} mit To-Do · ${totOffen} offen</div></div>
+    <button class="dn-btn" onclick="tzStepDay(1)"${(idxD>=0&&idxD>=DATA.dates.length-1)?' disabled':''}>›</button>
+  </div>`;
+
+  if(!inExport){
+    h += `<div class="tp-hint">📅 Für <b>${dd}</b> liegen noch keine Termine im aktuellen Export. Sobald der Export diesen Tag enthält, erscheinen die Patienten hier automatisch. Mit ‹ › zu einem Tag mit Terminen springen.</div>`;
+    return h;
+  }
+  if(!liste.length){
+    h += `<div class="empty" style="background:var(--teal-bg);border:1px solid var(--teal);color:var(--teal)"><b>🎉 Keine offenen To-Dos für diesen Tag</b><br><span style="font-size:11px">Alle Patienten mit Termin heute sind versorgt – nichts anzusprechen.</span></div>`;
+    return h;
+  }
+
+  // 5) Patienten-Karten (chronologisch)
+  liste.forEach(p=>{
+    const leist = [...p.leist][0] || '';
+    h += `<div class="tp-card">
+      <div class="tp-time">${hhmm(p.start)}</div>
+      <div class="tp-main">
+        <div class="tp-pat">${esc(p.name)}${p.therapist?`<span class="tp-th"> · ${esc(p.therapist)}</span>`:''}</div>
+        ${leist?`<div class="tp-leist">${esc(leist)}</div>`:''}
+        <div class="tp-tasks">`;
+    p.tasks.forEach(t=>{
+      const d = taskDone(t.id);
+      h += `<div class="tp-task${d?' done':''}">
+        <div class="tp-task-cb" onclick="toggleTask('${jsq(t.id)}')">${d?'✓':''}</div>
+        <div class="tp-task-body" onclick="toggleTask('${jsq(t.id)}')"><span class="tp-task-txt">${t.ico} ${t.txt}</span><span class="tp-task-sub">${t.sub}</span></div>
+        ${assigneeChip(t.id,t.cat)}
+      </div>`;
+    });
+    h += `</div></div>`;
+    if(p.mobil) h += `<a class="tp-tel" href="tel:${esc(String(p.mobil).replace(/\s+/g,''))}" title="anrufen">📞 ${esc(p.mobil)}</a>`;
+    h += `</div>`;
+  });
+  return h;
+}
+// Segment-Umschalter Liste ↔ Kalender
+function tzModeToggle(){
+  return `<div class="tz-modebar">
+    <button class="tz-mode${tzMode==='liste'?' a':''}" onclick="setTzMode('liste')">📋 Aufgabenliste</button>
+    <button class="tz-mode${tzMode==='kalender'?' a':''}" onclick="setTzMode('kalender')">📅 Tagesplan</button>
+  </div>`;
+}
 // Team-Leiste (Namen verwalten, „ich bin", Filter)
 function renderTeamBar(){
   const team=getTeam();
@@ -3215,6 +3376,17 @@ function renderAufgaben(){
     h += `<div class="tz-kpi"><div class="tz-kpi-ico">${k.ico}</div><div class="tz-kpi-v">${k.v}</div><div class="tz-kpi-l">${k.l}</div><div class="tz-kpi-s">${k.s}</div></div>`;
   });
   h += `</div>`;
+
+  // ── Umschalter: Aufgabenliste ↔ Tagesplan (Kalender) ──
+  h += tzModeToggle();
+
+  // ── Kalender-Ansicht: Patienten mit Termin heute + offenem To-Do ──
+  if(tzMode==='kalender'){
+    h += renderTeamBar();
+    h += buildTagesplan(a, rez);
+    document.getElementById('content').innerHTML = h;
+    return;
+  }
 
   // ── Tagesabschluss (nach 20:30) ──
   const now = new Date();
@@ -3391,6 +3563,7 @@ async function connectSharePoint(){
     msStatus('Verbinde mit SharePoint …');
     const site = await graphGet('/sites/'+SP.hostname+':'+SP.sitePath, token);
     spSiteId = site.id;
+    autoRegisterMe();   // eingeloggten MS-Nutzer automatisch als „ich" übernehmen
     msStatus('Suche Export-Dateien …');
     const listing = await graphGet('/sites/'+spSiteId+'/drive/root:/'+encodeURI(SP.folderPath)+':/children?$top=999&$select=name,id,size,lastModifiedDateTime', token);
     const csvs = (listing.value||[]).filter(f=>/\.csv$/i.test(f.name));

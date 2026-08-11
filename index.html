@@ -459,121 +459,19 @@ const CONFIG = {
 // Mehrere Begriffe möglich: ['amanse','beispiel2']
 const EXCLUDE_TERMS = ['amanse'];
 
-// ── Persistenter Speicher: lokaler Cache + geteilter Speicher ──────────────
-// localStorage = schneller lokaler Cache (Rendering bleibt synchron).
-// Geteilter Speicher = EINE JSON-Datei im PRAXIS-EIGENEN SharePoint (dieselbe
-// Anmeldung wie der Export-Import, derselbe Ordner). Dadurch sehen ALLE Nutzer
-// an ALLEN Rechnern dieselben Abhak-Status und Notizen – ohne separaten Login,
-// ohne Fremd-Backend, DSGVO-konform in der eigenen EU-Ablage.
+// ── Persistenter Speicher (localStorage) ───────────────────
+// Läuft als statische Seite auf GitHub Pages → localStorage verfügbar.
+// Hinweis: Speicherung ist derzeit rein lokal pro Browser. Ein teamweiter,
+// geräteübergreifender Speicher ist möglich, benötigt aber eine einmalige
+// Admin-Freigabe (siehe Notiz im Verlauf-Tab) und ist deshalb deaktiviert.
 function lsGet(key, fallback){
   try{ const v = localStorage.getItem(key); return v===null?fallback:JSON.parse(v); }
   catch(e){ return fallback; }
 }
-function lsSetRaw(key, val){            // schreibt nur lokal (kein Sync-Trigger)
+function lsSet(key, val){
   try{ localStorage.setItem(key, JSON.stringify(val)); }catch(e){}
 }
-function lsSet(key, val){               // schreibt lokal + stößt ggf. Sync an
-  lsSetRaw(key, val);
-  if(!SYNC_applying && syncKeyMatches(key)){ syncMarkTs(key); syncSchedulePush(); }
-}
-
-// ── Geteilter Speicher (SharePoint-JSON, mehrbenutzerfähig) ───────────────
-const SYNC = {
-  // Diese Schlüssel werden teamweit geteilt (Abhaken, Zuweisungen, Notizen, Team-Liste).
-  // NICHT geteilt: cki_secopen_ (UI), cki_me (persönlich), cki_kpi_hist (lokaler Verlauf), cki_sync_ts.
-  prefixes: ['cki_fall_','cki_doing_','cki_check_','cki_assign_','cki_catassign_','cki_leitfaden_','cki_team'],
-  file: 'cki_dashboard_status.json',                     // liegt im Export-Ordner
-  pollMs: 20000                                          // Abgleich-Intervall
-};
-let SYNC_on=false, SYNC_applying=false, SYNC_pushTimer=null, SYNC_poll=null, SYNC_busy=false;
-function syncKeyMatches(k){ return SYNC.prefixes.some(p=>String(k).indexOf(p)===0); }
-function syncTsMap(){ return lsGet('cki_sync_ts', {}); }
-function syncMarkTs(key){ const m=syncTsMap(); m[key]=Date.now(); lsSetRaw('cki_sync_ts', m); }
-// Alle geteilten Schlüssel aus localStorage als {key:{v,ts}} einsammeln
-function syncCollectLocal(){
-  const ts=syncTsMap(), out={};
-  for(let i=0;i<localStorage.length;i++){
-    const k=localStorage.key(i);
-    if(k && syncKeyMatches(k)){
-      let v; try{ v=JSON.parse(localStorage.getItem(k)); }catch(e){ v=localStorage.getItem(k); }
-      out[k]={ v, ts: ts[k]||0 };
-    }
-  }
-  return out;
-}
-// Remote {key:{v,ts}} → lokal übernehmen, wenn Remote neuer. true, wenn etwas geändert.
-function syncMerge(remote){
-  if(!remote) return false;
-  const ts=syncTsMap(); let changed=false;
-  Object.keys(remote).forEach(k=>{
-    if(!syncKeyMatches(k)) return;
-    const r=remote[k]; if(!r) return;
-    if((r.ts||0) > (ts[k]||0)){
-      SYNC_applying=true; lsSetRaw(k, r.v); SYNC_applying=false;
-      ts[k]=r.ts||0; changed=true;
-    }
-  });
-  if(changed) lsSetRaw('cki_sync_ts', ts);
-  return changed;
-}
-// Graph-Pfad der Status-Datei (im selben Export-Ordner wie die THEORG-CSVs)
-function syncFilePath(){ return '/sites/'+spSiteId+'/drive/root:/'+encodeURI(SP.folderPath+'/'+SYNC.file); }
-async function syncRead(){
-  const token=await getToken();
-  const meta=await graphGet(syncFilePath()+':/?$select=id,@microsoft.graph.downloadUrl', token);
-  const durl=meta['@microsoft.graph.downloadUrl'];
-  if(!durl) return {};
-  const r=await fetch(durl,{cache:'no-store'}); if(!r.ok) return {};
-  try{ return (await r.json())||{}; }catch(e){ return {}; }
-}
-async function syncWrite(obj){
-  const token=await getToken();
-  const r=await fetch('https://graph.microsoft.com/v1.0'+syncFilePath()+':/content',
-    { method:'PUT', headers:{ Authorization:'Bearer '+token, 'Content-Type':'application/json' }, body:JSON.stringify(obj) });
-  if(!r.ok){ const t=await r.text(); throw new Error('Graph PUT '+r.status+': '+t.slice(0,140)); }
-}
-async function syncPull(){
-  if(!SYNC_on || SYNC_busy) return;
-  try{ const remote=await syncRead(); if(syncMerge(remote) && DATA) renderViewContent(); }
-  catch(e){ /* Datei evtl. noch nicht vorhanden → ignorieren */ }
-}
-async function syncPush(){
-  if(!SYNC_on) return;
-  if(SYNC_busy){ syncSchedulePush(); return; }
-  SYNC_busy=true;
-  try{
-    let remote={}; try{ remote=await syncRead(); }catch(e){}
-    syncMerge(remote);                       // fremde neuere Werte zuerst übernehmen
-    const local=syncCollectLocal();
-    const combined=Object.assign({}, remote);
-    Object.keys(local).forEach(k=>{
-      if(!combined[k] || (local[k].ts||0) >= (combined[k].ts||0)) combined[k]=local[k];
-    });
-    await syncWrite(combined);
-  }catch(e){ console.warn('[sync] push:', e.message); }
-  finally{ SYNC_busy=false; }
-}
-function syncSchedulePush(){
-  if(!SYNC_on) return;
-  if(SYNC_pushTimer) clearTimeout(SYNC_pushTimer);
-  SYNC_pushTimer=setTimeout(()=>{ SYNC_pushTimer=null; syncPush(); }, 1200);
-}
-function syncStatusBadge(){
-  return SYNC_on
-    ? '<span style="color:var(--teal);font-weight:700">● geteilter Speicher aktiv</span>'
-    : '<span style="color:var(--muted)">○ nur lokal (SharePoint verbinden für Team-Sync)</span>';
-}
-// Wird nach erfolgreichem SharePoint-Login gestartet (spSiteId bekannt)
-async function startSharedStore(){
-  if(SYNC_on || !spSiteId) return;
-  SYNC_on=true;
-  await syncPull();                          // fremden Stand holen
-  await syncPush();                          // eigenen (offline entstandenen) Stand hochladen
-  if(SYNC_poll) clearInterval(SYNC_poll);
-  SYNC_poll=setInterval(syncPull, SYNC.pollMs);
-  if(DATA) renderViewContent();
-  console.log('[sync] Geteilter Speicher aktiv →', SYNC.file);
-}
+function lsSetRaw(key, val){ lsSet(key, val); }   // Alias (persönliche Schlüssel wie cki_me)
 // Globaler lokaler Datums-String "YYYY-MM-DD" (parseData hat eine eigene lokale Variante)
 function localDateStrG(d){
   const y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,'0'), dd=String(d.getDate()).padStart(2,'0');
@@ -3083,8 +2981,7 @@ function renderVerlauf(){
   h += `<div style="background:var(--primary-bg,#eef2ff);border:1px solid var(--primary);border-radius:12px;padding:12px 14px;margin-bottom:12px;font-size:11px;color:var(--dark);line-height:1.6">
     <b style="color:var(--primary);font-family:Montserrat;font-weight:800">ℹ️ So funktioniert der Verlauf:</b>
     Jedes Mal, wenn du einen Export lädst, speichert das Dashboard automatisch einen <b>Kennzahlen-Schnappschuss</b> (nur Zahlen, keine Patientendaten) – ein Eintrag pro Stichtag. Lädst du täglich, füllt sich die Kurve von selbst.
-    <br><b>Team-Sync:</b> ${syncStatusBadge()}. Abhak-Status und Notizen werden – sobald SharePoint verbunden ist – automatisch in eine gemeinsame Datei (<code>${SYNC.file}</code>) im Export-Ordner geschrieben, sodass alle Nutzer an allen Rechnern denselben Stand sehen. Kein separater Login nötig.
-    <br><b>Kennzahlen-Historie:</b> Diese Kurve liegt vorerst nur in <i>diesem</i> Browser. Zum Sichern/Teilen die Historie <b>exportieren</b> und im Praxis-Ordner ablegen; auf einem anderen Rechner wieder <b>importieren</b>.</div>`;
+    <br><b>Fürs Team:</b> Abhaken, Zuweisungen und Notizen werden derzeit nur in <i>diesem</i> Browser gespeichert. Ein automatisch geteilter Team-Speicher (gleicher Stand auf allen Rechnern) ist vorbereitet, benötigt aber eine <b>einmalige Admin-Freigabe</b> im Microsoft-365-Tenant und ist bis dahin deaktiviert. Zum Sichern/Teilen die Historie als Datei <b>exportieren</b> und im Praxis-Ordner ablegen; auf einem anderen Rechner wieder <b>importieren</b>.</div>`;
 
   h += `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
     <button class="nr-filter" onclick="exportKpiHistorie()">⬇️ Historie exportieren</button>
@@ -3426,7 +3323,7 @@ function renderAufgaben(){
 const AAD = {
   clientId: '3449c999-af75-4237-b39e-2ab1fdcc9f37',
   authority: 'https://login.microsoftonline.com/709b1b68-1718-476e-989c-2e0f98e7769c',
-  scopes: ['Sites.Read.All','Files.Read.All','Files.ReadWrite.All']
+  scopes: ['Sites.Read.All','Files.Read.All']
 };
 const SP = {
   hostname: 'physiockigmbh.sharepoint.com',
@@ -3494,7 +3391,6 @@ async function connectSharePoint(){
     msStatus('Verbinde mit SharePoint …');
     const site = await graphGet('/sites/'+SP.hostname+':'+SP.sitePath, token);
     spSiteId = site.id;
-    startSharedStore();   // geteilten Status-Speicher (SharePoint-JSON) starten
     msStatus('Suche Export-Dateien …');
     const listing = await graphGet('/sites/'+spSiteId+'/drive/root:/'+encodeURI(SP.folderPath)+':/children?$top=999&$select=name,id,size,lastModifiedDateTime', token);
     const csvs = (listing.value||[]).filter(f=>/\.csv$/i.test(f.name));

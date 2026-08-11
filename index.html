@@ -305,6 +305,30 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--dark);min
 .task-sub{font-size:11px;color:var(--muted);margin-top:1px}
 .task.done .task-main{text-decoration:line-through;color:var(--muted)}
 .task.done{opacity:.65}
+.task-body{flex:1}
+/* ── Team & Verantwortliche ── */
+.tm-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:var(--card);border:1px solid var(--border);border-radius:14px;padding:10px 14px;margin-bottom:14px;box-shadow:var(--shadow)}
+.tm-label{font-family:'Montserrat',sans-serif;font-weight:800;font-size:13px;color:var(--dark)}
+.tm-chip{display:inline-flex;align-items:center;gap:6px;background:#f4f6fa;border:1px solid var(--border);border-radius:100px;padding:4px 8px 4px 8px;font-size:12px;font-weight:700;color:var(--dark)}
+.tm-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+.tm-x{cursor:pointer;color:var(--muted);font-weight:900;font-size:14px;line-height:1;padding:0 2px;border-radius:4px}
+.tm-x:hover{color:var(--fire,#dc2626);background:#fde8e8}
+.tm-empty{font-size:12px;color:var(--muted);font-style:italic}
+.tm-input{border:1px solid var(--border);border-radius:8px;padding:5px 9px;font-size:12px;width:110px;font-family:inherit}
+.tm-addbtn{border:1px solid var(--primary);background:#fff;color:var(--primary);border-radius:100px;padding:5px 12px;font-family:'Montserrat',sans-serif;font-size:11px;font-weight:700;cursor:pointer;transition:all .15s}
+.tm-addbtn:hover{background:var(--primary);color:#fff}
+.tm-me{margin-left:auto}
+.tm-mine{display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:700;color:var(--muted);cursor:pointer}
+.asg-sel{border:1px solid var(--border);border-radius:8px;padding:5px 8px;font-family:inherit;font-size:12px;font-weight:700;color:var(--dark);background:#fff;cursor:pointer}
+.asg-chip{flex-shrink:0;width:28px;height:28px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-family:'Montserrat',sans-serif;font-weight:800;font-size:10.5px;color:#fff;cursor:pointer;user-select:none;box-shadow:0 1px 2px rgba(0,0,0,.15);transition:transform .12s}
+.asg-chip:hover{transform:scale(1.12)}
+.asg-chip.asg-inh{opacity:.55;box-shadow:none;outline:1px dashed rgba(0,0,0,.25);outline-offset:-1px}
+.asg-chip.asg-none{background:#eef1f5;color:var(--muted);border:1px dashed var(--border);box-shadow:none;font-size:15px}
+.cat-asg{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--muted);font-weight:700}
+.tz-persons{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px}
+.tz-person{display:inline-flex;align-items:center;gap:7px;background:var(--card);border:1px solid var(--border);border-radius:100px;padding:5px 12px 5px 5px;box-shadow:var(--shadow);font-size:12px;font-weight:700;color:var(--dark)}
+.tz-person .asg-chip{cursor:default;width:24px;height:24px}
+.tz-person-n{font-size:11px;color:var(--muted);font-weight:700}
 /* ── Datums-Navigator ── */
 .datenav{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px}
 .dn-btn{width:38px;height:38px;border-radius:12px;border:2px solid var(--border);background:#fff;color:var(--primary);font-size:20px;font-weight:900;cursor:pointer;line-height:1;transition:all .15s}
@@ -435,14 +459,120 @@ const CONFIG = {
 // Mehrere Begriffe möglich: ['amanse','beispiel2']
 const EXCLUDE_TERMS = ['amanse'];
 
-// ── Persistenter Speicher (localStorage) ───────────────────
-// Läuft als statische Seite auf GitHub Pages → localStorage verfügbar.
+// ── Persistenter Speicher: lokaler Cache + geteilter Speicher ──────────────
+// localStorage = schneller lokaler Cache (Rendering bleibt synchron).
+// Geteilter Speicher = EINE JSON-Datei im PRAXIS-EIGENEN SharePoint (dieselbe
+// Anmeldung wie der Export-Import, derselbe Ordner). Dadurch sehen ALLE Nutzer
+// an ALLEN Rechnern dieselben Abhak-Status und Notizen – ohne separaten Login,
+// ohne Fremd-Backend, DSGVO-konform in der eigenen EU-Ablage.
 function lsGet(key, fallback){
   try{ const v = localStorage.getItem(key); return v===null?fallback:JSON.parse(v); }
   catch(e){ return fallback; }
 }
-function lsSet(key, val){
+function lsSetRaw(key, val){            // schreibt nur lokal (kein Sync-Trigger)
   try{ localStorage.setItem(key, JSON.stringify(val)); }catch(e){}
+}
+function lsSet(key, val){               // schreibt lokal + stößt ggf. Sync an
+  lsSetRaw(key, val);
+  if(!SYNC_applying && syncKeyMatches(key)){ syncMarkTs(key); syncSchedulePush(); }
+}
+
+// ── Geteilter Speicher (SharePoint-JSON, mehrbenutzerfähig) ───────────────
+const SYNC = {
+  // Diese Schlüssel werden teamweit geteilt (Abhaken, Zuweisungen, Notizen, Team-Liste).
+  // NICHT geteilt: cki_secopen_ (UI), cki_me (persönlich), cki_kpi_hist (lokaler Verlauf), cki_sync_ts.
+  prefixes: ['cki_fall_','cki_doing_','cki_check_','cki_assign_','cki_catassign_','cki_leitfaden_','cki_team'],
+  file: 'cki_dashboard_status.json',                     // liegt im Export-Ordner
+  pollMs: 20000                                          // Abgleich-Intervall
+};
+let SYNC_on=false, SYNC_applying=false, SYNC_pushTimer=null, SYNC_poll=null, SYNC_busy=false;
+function syncKeyMatches(k){ return SYNC.prefixes.some(p=>String(k).indexOf(p)===0); }
+function syncTsMap(){ return lsGet('cki_sync_ts', {}); }
+function syncMarkTs(key){ const m=syncTsMap(); m[key]=Date.now(); lsSetRaw('cki_sync_ts', m); }
+// Alle geteilten Schlüssel aus localStorage als {key:{v,ts}} einsammeln
+function syncCollectLocal(){
+  const ts=syncTsMap(), out={};
+  for(let i=0;i<localStorage.length;i++){
+    const k=localStorage.key(i);
+    if(k && syncKeyMatches(k)){
+      let v; try{ v=JSON.parse(localStorage.getItem(k)); }catch(e){ v=localStorage.getItem(k); }
+      out[k]={ v, ts: ts[k]||0 };
+    }
+  }
+  return out;
+}
+// Remote {key:{v,ts}} → lokal übernehmen, wenn Remote neuer. true, wenn etwas geändert.
+function syncMerge(remote){
+  if(!remote) return false;
+  const ts=syncTsMap(); let changed=false;
+  Object.keys(remote).forEach(k=>{
+    if(!syncKeyMatches(k)) return;
+    const r=remote[k]; if(!r) return;
+    if((r.ts||0) > (ts[k]||0)){
+      SYNC_applying=true; lsSetRaw(k, r.v); SYNC_applying=false;
+      ts[k]=r.ts||0; changed=true;
+    }
+  });
+  if(changed) lsSetRaw('cki_sync_ts', ts);
+  return changed;
+}
+// Graph-Pfad der Status-Datei (im selben Export-Ordner wie die THEORG-CSVs)
+function syncFilePath(){ return '/sites/'+spSiteId+'/drive/root:/'+encodeURI(SP.folderPath+'/'+SYNC.file); }
+async function syncRead(){
+  const token=await getToken();
+  const meta=await graphGet(syncFilePath()+':/?$select=id,@microsoft.graph.downloadUrl', token);
+  const durl=meta['@microsoft.graph.downloadUrl'];
+  if(!durl) return {};
+  const r=await fetch(durl,{cache:'no-store'}); if(!r.ok) return {};
+  try{ return (await r.json())||{}; }catch(e){ return {}; }
+}
+async function syncWrite(obj){
+  const token=await getToken();
+  const r=await fetch('https://graph.microsoft.com/v1.0'+syncFilePath()+':/content',
+    { method:'PUT', headers:{ Authorization:'Bearer '+token, 'Content-Type':'application/json' }, body:JSON.stringify(obj) });
+  if(!r.ok){ const t=await r.text(); throw new Error('Graph PUT '+r.status+': '+t.slice(0,140)); }
+}
+async function syncPull(){
+  if(!SYNC_on || SYNC_busy) return;
+  try{ const remote=await syncRead(); if(syncMerge(remote) && DATA) renderViewContent(); }
+  catch(e){ /* Datei evtl. noch nicht vorhanden → ignorieren */ }
+}
+async function syncPush(){
+  if(!SYNC_on) return;
+  if(SYNC_busy){ syncSchedulePush(); return; }
+  SYNC_busy=true;
+  try{
+    let remote={}; try{ remote=await syncRead(); }catch(e){}
+    syncMerge(remote);                       // fremde neuere Werte zuerst übernehmen
+    const local=syncCollectLocal();
+    const combined=Object.assign({}, remote);
+    Object.keys(local).forEach(k=>{
+      if(!combined[k] || (local[k].ts||0) >= (combined[k].ts||0)) combined[k]=local[k];
+    });
+    await syncWrite(combined);
+  }catch(e){ console.warn('[sync] push:', e.message); }
+  finally{ SYNC_busy=false; }
+}
+function syncSchedulePush(){
+  if(!SYNC_on) return;
+  if(SYNC_pushTimer) clearTimeout(SYNC_pushTimer);
+  SYNC_pushTimer=setTimeout(()=>{ SYNC_pushTimer=null; syncPush(); }, 1200);
+}
+function syncStatusBadge(){
+  return SYNC_on
+    ? '<span style="color:var(--teal);font-weight:700">● geteilter Speicher aktiv</span>'
+    : '<span style="color:var(--muted)">○ nur lokal (SharePoint verbinden für Team-Sync)</span>';
+}
+// Wird nach erfolgreichem SharePoint-Login gestartet (spSiteId bekannt)
+async function startSharedStore(){
+  if(SYNC_on || !spSiteId) return;
+  SYNC_on=true;
+  await syncPull();                          // fremden Stand holen
+  await syncPush();                          // eigenen (offline entstandenen) Stand hochladen
+  if(SYNC_poll) clearInterval(SYNC_poll);
+  SYNC_poll=setInterval(syncPull, SYNC.pollMs);
+  if(DATA) renderViewContent();
+  console.log('[sync] Geteilter Speicher aktiv →', SYNC.file);
 }
 // Globaler lokaler Datums-String "YYYY-MM-DD" (parseData hat eine eigene lokale Variante)
 function localDateStrG(d){
@@ -902,6 +1032,7 @@ function renderDashboard(){
   document.getElementById('meta').textContent = `${DATA.dates.length} Tag${DATA.dates.length>1?'e':''} · ${DATA.therapists.length} Therapeut${DATA.therapists.length>1?'en':''}`;
   
   renderMainTabs();
+  recordKpiSnapshot();
   renderViewContent();
   checkNewGaps();
 }
@@ -960,6 +1091,7 @@ function renderMainTabs(){
   h += `<button class="m-tab${currentView==='offene'?' a':''}" onclick="switchView('offene')">💰 Offene Rezepte</button>`;
   h += `<button class="m-tab${currentView==='potential'?' a':''}" onclick="switchView('potential')">🎯 Potential-Dauer</button>`;
   h += `<button class="m-tab${currentView==='folgevo'?' a':''}" onclick="switchView('folgevo')">🔄 Folge-VO</button>`;
+  h += `<button class="m-tab${currentView==='verlauf'?' a':''}" onclick="switchView('verlauf')">📈 Verlauf</button>`;
   h += `<button class="m-tab${currentView==='controlling'?' a':''}" onclick="switchView('controlling')">📊 Controlling</button>`;
   document.getElementById('mainTabs').innerHTML = h;
 }
@@ -985,6 +1117,7 @@ function renderViewContent(){
     else if(currentView==='offene')renderOffene();
     else if(currentView==='potential')renderPotential();
     else if(currentView==='folgevo')renderFolgeVO();
+    else if(currentView==='verlauf')renderVerlauf();
     else renderControlling();
   }
 }
@@ -2840,6 +2973,170 @@ function renderFolgeVO(){
 }
 
 // ═══════════════════════════════════════════════════════════
+// VIEW: VERLAUF (Kennzahlen-Historie über Zeit) — Phase 1, dateibasiert
+// ═══════════════════════════════════════════════════════════
+// Snapshot der Kennzahlen des aktuell geladenen Exports (nur Zahlen, KEINE Personendaten).
+function computeKpiSnapshot(){
+  if(!DATA) return null;
+  const {stichtag, faelle} = computeVerordnungsfaelle();
+  const bewertbar = faelle.filter(f=>f.hatKatalog && !f.bvb);
+  let verplant=0, moeglich=0;
+  bewertbar.forEach(f=>{ verplant+=f.genutzt||0; moeglich+=f.orient||0; });
+  const potentialOffen = bewertbar.filter(f=>f.restBeh>0);
+  const erst1 = potentialOffen.filter(f=>f.anzRez===1);
+  const ausgeschoepft = bewertbar.filter(f=>f.restBeh<=0);
+  let erledigt=0; faelle.forEach(f=>{ if(getFallStatus(f.key)==='erledigt') erledigt++; });
+  return {
+    date: localDateStrG(stichtag),
+    offeneFaelle: bewertbar.length,
+    potentialOffen: potentialOffen.length,
+    erst1: erst1.length,
+    ausgeschoepft: ausgeschoepft.length,
+    verplant, moeglich,
+    quote: moeglich ? Math.round(verplant/moeglich*100) : 0,
+    bvb: faelle.filter(f=>f.bvb).length,
+    erledigt,
+    ts: new Date().toISOString()
+  };
+}
+function getKpiHistorie(){ const h=lsGet('cki_kpi_hist', {}); return (h && typeof h==='object')?h:{}; }
+function saveKpiHistorie(h){ lsSet('cki_kpi_hist', h); }
+// Bei jedem Export-Laden automatisch mitschreiben (ein Eintrag je Stichtag, überschreibt gleichen Tag).
+function recordKpiSnapshot(){
+  const snap = computeKpiSnapshot(); if(!snap || !snap.date) return;
+  const h = getKpiHistorie(); h[snap.date] = snap; saveKpiHistorie(h);
+}
+function exportKpiHistorie(){
+  const h=getKpiHistorie();
+  const blob=new Blob([JSON.stringify(h,null,2)],{type:'application/json'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a'); a.href=url;
+  a.download='kpi_historie_'+localDateStrG(new Date())+'.json'; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),1500);
+}
+function importKpiHistorie(input){
+  const file=input && input.files && input.files[0]; if(!file) return;
+  const r=new FileReader();
+  r.onload=e=>{
+    try{
+      const inc=JSON.parse(e.target.result);
+      const h=getKpiHistorie(); let n=0;
+      Object.keys(inc).forEach(k=>{ if(inc[k] && typeof inc[k]==='object'){ h[k]=inc[k]; n++; } });
+      saveKpiHistorie(h); input.value='';
+      renderVerlauf();
+    }catch(err){ alert('Import fehlgeschlagen: '+((err&&err.message)||err)); }
+  };
+  r.readAsText(file);
+}
+function clearKpiHistorie(){
+  if(confirm('Wirklich die komplette lokale Kennzahlen-Historie in diesem Browser löschen? Am besten vorher exportieren.')){
+    saveKpiHistorie({}); renderVerlauf();
+  }
+}
+// Kleiner Mehrlinien-SVG-Chart über die sortierten Stichtage.
+function verlaufChart(hist, metrics, opts){
+  opts=opts||{};
+  const dates=Object.keys(hist).sort();
+  const W=760,H=210,padL=42,padR=14,padT=16,padB=40;
+  const vals=[]; metrics.forEach(m=>dates.forEach(d=>{ const v=hist[d] && hist[d][m.key]; if(typeof v==='number') vals.push(v); }));
+  let yMax = opts.yMax!=null ? opts.yMax : Math.max(1, ...(vals.length?vals:[1]));
+  if(opts.yMax==null) yMax=Math.ceil(yMax*1.12); if(yMax<1) yMax=1;
+  const X=i=> dates.length<=1 ? padL+(W-padL-padR)/2 : padL+(i/(dates.length-1))*(W-padL-padR);
+  const Y=v=> padT+(1-(v/yMax))*(H-padT-padB);
+  let grid=''; const steps=4;
+  for(let s=0;s<=steps;s++){ const val=yMax*s/steps; const yy=Y(val);
+    grid+=`<line x1="${padL}" y1="${yy}" x2="${W-padR}" y2="${yy}" stroke="var(--border,#e5e7eb)" stroke-width="1"/>`;
+    grid+=`<text x="${padL-6}" y="${yy+3}" text-anchor="end" font-size="9" fill="var(--muted,#94a3b8)">${Math.round(val)}${opts.suffix||''}</text>`;
+  }
+  let xlab=''; const stepL=Math.max(1,Math.ceil(dates.length/6));
+  dates.forEach((d,i)=>{ if(i%stepL===0 || i===dates.length-1){ const lbl=d.slice(8,10)+'.'+d.slice(5,7);
+    xlab+=`<text x="${X(i)}" y="${H-padB+16}" text-anchor="middle" font-size="9" fill="var(--muted,#94a3b8)">${lbl}</text>`; } });
+  let paths='';
+  metrics.forEach(m=>{
+    const pts=dates.map((d,i)=>{ const v=hist[d] && hist[d][m.key]; return (typeof v==='number')?[X(i),Y(v)]:null; }).filter(Boolean);
+    if(pts.length>1) paths+=`<polyline fill="none" stroke="${m.color}" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" points="${pts.map(p=>p[0]+','+p[1]).join(' ')}"/>`;
+    pts.forEach(p=>{ paths+=`<circle cx="${p[0]}" cy="${p[1]}" r="${pts.length===1?4:2.6}" fill="${m.color}"/>`; });
+  });
+  const legend=metrics.map(m=>`<span style="display:inline-flex;align-items:center;gap:5px;margin-right:14px;font-size:11px;color:var(--dark)"><span style="width:11px;height:11px;border-radius:3px;background:${m.color};display:inline-block"></span>${m.label}</span>`).join('');
+  return `<div style="margin-bottom:6px">${legend}</div>
+    <svg viewBox="0 0 ${W} ${H}" width="100%" style="max-width:100%;height:auto;display:block">${grid}${paths}${xlab}</svg>`;
+}
+function renderVerlauf(){
+  const hist=getKpiHistorie();
+  const dates=Object.keys(hist).sort();
+  const n=dates.length;
+  const latest = n ? hist[dates[n-1]] : null;
+  const prev   = n>1 ? hist[dates[n-2]] : null;
+  const fmtDE = s => s ? s.slice(8,10)+'.'+s.slice(5,7)+'.'+s.slice(0,4) : '–';
+  const delta = (a,b)=>{ if(b==null||typeof b!=='number'||typeof a!=='number') return ''; const d=a-b; if(d===0) return ` <span style="color:var(--muted);font-size:11px">±0</span>`; return ` <span style="color:var(--muted);font-size:11px">${d>0?'▲':'▼'}${Math.abs(d)}</span>`; };
+
+  let h = `<div class="summary">
+    <h2>📈 Verlauf · Kennzahlen-Historie</h2>
+    <div class="sg">
+      <div class="si"><div class="si-l">Erfasste Tage</div><div class="si-v">${n}</div><div class="si-s">Snapshots</div></div>
+      <div class="si"><div class="si-l">🎫 Potential offen</div><div class="si-v">${latest?latest.potentialOffen:'–'}${latest?delta(latest.potentialOffen, prev&&prev.potentialOffen):''}</div><div class="si-s">${latest?'Stand '+fmtDE(latest.date):'–'}</div></div>
+      <div class="si"><div class="si-l">📈 Ausschöpfungsquote</div><div class="si-v">${latest?latest.quote+'%':'–'}${latest?delta(latest.quote, prev&&prev.quote):''}</div><div class="si-s">verplant / möglich</div></div>
+      <div class="si"><div class="si-l">✅ Erledigt</div><div class="si-v">${latest?latest.erledigt:'–'}${latest?delta(latest.erledigt, prev&&prev.erledigt):''}</div><div class="si-s">Fälle markiert</div></div>
+    </div>
+  </div>`;
+
+  h += `<div style="background:var(--primary-bg,#eef2ff);border:1px solid var(--primary);border-radius:12px;padding:12px 14px;margin-bottom:12px;font-size:11px;color:var(--dark);line-height:1.6">
+    <b style="color:var(--primary);font-family:Montserrat;font-weight:800">ℹ️ So funktioniert der Verlauf:</b>
+    Jedes Mal, wenn du einen Export lädst, speichert das Dashboard automatisch einen <b>Kennzahlen-Schnappschuss</b> (nur Zahlen, keine Patientendaten) – ein Eintrag pro Stichtag. Lädst du täglich, füllt sich die Kurve von selbst.
+    <br><b>Team-Sync:</b> ${syncStatusBadge()}. Abhak-Status und Notizen werden – sobald SharePoint verbunden ist – automatisch in eine gemeinsame Datei (<code>${SYNC.file}</code>) im Export-Ordner geschrieben, sodass alle Nutzer an allen Rechnern denselben Stand sehen. Kein separater Login nötig.
+    <br><b>Kennzahlen-Historie:</b> Diese Kurve liegt vorerst nur in <i>diesem</i> Browser. Zum Sichern/Teilen die Historie <b>exportieren</b> und im Praxis-Ordner ablegen; auf einem anderen Rechner wieder <b>importieren</b>.</div>`;
+
+  h += `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
+    <button class="nr-filter" onclick="exportKpiHistorie()">⬇️ Historie exportieren</button>
+    <label class="nr-filter" style="cursor:pointer">⬆️ Historie importieren<input type="file" accept=".json,application/json" style="display:none" onchange="importKpiHistorie(this)"></label>
+    <button class="nr-filter" onclick="clearKpiHistorie()">🗑️ Lokale Historie löschen</button>
+  </div>`;
+
+  if(n===0){
+    h += `<div class="empty">Noch keine Verlaufsdaten. Der heutige Stand wird beim Laden automatisch erfasst – lade den Export an weiteren Tagen erneut, dann entsteht die erste Kurve.</div>`;
+    document.getElementById('content').innerHTML=h; return;
+  }
+
+  const card = (title, sub, chart)=>`<div class="ausl-card" style="padding:14px 16px;margin-bottom:12px">
+    <div style="font-family:Montserrat;font-weight:800;font-size:13px;color:var(--dark);margin-bottom:2px">${title}</div>
+    <div style="font-size:10px;color:var(--muted);margin-bottom:8px">${sub}</div>${chart}</div>`;
+
+  h += card('Offene Verordnungsfälle &amp; Potential', 'Wie viele Fälle noch Behandlungspotential haben – und wie viele davon erst 1 VO bzw. schon ausgeschöpft.',
+    verlaufChart(hist, [
+      {key:'potentialOffen', label:'Potential offen', color:'var(--primary)'},
+      {key:'erst1', label:'erst 1 VO', color:'var(--accent)'},
+      {key:'ausgeschoepft', label:'ausgeschöpft', color:'var(--teal)'}
+    ]));
+  h += card('Ausschöpfungsquote (%)', 'Verplante Behandlungen im Verhältnis zur orientierenden Menge – höher = mehr Potential genutzt.',
+    verlaufChart(hist, [{key:'quote', label:'Ausschöpfung %', color:'var(--primary)'}], {yMax:100, suffix:'%'}));
+  h += card('Verplant vs. möglich (Behandlungen gesamt)', 'Summe verplanter Termine gegen die maximal möglichen laut Katalog.',
+    verlaufChart(hist, [
+      {key:'moeglich', label:'möglich', color:'var(--amber)'},
+      {key:'verplant', label:'verplant', color:'var(--primary)'}
+    ]));
+  h += card('Erledigte Aufgaben', 'Als „erledigt" markierte Verordnungsfälle über die Zeit.',
+    verlaufChart(hist, [{key:'erledigt', label:'erledigt', color:'var(--teal)'}]));
+
+  const rows = dates.slice().reverse().map(d=>{ const s=hist[d];
+    return `<tr>
+      <td style="padding:6px 8px;font-weight:700">${fmtDE(d)}</td>
+      <td style="padding:6px 8px;text-align:right">${s.offeneFaelle}</td>
+      <td style="padding:6px 8px;text-align:right;color:var(--primary);font-weight:700">${s.potentialOffen}</td>
+      <td style="padding:6px 8px;text-align:right">${s.erst1}</td>
+      <td style="padding:6px 8px;text-align:right;color:var(--teal)">${s.ausgeschoepft}</td>
+      <td style="padding:6px 8px;text-align:right">${s.quote}%</td>
+      <td style="padding:6px 8px;text-align:right">${s.erledigt}</td>
+    </tr>`; }).join('');
+  h += `<div class="ausl-card" style="padding:8px 6px;overflow-x:auto">
+    <table style="width:100%;border-collapse:collapse;font-size:11px">
+      <thead><tr style="border-bottom:2px solid var(--border);color:var(--muted)">
+        <th style="padding:6px 8px;text-align:left">Stichtag</th><th style="padding:6px 8px;text-align:right">Fälle</th><th style="padding:6px 8px;text-align:right">Potential</th><th style="padding:6px 8px;text-align:right">erst 1 VO</th><th style="padding:6px 8px;text-align:right">ausgesch.</th><th style="padding:6px 8px;text-align:right">Quote</th><th style="padding:6px 8px;text-align:right">erledigt</th>
+      </tr></thead><tbody>${rows}</tbody></table></div>`;
+
+  document.getElementById('content').innerHTML = h;
+}
+
+// ═══════════════════════════════════════════════════════════
 // VIEW: AUFGABEN (Tages-Cockpit für Praxismanager)
 // ═══════════════════════════════════════════════════════════
 // Navigation aus den Aufgaben-Kacheln in die jeweiligen Tabs
@@ -2855,6 +3152,67 @@ function toggleSec(key){ lsSet('cki_secopen_'+key, !secOpen(key)); renderAufgabe
 function hhmm(d){ return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0'); }
 function jsq(s){ return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'"); }
 function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+// ── Team & Verantwortliche (geteilt über SharePoint-Speicher) ──────────────
+const TEAM_PALETTE = ['#4f46e5','#0891b2','#059669','#d97706','#db2777','#7c3aed','#dc2626','#0d9488'];
+let tzOnlyMine = false;                                   // Laufzeit-Filter „nur meine"
+function getTeam(){ const t=lsGet('cki_team',[]); return Array.isArray(t)?t:[]; }
+function saveTeam(arr){ lsSet('cki_team',arr); }
+function teamColor(name){ const t=getTeam(); const i=t.findIndex(m=>m.n===name); return TEAM_PALETTE[(i<0?String(name).length:i)%TEAM_PALETTE.length]; }
+function teamInitials(name){ const p=String(name).trim().split(/\s+/); if(p.length>=2&&p[0]&&p[1]) return (p[0][0]+p[1][0]).toUpperCase(); return String(name).slice(0,2).toUpperCase(); }
+function addTeamMember(){
+  const el=document.getElementById('tzTeamInput'); if(!el) return;
+  const name=(el.value||'').trim(); if(!name) return;
+  const team=getTeam(); if(team.some(m=>m.n.toLowerCase()===name.toLowerCase())){ el.value=''; return; }
+  team.push({n:name}); saveTeam(team); renderAufgaben();
+}
+function removeTeamMember(name){ saveTeam(getTeam().filter(m=>m.n!==name)); renderAufgaben(); }
+// Zuweisung je Kategorie (Standard) + je Aufgabe (Override; '' = Standard erben)
+function getCatAssign(catkey){ return lsGet('cki_catassign_'+catkey,''); }
+function setCatAssign(catkey,val){ lsSet('cki_catassign_'+catkey,val); renderAufgaben(); }
+function getTaskAssign(id){ return lsGet('cki_assign_'+id,''); }
+function cycleTaskAssign(id){
+  const names=getTeam().map(m=>m.n); if(!names.length) return;
+  const order=[''].concat(names);                        // '' = Standard (Kategorie)
+  const cur=getTaskAssign(id); const idx=order.indexOf(cur);
+  lsSet('cki_assign_'+id, order[(idx<0?1:idx+1)%order.length]);
+  renderAufgaben();
+}
+function effectiveAssignee(id,catkey){ return getTaskAssign(id) || getCatAssign(catkey) || ''; }
+// Dropdown für den Kategorie-Kopf
+function catAssignSelect(catkey){
+  const cur=getCatAssign(catkey);
+  const opts=['<option value=""'+(cur===''?' selected':'')+'>— offen</option>']
+    .concat(getTeam().map(m=>'<option value="'+esc(m.n)+'"'+(cur===m.n?' selected':'')+'>'+esc(m.n)+'</option>'));
+  return '<select class="asg-sel" onclick="event.stopPropagation()" onchange="setCatAssign(\''+jsq(catkey)+'\',this.value)">'+opts.join('')+'</select>';
+}
+// Klickbarer Initialen-Chip je Aufgabe (Klick = nächste Person / zurück auf Standard)
+function assigneeChip(id,catkey){
+  const ov=getTaskAssign(id); const eff=ov||getCatAssign(catkey)||''; const inh=!ov&&!!eff;
+  if(!getTeam().length) return '';
+  if(!eff) return '<span class="asg-chip asg-none" onclick="event.stopPropagation();cycleTaskAssign(\''+jsq(id)+'\')" title="Verantwortliche zuweisen">+</span>';
+  return '<span class="asg-chip'+(inh?' asg-inh':'')+'" style="background:'+teamColor(eff)+'" onclick="event.stopPropagation();cycleTaskAssign(\''+jsq(id)+'\')" title="'+esc(eff)+(inh?' · von Kategorie geerbt':'')+' · klicken zum Ändern">'+esc(teamInitials(eff))+'</span>';
+}
+// „Ich bin …" (persönlich, NICHT geteilt) + Auto-Vorschlag aus MS-Login
+function detectMsUser(){ try{ const a=msalApp&&msalApp.getAllAccounts()[0]; return a?(a.name||a.username||''):''; }catch(e){ return ''; } }
+function getMe(){ const me=lsGet('cki_me',null); if(me!==null) return me;
+  const d=detectMsUser().toLowerCase(); const hit=getTeam().find(m=>d&&(d.indexOf(m.n.toLowerCase())>=0||m.n.toLowerCase().indexOf(d.split(' ')[0])>=0));
+  return hit?hit.n:''; }
+function setMe(val){ lsSetRaw('cki_me',val); renderAufgaben(); }   // lsSetRaw → kein Team-Sync
+function toggleOnlyMine(v){ tzOnlyMine=!!v; renderAufgaben(); }
+// Team-Leiste (Namen verwalten, „ich bin", Filter)
+function renderTeamBar(){
+  const team=getTeam();
+  const chips=team.map(m=>'<span class="tm-chip"><span class="tm-dot" style="background:'+teamColor(m.n)+'"></span>'+esc(m.n)+'<span class="tm-x" title="Entfernen" onclick="removeTeamMember(\''+jsq(m.n)+'\')">×</span></span>').join('');
+  const meOpts=['<option value="">— ich bin …</option>'].concat(team.map(m=>'<option value="'+esc(m.n)+'"'+(getMe()===m.n?' selected':'')+'>'+esc(m.n)+'</option>')).join('');
+  return `<div class="tm-bar">
+    <span class="tm-label">👥 Team</span>
+    ${chips||'<span class="tm-empty">Noch keine Namen – füge dein Team hinzu →</span>'}
+    <span class="tm-add"><input id="tzTeamInput" class="tm-input" placeholder="Name…" onkeydown="if(event.key==='Enter'){event.preventDefault();addTeamMember();}"><button class="tm-addbtn" onclick="addTeamMember()">+ hinzufügen</button></span>
+    ${team.length?`<select class="asg-sel tm-me" onchange="setMe(this.value)">${meOpts}</select>
+    <label class="tm-mine"><input type="checkbox" ${tzOnlyMine?'checked':''} onchange="toggleOnlyMine(this.checked)"> nur meine</label>`:''}
+  </div>`;
+}
 
 function computeActionItems(){
   const rez = collectRezepte();
@@ -2916,11 +3274,16 @@ function renderAufgaben(){
 
   // Kategorien → einzelne abhakbare Einträge
   const sections = [
-    { key:'gap', ico:'⚡', color:'var(--accent)', ttl:'Lücken schließen', go:"switchView('luecken')",
-      items: a.gaps.map(g=>({
+    { key:'gapHeute', ico:'⚡', color:'var(--accent)', ttl:'Lücken heute schließen', go:"switchView('luecken')",
+      items: gapsHeute.map(g=>({
         id:'gap|'+currentDate+'|'+g.therapist+'|'+hhmm(g.start),
         main:esc(g.therapist)+' · '+hhmm(g.start)+'–'+hhmm(g.end),
         sub:Math.round(g.min)+' min frei · Nachrücker anrufen' })) },
+    { key:'gapMorgen', ico:'📅', color:'#0891b2', ttl:'Lücken morgen schließen'+(morgenStr?' · '+morgenLabel:''), go:"switchView('luecken')",
+      items: (morgenStr?gapsMorgen:[]).map(g=>({
+        id:'gap|'+morgenStr+'|'+g.therapist+'|'+hhmm(g.start),
+        main:esc(g.therapist)+' · '+hhmm(g.start)+'–'+hhmm(g.end),
+        sub:Math.round(g.min)+' min frei · vorab Nachrücker organisieren' })) },
     { key:'abr', ico:'💰', color:'var(--fire)', ttl:'Rezepte abrechnen', go:"gotoOffene('abr')",
       items: a.typA.map(r=>({
         id:'abr|'+r.rezeptNr,
@@ -2946,7 +3309,7 @@ function renderAufgaben(){
 
   let h = `<div class="summary">
     <h2>🎯 Tagesziel · ${dd}</h2>
-    <div class="tz-lead">Was müssen wir heute tun? Alle offenen Aufgaben aus allen Tabs – zusammengefasst an einem Ort.</div>
+    <div class="tz-lead">Was müssen wir heute tun? Alle offenen Aufgaben an einem Ort – mit Verantwortlichen je Kategorie und je Aufgabe. Zuweisungen &amp; Abhaken werden teamweit geteilt.</div>
   </div>`;
 
   // ── Blaue KPI-Kacheln ──
@@ -3001,28 +3364,54 @@ function renderAufgaben(){
 
   h += `<div style="margin-bottom:14px">${dauerToggleHTML()}</div>`;
 
+  // ── Team-Leiste (Namen verwalten, „ich bin …", Filter „nur meine") ──
+  h += renderTeamBar();
+
   if(total===0){
     h += `<div class="empty" style="background:var(--teal-bg);border:1px solid var(--teal);color:var(--teal)"><b>🎉 Alles erledigt!</b><br><span style="font-size:11px">Keine offenen Aufgaben für diesen Tag – Lücken gefüllt, Rezepte verplant und abgerechnet.</span></div>`;
     document.getElementById('content').innerHTML = h;
     return;
   }
 
+  // ── Verantwortliche: Übersicht pro Person (offen / erledigt) ──
+  const team = getTeam();
+  if(team.length){
+    const stats={}; team.forEach(m=>stats[m.n]={open:0,done:0}); let unass=0;
+    sections.forEach(s=>s.items.forEach(it=>{
+      const who=effectiveAssignee(it.id,s.key), d=taskDone(it.id);
+      if(who&&stats[who]){ if(d) stats[who].done++; else stats[who].open++; }
+      else if(!d){ unass++; }
+    }));
+    h += '<div class="tz-persons">';
+    team.forEach(m=>{ const st=stats[m.n];
+      h += `<div class="tz-person"><span class="asg-chip" style="background:${teamColor(m.n)}">${esc(teamInitials(m.n))}</span>${esc(m.n)} <span class="tz-person-n">${st.open} offen${st.done?' · '+st.done+' ✓':''}</span></div>`; });
+    if(unass) h += `<div class="tz-person"><span class="asg-chip asg-none">–</span>nicht zugewiesen <span class="tz-person-n">${unass} offen</span></div>`;
+    h += '</div>';
+  }
+
   // ── Einklappbare, abhakbare Listen pro Kategorie (Standard: zugeklappt) ──
+  const me = getMe();
   sections.forEach(s=>{
-    if(!s.items.length) return;
-    const sDone = s.items.filter(it=>taskDone(it.id)).length;
+    let items = s.items;
+    if(tzOnlyMine && me) items = items.filter(it=>effectiveAssignee(it.id,s.key)===me);
+    if(!items.length) return;
+    const sDone = items.filter(it=>taskDone(it.id)).length;
     const open = secOpen(s.key);
     h += `<div class="task-sec">
       <div class="task-sec-head${open?' open':''}" style="border-left:4px solid ${s.color}" onclick="toggleSec('${s.key}')">
-        <div class="task-sec-ttl"><span class="task-caret">▸</span> ${s.ico} ${s.ttl} <span class="task-sec-cnt">${sDone}/${s.items.length}</span></div>
-        <button class="task-open" onclick="event.stopPropagation();${s.go}">Tab öffnen →</button>
+        <div class="task-sec-ttl"><span class="task-caret">▸</span> ${s.ico} ${s.ttl} <span class="task-sec-cnt">${sDone}/${items.length}</span></div>
+        <div style="display:flex;align-items:center;gap:8px;margin-left:auto">
+          ${team.length?`<span class="cat-asg">Standard: ${catAssignSelect(s.key)}</span>`:''}
+          <button class="task-open" onclick="event.stopPropagation();${s.go}">Tab öffnen →</button>
+        </div>
       </div>
       <div class="task-list"${open?'':' style="display:none"'}>`;
-    s.items.forEach(it=>{
+    items.forEach(it=>{
       const d = taskDone(it.id);
       h += `<div class="task${d?' done':''}" onclick="toggleTask('${jsq(it.id)}')">
         <div class="task-cb">${d?'✓':''}</div>
         <div class="task-body"><div class="task-main">${it.main}</div><div class="task-sub">${it.sub}</div></div>
+        ${assigneeChip(it.id,s.key)}
       </div>`;
     });
     h += `</div></div>`;
@@ -3037,7 +3426,7 @@ function renderAufgaben(){
 const AAD = {
   clientId: '3449c999-af75-4237-b39e-2ab1fdcc9f37',
   authority: 'https://login.microsoftonline.com/709b1b68-1718-476e-989c-2e0f98e7769c',
-  scopes: ['Sites.Read.All','Files.Read.All']
+  scopes: ['Sites.Read.All','Files.Read.All','Files.ReadWrite.All']
 };
 const SP = {
   hostname: 'physiockigmbh.sharepoint.com',
@@ -3105,6 +3494,7 @@ async function connectSharePoint(){
     msStatus('Verbinde mit SharePoint …');
     const site = await graphGet('/sites/'+SP.hostname+':'+SP.sitePath, token);
     spSiteId = site.id;
+    startSharedStore();   // geteilten Status-Speicher (SharePoint-JSON) starten
     msStatus('Suche Export-Dateien …');
     const listing = await graphGet('/sites/'+spSiteId+'/drive/root:/'+encodeURI(SP.folderPath)+':/children?$top=999&$select=name,id,size,lastModifiedDateTime', token);
     const csvs = (listing.value||[]).filter(f=>/\.csv$/i.test(f.name));

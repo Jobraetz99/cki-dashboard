@@ -2485,6 +2485,7 @@ function collectRezepte(){
         dauerJ:0, dauerN:0
       };
     }
+    if(!rezMap[k].bearbStatus && c.bearbStatus) rezMap[k].bearbStatus = c.bearbStatus;  // ersten nicht-leeren Status übernehmen
     if(c.dauertermin) rezMap[k].dauerJ++; else rezMap[k].dauerN++;
     if(c.termIdent && c.belegt){
       rezMap[k].belegteTermine.add(c.termIdent);
@@ -3153,16 +3154,18 @@ function tzStepDay(delta){
   currentDate = DATA.dates[ni]; renderAufgaben();
 }
 function tzSetDay(d){ if(d){ currentDate=d; renderAufgaben(); } }
-// Patienten mit Dauer-Potenzial (geeignet, aber noch keine Maske D) → Set von patKeys
+// Patienten mit Dauer-Potenzial (geeignet, aber noch keine Maske D) →
+// Map patKey → Liste der dauerplanfähigen Kategorien (z.B. ['KG ZNS','MLD 60']).
 function dauerKandidatKeys(){
-  const keys = new Set();
+  const map = new Map();
   try{
     collectPatienten().forEach(p=>{
       if(p.istDauer) return;
-      if(patDauerKategorien(p).length) keys.add(p.patKey);
+      const cats = patDauerKategorien(p);
+      if(cats.length) map.set(p.patKey, cats);
     });
   }catch(e){}
-  return keys;
+  return map;
 }
 // Baut die Kalender-/Tagesplan-Ansicht: alle Patienten mit Termin am gewählten Tag,
 // bei denen wirklich etwas zu tun ist (Abrechnen / Folgetermin / Folge-VO / Dauer-Potenzial).
@@ -3201,7 +3204,11 @@ function buildTagesplan(a, rez){
   const me = getMe();
   let liste = Object.values(patAppt).map(p=>{
     const tasks = (byKey[p.key]||[]).slice();
-    if(dauerKeys.has(p.key)) tasks.push({id:'dauer|'+p.key, cat:'dauer', ico:'🎯', txt:'Dauerplan ansprechen', sub:'kommt regelmäßig · noch keine Maske D'});
+    if(dauerKeys.has(p.key)){
+      const cats = dauerKeys.get(p.key)||[];
+      const catStr = cats.length ? esc(cats.join(', '))+' dauerplanfähig' : 'dauerplanfähig';
+      tasks.push({id:'dauer|'+p.key, cat:'dauer', ico:'🎯', txt:'Dauerplan ansprechen', sub:catStr+' · noch keine Dauer-Maske'});
+    }
     return Object.assign(p, {tasks});
   }).filter(p=>p.tasks.length>0);
   liste.sort((x,y)=> x.start-y.start || x.name.localeCompare(y.name));
@@ -3272,14 +3279,21 @@ function renderTeamBar(){
   </div>`;
 }
 
+// Theorg-Bearbeitungsstatus eines Rezepts (klein geschrieben, „" wenn leer)
+function rezStatus(r){ return (r.bearbStatus||'').toLowerCase(); }
+// „abgebrochen" = storniert → gehört in KEINE Aufgabenliste
+function istStorniert(r){ return rezStatus(r).includes('abgebrochen'); }
+// „abgeschlossen" = vom Therapeuten final abgeschlossen (Serie beendet)
+function istAbgeschlossen(r){ return rezStatus(r).includes('abgeschlossen'); }
 function computeActionItems(){
   const rez = collectRezepte();
-  // Fertig, aber nicht abgerechnet (Nicht-Blanko)
-  const typA = rez.filter(r=>!r.istAbgerechnet && r.echteMenge>0 && !r.istBlanko && r.erbracht>=r.echteMenge);
-  // Angefangen, kein Folgetermin geplant
-  const typB = rez.filter(r=>!r.istAbgerechnet && r.echteMenge>0 && r.erbracht>0 && r.erbracht<r.echteMenge && !r.hasFuture);
-  // Folge-VO-Kandidaten (Serie faktisch fertig, keine neuere VO) – nur die offenen
-  const folgeVO = rez.filter(r=>r.echteMenge>0 && r.erbracht>0 && !r.hasFuture && !r.hasFolgeVO && (r.erbracht>=r.echteMenge || r.rest<=1))
+  // Fertig, aber nicht abgerechnet (Nicht-Blanko) – abgebrochene raus
+  const typA = rez.filter(r=>!r.istAbgerechnet && r.echteMenge>0 && !r.istBlanko && r.erbracht>=r.echteMenge && !istStorniert(r));
+  // Angefangen, kein Folgetermin geplant – abgebrochene UND abgeschlossene raus
+  // (eine abgeschlossene Serie braucht keinen Folgetermin mehr)
+  const typB = rez.filter(r=>!r.istAbgerechnet && r.echteMenge>0 && r.erbracht>0 && r.erbracht<r.echteMenge && !r.hasFuture && !istStorniert(r) && !istAbgeschlossen(r));
+  // Folge-VO-Kandidaten (Serie faktisch fertig, keine neuere VO, keine Zukunftstermine) – nur die offenen; abgebrochene raus
+  const folgeVO = rez.filter(r=>r.echteMenge>0 && r.erbracht>0 && !r.hasFuture && !r.hasFolgeVO && (r.erbracht>=r.echteMenge || r.rest<=1) && !istStorniert(r))
                      .filter(r=>getDoingStatus(r.rezeptNr)==='offen');
   // Lücken am aktuell gewählten Tag → einzelne Slots
   const dayCells = DATA.cells.filter(c=>c.dateStr===currentDate);

@@ -2745,7 +2745,7 @@ function renderFolgeVO(){
 
   h += `<div style="background:var(--primary-bg,#eef2ff);border:1px solid var(--primary);border-radius:12px;padding:12px 14px;margin-bottom:12px;font-size:11px;color:var(--dark);line-height:1.6">
     <b style="color:var(--primary);font-family:Montserrat;font-weight:800">ℹ️ So wird gerechnet:</b>
-    Ausschöpfung = <b>erbrachte + geplante Termine</b> gemessen an der <b>orientierenden Behandlungsmenge</b> des Katalogs. Bewusst auf Basis echter Kalendertermine, weil das Verordnungsmengen-Feld im Export unzuverlässig ist (Sentinelwerte 100/1000, teils kleiner als die erbrachten Termine). „Noch X Rezepte" = Rest-Behandlungen ÷ Höchstmenge je VO. Ein <b>Verordnungsfall</b> = Patient + ICD-3-Steller + Diagnosegruppe; die Kette beginnt beim <b>ersten Rezept</b> (Fall seit …) und startet nach 6 Monaten ohne Rezept neu. Stichtag <b>${fmtDE(stichtag)}</b>, Dauerpatienten (Maske D) ausgeblendet.
+    Ausschöpfung = <b>verplante Termine (erbrachte + bereits gebuchte zukünftige)</b> gemessen an der <b>orientierenden Behandlungsmenge</b> des Katalogs. Entscheidend ist, wie viele der möglichen Behandlungen schon verplant sind – egal ob der Termin in Vergangenheit oder Zukunft liegt. Bewusst auf Basis echter Kalendertermine, weil das Verordnungsmengen-Feld im Export unzuverlässig ist (Sentinelwerte 100/1000, teils kleiner als die erbrachten Termine). Sind alle möglichen Behandlungen verplant, ist nichts mehr zu tun. „Noch X Rezepte" = Rest-Behandlungen ÷ Höchstmenge je VO. Ein <b>Verordnungsfall</b> = Patient + ICD-3-Steller + Diagnosegruppe; die Kette beginnt beim <b>ersten Rezept</b> (Fall seit …) und startet nach 6 Monaten ohne Rezept neu. Stichtag <b>${fmtDE(stichtag)}</b>, Dauerpatienten (Maske D) ausgeblendet.
     <br><span style="color:var(--amber)"><b>⚠️ Datenqualität:</b> 29 % der Rezepte im Export haben kein Rezept-Datum – solche Fälle sind mit „Datum unvollständig" markiert (Fallabgrenzung unsicher). Katalogwerte WS / EX / LY gesichert · ZN, PN, CS, AT, SO <b>vorläufig</b>.</span></div>`;
 
   if(!hatZukunftsdaten){
@@ -2785,9 +2785,9 @@ function renderFolgeVO(){
     let mitte='', handlungBadge='', borderCol='var(--border)';
     if(mode==='bvb'){
       borderCol='var(--teal)';
-      mitte = `<div class="ac-s">${esc(f.bvbName||f.bvb)} · <b style="color:var(--teal)">budgetfrei</b> · ${f.anzRez} VO · ${f.erbracht} erbracht${f.geplant>0?' · '+f.geplant+' geplant':''} · ${fallSpan}</div>`;
+      mitte = `<div class="ac-s">${esc(f.bvbName||f.bvb)} · <b style="color:var(--teal)">budgetfrei</b> · ${f.anzRez} VO · ${f.genutzt} verplant${f.geplant>0?' (davon '+f.geplant+' zukünftig)':''} · ${fallSpan}</div>`;
     } else if(mode==='ohne'){
-      mitte = `<div class="ac-s">Indikationsschlüssel im Export leer – nicht bewertbar · ${f.anzRez} VO · ${f.erbracht} erbracht · ${fallSpan}</div>`;
+      mitte = `<div class="ac-s">Indikationsschlüssel im Export leer – nicht bewertbar · ${f.anzRez} VO · ${f.genutzt} verplant · ${fallSpan}</div>`;
     } else {
       const hm = handlungMeta[f.handlung]||handlungMeta.folgevo;
       borderCol = hm.c;
@@ -2798,10 +2798,10 @@ function renderFolgeVO(){
       const barCol = pct>=90?'var(--teal)':pct>=50?'var(--amber)':'var(--accent)';
       // konkreter Handlungssatz
       let step='';
-      if(f.handlung==='folgevo') step = `<b style="color:var(--primary)">→ noch ${f.restBeh} Behandlung${f.restBeh>1?'en':''} möglich · ca. ${f.nochRezepte} Folge-VO${f.nochRezepte>1?'s':''} bis orient. Menge (${f.orient})</b>`;
-      else step = `<b style="color:var(--teal)">→ orient. Menge (${f.orient}) erreicht – nichts zu tun</b>`;
+      if(f.handlung==='folgevo') step = `<b style="color:var(--primary)">→ erst ${f.genutzt} von ${f.orient} verplant · noch ${f.restBeh} möglich · ca. ${f.nochRezepte} Folge-VO${f.nochRezepte>1?'s':''} nötig</b>`;
+      else step = `<b style="color:var(--teal)">→ alle ${f.orient} verplant – nichts zu tun</b>`;
       mitte = `<div class="ac-s" style="margin-bottom:3px">${step}</div>
-        <div class="ac-s" style="margin-bottom:4px">${f.anzRez} VO · ${f.erbracht} erbracht${f.geplant>0?' + '+f.geplant+' geplant':''} von ${f.orient} · ${fallSpan}</div>
+        <div class="ac-s" style="margin-bottom:4px">${f.anzRez} VO · <b>${f.genutzt} von ${f.orient} verplant</b>${f.geplant>0?' (davon '+f.geplant+' zukünftig)':''} · ${fallSpan}</div>
         <div style="display:flex;align-items:center;gap:8px">
           <div style="flex:1;height:7px;background:var(--border,#e5e7eb);border-radius:100px;overflow:hidden">
             <div style="width:${pct}%;height:100%;background:${barCol};border-radius:100px"></div>

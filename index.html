@@ -511,7 +511,10 @@ let ctrlFrom = null, ctrlTo = null; // dateStr im Zeitraum-Modus
 // ── Konfiguration (anpassbar) ──────────────────────────────
 const CONFIG = {
   zielAuslastung: 85,   // Tagesziel-Auslastung in %
-  slotMin: 20           // Minuten pro buchbarem Termin-Slot
+  slotMin: 20,          // Minuten pro buchbarem Termin-Slot
+  tagesSollStd: 8,      // Soll-Arbeitsstunden pro Tag (Basis für Überstunden & Abwesenheits-Stunden)
+  ampelGruen: 5,        // Kapazitäts-Ampel: bis X% Abweichung vom Median = grün
+  ampelGelb: 10         // Kapazitäts-Ampel: bis X% = gelb, darüber rot
 };
 
 // ── Ausschluss: Rezepte/Patienten die NICHT über THEORG abgerechnet werden ──
@@ -1267,13 +1270,18 @@ function analyzeDay(cells){
       // Pause = belegte Pause/Fahrtzeit (BelArt=F)
       const anyPause = slots.some(s=>s.belArt==='F' && s.belegt);
       // Frei = AZ + nicht belegt + keine Pause + kein Patient
-      const isFree = anyWork && !anyBelegt && !anyPause && 
+      const isFree = anyWork && !anyBelegt && !anyPause &&
                      slots.some(s=>s.azFlag && (s.belArt==='R' || !s.belArt) && !s.patName);
+      // Patiententermin an diesem Zeitpunkt (Rezept-Patient gebucht)
+      const anyPatient = slots.some(s=>s.belArt==='R' && (s.belegt || (s.patName && s.patName.trim())));
+      // Überstunde = Patiententermin AUSSERHALB der geplanten Arbeitszeit (kein AZ-Slot an diesem Zeitpunkt)
+      const isOutsideWork = !anyWork && anyPatient;
       timeStatus[key] = {
         isWork: anyWork,
         isBelegt: anyBelegt,
         isFree: isFree,
         isPause: anyPause,
+        isOutsideWork: isOutsideWork,
         start: slots[0].start,
         end: slots[0].end
       };
@@ -1326,12 +1334,13 @@ function analyzeDay(cells){
     // Fahrtzeit ist produktive Arbeit und darf die Auslastung NICHT drücken.
     const freeMin  = Object.values(timeStatus).filter(s=>s.isFree).length  * 10; // echte Leerzeit
     const fahrtMin = Object.values(timeStatus).filter(s=>s.isPause).length * 10; // Fahrtzeit (belArt F)
+    const otMin    = Object.values(timeStatus).filter(s=>s.isOutsideWork).length * 10; // Überstunden = Termine außerhalb der Arbeitszeit
     const produktivMin = Math.max(0, wzMin - freeMin); // alles außer echter Leerzeit
     const aus = wzMin>0 ? Math.min(100, Math.round(produktivMin/wzMin*100)) : (termine.length>0?100:0);
 
     therapists.push({
       name: th.name, azStart, azEnd, wzMin, termine, gaps:realGaps, gapTotal,
-      patientMin, fahrtMin, freeMin, produktivMin, aus, cells:th.cells, azWorkCells, timeStatus
+      patientMin, fahrtMin, freeMin, otMin, produktivMin, aus, cells:th.cells, azWorkCells, timeStatus
     });
   });
   
@@ -1455,13 +1464,20 @@ function analyzeRezepteFull(cellsForDay, allCells, opts){
     if(c.rezDatum && !rezeptMap[key].rezDatum) rezeptMap[key].rezDatum = c.rezDatum;
   });
 
-  // Referenz für Taktung + Aktualität. Im allActive-Modus = Stichtag (spätester Termin
-  // im Datensatz), damit "diese Woche" und "aktuell" auch bei etwas älterem Export passen.
+  // Referenz für Taktung + Aktualität. Im allActive-Modus = "heute".
+  //   Wichtig: In die Zukunft gebuchte Termine dürfen den Stichtag NICHT nach vorne ziehen
+  //   (sonst sehen laufende VOs fälschlich fast abgelaufen aus). Daher: echtes heutiges Datum,
+  //   aber bei rein historischem Export (Daten enden in der Vergangenheit) der letzte Datenpunkt.
   let ref;
   if(allActive){
-    let mx = opts.refDate || null;
-    if(!mx){ allCells.forEach(c=>{ if(c.start && (!mx || c.start>mx)) mx = c.start; }); }
-    ref = mx ? new Date(mx) : new Date();
+    if(opts.refDate){
+      ref = new Date(opts.refDate);
+    } else {
+      let mx = null;
+      allCells.forEach(c=>{ if(c.start && (!mx || c.start>mx)) mx = c.start; });
+      const now = new Date();
+      ref = mx ? new Date(Math.min(mx.getTime(), now.getTime())) : now;
+    }
   } else {
     ref = currentDate ? new Date(currentDate+'T12:00:00') : new Date();
   }
@@ -2364,58 +2380,68 @@ function ctrlKapazitaetData(){
     (kwSlots[wk] = kwSlots[wk] || new Set()).add(c.therapist+'|'+c.start.getTime());
   });
   const weeks = Object.keys(kwSlots).sort();
-  const cap = weeks.map(w=> Math.round(kwSlots[w].size*10/CONFIG.slotMin));
+  const cap  = weeks.map(w=> Math.round(kwSlots[w].size*10/CONFIG.slotMin));   // Kapazität in Terminen
+  const capH = weeks.map(w=> Math.round(kwSlots[w].size*10/60));               // Kapazität in Stunden
   // Median = Median über alle KW; Randwochen (erste/letzte, oft angeschnitten) für den Median ausklammern.
   let basis = cap.slice();
   if(weeks.length>4) basis = cap.slice(1,-1);
   const sorted=[...basis].sort((a,b)=>a-b);
   const mid=Math.floor(sorted.length/2);
   const median = sorted.length ? (sorted.length%2 ? sorted[mid] : Math.round((sorted[mid-1]+sorted[mid])/2)) : 0;
-  return {weeks, cap, median};
+  const medianH = Math.round(median*CONFIG.slotMin/60);                        // Median in Stunden
+  return {weeks, cap, capH, median, medianH};
 }
 function ctrlKapazitaetChart(data){
-  const {weeks, cap, median} = data;
+  const {weeks, cap, capH, median, medianH} = data;
   if(!weeks.length) return '<div class="empty">Keine Arbeitszeit-Daten für die KW-Kapazität gefunden.</div>';
-  const W=780,H=250,padL=46,padR=16,padT=28,padB=54;
-  const yMax = Math.max(1, Math.ceil(Math.max(median, ...cap)*1.12));
+  const gT=CONFIG.ampelGruen, gE=CONFIG.ampelGelb;   // Ampel-Schwellen (% Abweichung vom Median)
+  const W=780,H=270,padL=46,padR=16,padT=40,padB=54;
+  const yMax = Math.max(1, Math.ceil(Math.max(median, ...cap)*1.16));
   const n=weeks.length;
   const step=(W-padL-padR)/n;
   const bw=Math.min(38, step*0.62);
   const Xc=i=> padL + (i+0.5)*step;
   const Y=v=> padT + (1-(v/yMax))*(H-padT-padB);
-  // Ampel nach Abweichung vom Median: ≤5% grün, ≤10% gelb, darüber rot
   // Gitter + Y-Achse
   let grid=''; const steps=4;
   for(let s=0;s<=steps;s++){ const val=yMax*s/steps, yy=Y(val);
     grid+=`<line x1="${padL}" y1="${yy.toFixed(1)}" x2="${W-padR}" y2="${yy.toFixed(1)}" stroke="var(--border,#e5e7eb)" stroke-width="1"/>`;
     grid+=`<text x="${padL-6}" y="${(yy+3).toFixed(1)}" text-anchor="end" font-size="9" fill="var(--muted,#94a3b8)">${Math.round(val)}</text>`;
   }
-  // Balken + X-Labels
+  // Balken + %-Labels + X-Labels
   const todayWk = isoWeekKey(new Date());
-  let bars='', xlab=''; const showEvery=n<=22?1:2;
+  let bars='', pctlab='', xlab=''; const showEvery=n<=22?1:2;
+  const showPct = n<=30;   // bei sehr vielen KW die %-Zahlen ausdünnen
   weeks.forEach((w,i)=>{
     const v=cap[i], x=(Xc(i)-bw/2), y=Y(v), hgt=Math.max(0,(H-padB)-y);
     const isToday=w===todayWk;
     const dev = median>0 ? (v-median)/median*100 : 0;   // Abweichung vom Median in %
     const adev = Math.abs(dev);
-    const col = adev<=5 ? 'var(--teal)' : adev<=10 ? 'var(--amber)' : 'var(--accent)';
-    const ampel = adev<=5 ? 'im Normalbereich (±5%)' : adev<=10 ? 'leichte Abweichung (5–10%)' : 'starke Abweichung (>10%)';
+    const col = adev<=gT ? 'var(--teal)' : adev<=gE ? 'var(--amber)' : 'var(--accent)';
+    const ampel = adev<=gT ? `im Normalbereich (±${gT}%)` : adev<=gE ? `leichte Abweichung (${gT}–${gE}%)` : `starke Abweichung (>${gE}%)`;
     const richtung = dev>0 ? '🏖️ über Median → Urlaub möglich' : dev<0 ? '⏱️ unter Median → Überstunden' : 'genau im Median';
-    const tag = `${dev>0?'+':''}${Math.round(dev)}% · ${ampel} · ${richtung}`;
-    bars+=`<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${hgt.toFixed(1)}" rx="3" fill="${col}"${isToday?' stroke="var(--dark,#0f172a)" stroke-width="2"':''}><title>${w}: ${v} Termine Kapazität · ${tag}${isToday?' · aktuelle KW':''}</title></rect>`;
-    if(isToday){ xlab+=`<text x="${Xc(i).toFixed(1)}" y="${(y-6).toFixed(1)}" text-anchor="middle" font-size="9" font-weight="800" fill="var(--dark,#0f172a)">📍heute</text>`; }
+    const pct = `${dev>0?'+':''}${Math.round(dev)}%`;
+    const tag = `${pct} · ${ampel} · ${richtung}`;
+    bars+=`<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${hgt.toFixed(1)}" rx="3" fill="${col}"${isToday?' stroke="var(--dark,#0f172a)" stroke-width="2"':''}><title>${w}: ${v} Termine · ${capH[i]} h Kapazität · ${tag}${isToday?' · aktuelle KW':''}</title></rect>`;
+    // %-Zahl über dem Balken, in der Ampelfarbe
+    if(showPct && (i%showEvery===0 || i===n-1 || isToday)){
+      pctlab+=`<text x="${Xc(i).toFixed(1)}" y="${(y-(isToday?16:5)).toFixed(1)}" text-anchor="middle" font-size="8.5" font-weight="800" fill="${col}">${pct}</text>`;
+    }
+    if(isToday){ pctlab+=`<text x="${Xc(i).toFixed(1)}" y="${(y-5).toFixed(1)}" text-anchor="middle" font-size="9" font-weight="800" fill="var(--dark,#0f172a)">📍heute</text>`; }
     if(i%showEvery===0 || i===n-1 || isToday){ xlab+=`<text x="${Xc(i).toFixed(1)}" y="${H-padB+16}" text-anchor="middle" font-size="8.5" font-weight="${isToday?'800':'400'}" fill="${isToday?'var(--dark,#0f172a)':'var(--muted,#94a3b8)'}">${w.replace(/^\d{4}-/,'')}</text>`; }
   });
-  // Median-Linie
+  // Median-Linie (Termine + Stunden)
   const my=Y(median);
   const merLine=`<line x1="${padL}" y1="${my.toFixed(1)}" x2="${W-padR}" y2="${my.toFixed(1)}" stroke="var(--dark,#0f172a)" stroke-width="2" stroke-dasharray="7 4"/>`
-    + `<text x="${W-padR}" y="${(my-6).toFixed(1)}" text-anchor="end" font-size="10" font-weight="800" fill="var(--dark,#0f172a)">Median ${median}</text>`;
-  const legend = `<div style="margin-bottom:6px;font-size:11px;color:var(--dark)">
-      <span style="display:inline-flex;align-items:center;gap:5px;margin-right:14px"><span style="width:11px;height:11px;border-radius:3px;background:var(--teal);display:inline-block"></span>bis 5% Abweichung → normal</span>
-      <span style="display:inline-flex;align-items:center;gap:5px;margin-right:14px"><span style="width:11px;height:11px;border-radius:3px;background:var(--amber);display:inline-block"></span>5–10% Abweichung</span>
-      <span style="display:inline-flex;align-items:center;gap:5px"><span style="width:11px;height:11px;border-radius:3px;background:var(--accent);display:inline-block"></span>über 10% Abweichung</span>
+    + `<text x="${W-padR}" y="${(my-6).toFixed(1)}" text-anchor="end" font-size="10" font-weight="800" fill="var(--dark,#0f172a)">Median ${median} Termine · ${medianH} h</text>`;
+  // Echte Ampel-Legende mit den Schwellen
+  const dot = c => `<span style="width:11px;height:11px;border-radius:50%;background:${c};display:inline-block"></span>`;
+  const legend = `<div style="margin-bottom:6px;font-size:11px;color:var(--dark);display:flex;gap:14px;flex-wrap:wrap;align-items:center">
+      <span style="display:inline-flex;align-items:center;gap:5px">${dot('var(--teal)')}bis ${gT}% Abweichung → normal</span>
+      <span style="display:inline-flex;align-items:center;gap:5px">${dot('var(--amber)')}${gT}–${gE}% → beobachten</span>
+      <span style="display:inline-flex;align-items:center;gap:5px">${dot('var(--accent)')}über ${gE}% → handeln</span>
     </div>`;
-  return legend + `<svg viewBox="0 0 ${W} ${H}" width="100%" style="max-width:100%;height:auto;display:block">${grid}${bars}${merLine}${xlab}</svg>`;
+  return legend + `<svg viewBox="0 0 ${W} ${H}" width="100%" style="max-width:100%;height:auto;display:block">${grid}${bars}${pctlab}${merLine}${xlab}</svg>`;
 }
 
 function renderControlling(){
@@ -2434,16 +2460,18 @@ function renderControlling(){
   const thAgg = {};
   dates.forEach(d=>{
     dayAnal[d].therapists.forEach(t=>{
-      const a = thAgg[t.name] = thAgg[t.name] || {prod:0, wz:0, pat:0, fahrt:0, days:new Set()};
+      const a = thAgg[t.name] = thAgg[t.name] || {prod:0, wz:0, pat:0, fahrt:0, ot:0, days:new Set()};
       a.prod += t.produktivMin||0; a.wz += t.wzMin||0; a.pat += t.patientMin||0; a.fahrt += t.fahrtMin||0; a.days.add(d);
+      a.ot += t.otMin||0;   // Überstunden = Patiententermine außerhalb der geplanten Arbeitszeit (AZ)
     });
   });
   const thStats = Object.entries(thAgg).map(([name,a])=>({
     name,
     avgAus: a.wz>0?Math.min(100,Math.round(a.prod/a.wz*100)):0,
-    totalPat: a.pat, totalWz: a.wz, totalProd: a.prod, totalFahrt: a.fahrt,
+    totalPat: a.pat, totalWz: a.wz, totalProd: a.prod, totalFahrt: a.fahrt, totalOt: a.ot,
     days: a.days.size
   })).sort((x,y)=>y.avgAus-x.avgAus).filter(t=>t.totalWz>0);
+  const sumOt = thStats.reduce((s,t)=>s+t.totalOt,0);
 
   const overallAus = thStats.length ? Math.round(thStats.reduce((s,t)=>s+t.avgAus,0)/thStats.length) : 0;
   const totalTermine = new Set();
@@ -2456,20 +2484,23 @@ function renderControlling(){
       <div class="si"><div class="si-l">ø Auslastung</div><div class="si-v">${overallAus}%</div><div class="si-s">über alle Therapeuten</div></div>
       <div class="si"><div class="si-l">Termine total</div><div class="si-v">${totalTermine.size}</div><div class="si-s">Rezept-Patienten</div></div>
       <div class="si"><div class="si-l">Therapeuten</div><div class="si-v">${thStats.length}</div><div class="si-s">aktiv</div></div>
-      <div class="si"><div class="si-l">Beste Ausl.</div><div class="si-v">${thStats[0]?.avgAus||0}%</div><div class="si-s">${thStats[0]?.name||'-'}</div></div>
+      <div class="si"><div class="si-l">⏱️ Überstunden</div><div class="si-v">${(sumOt/60).toFixed(1)} h</div><div class="si-s">außerhalb Arbeitszeit · alle MA</div></div>
     </div>
   </div>`;
 
-  const auslInfo = '<b>Auslastung pro Therapeut</b><br>Auslastung = <b>belegte Zeit ÷ volle Arbeitszeit</b>.<br>• <b>Arbeitszeit</b> = alle bezahlten 10-Min-Slots (AZ=J), ohne Abzug.<br>• <b>Belegte Zeit</b> = Arbeitszeit minus wirklich leere Fenster. Termine, Blocker, Fahrtzeit und Doku zählen als belegt.<br>Nur echte Lücken (Slot, in dem gar nichts steht) senken den Wert. Rechts: belegte Stunden / Arbeitsstunden (Details beim Überfahren mit der Maus).';
-  h += `<div class="st">📊 Auslastung pro Therapeut ${infoI(auslInfo)}</div>`;
+  const auslInfo = `<b>Auslastung pro Therapeut</b><br>Auslastung = <b>belegte Zeit ÷ volle Arbeitszeit</b>.<br>• <b>Arbeitszeit</b> = alle bezahlten 10-Min-Slots (AZ=J), ohne Abzug.<br>• <b>Belegte Zeit</b> = Arbeitszeit minus wirklich leere Fenster. Termine, Blocker, Fahrtzeit und Doku zählen als belegt.<br>Nur echte Lücken (Slot, in dem gar nichts steht) senken den Wert.<br>⏱️ <b>Überstunden</b> = Patiententermine <b>außerhalb der geplanten Arbeitszeit</b> – also Termine in Slots, die laut Theorg nicht als Arbeitszeit (AZ) markiert sind. Pro 10-Min-Slot gezählt und über den Zeitraum summiert. Details beim Überfahren des Balkens.`;
+  h += `<div class="st">📊 Auslastung pro Therapeut <span class="sub">⏱️ Überstunden = Termine außerhalb der Arbeitszeit</span> ${infoI(auslInfo)}</div>`;
   h += `<div class="ausl-card" style="margin-bottom:16px"><h4>${ctrlPeriodLabel()}</h4>`;
   if(thStats.length){
     thStats.forEach(t=>{
       const color = t.avgAus>=90?'var(--teal)':t.avgAus>=80?'var(--amber)':'var(--accent)';
+      const otH = t.totalOt/60;
+      const otLabel = otH>=0.1 ? `+${otH.toFixed(1)} h` : '–';
+      const otColor = otH>=0.1 ? 'var(--accent)' : 'var(--muted)';
       h += `<div class="ausl-row">
         <div class="ausl-label">${t.name}</div>
-        <div class="ausl-bar"><div class="ausl-fill" style="width:${t.avgAus}%;background:${color}">${t.avgAus}%</div></div>
-        <div class="ausl-val" title="Belegte Zeit ${Math.round(t.totalProd)} min ÷ Arbeitszeit ${Math.round(t.totalWz)} min · davon Fahrt/Blocker/Doku ${Math.round(t.totalFahrt)} min (zählt als belegt) · nur echte Lücken mindern">${(t.totalProd/60).toFixed(0)} / ${(t.totalWz/60).toFixed(0)} h</div>
+        <div class="ausl-bar" title="Belegte Zeit ${Math.round(t.totalProd)} min ÷ Arbeitszeit ${Math.round(t.totalWz)} min · davon Fahrt/Blocker/Doku ${Math.round(t.totalFahrt)} min (zählt als belegt) · nur echte Lücken mindern"><div class="ausl-fill" style="width:${t.avgAus}%;background:${color}">${t.avgAus}%</div></div>
+        <div class="ausl-val" style="color:${otColor}" title="Überstunden: Patiententermine außerhalb der geplanten Arbeitszeit (AZ), summiert über den Zeitraum (${(t.totalWz/60).toFixed(1)} h reguläre Arbeitszeit gesamt)">${otLabel}</div>
       </div>`;
     });
   } else { h += `<div class="empty" style="margin:0">Keine Arbeitszeit im gewählten Zeitraum.</div>`; }
@@ -2539,28 +2570,30 @@ function renderControlling(){
   abwRows.forEach(r=>{ catTotal.urlaub+=r.urlaub; catTotal.fortbildung+=r.fortbildung; catTotal.krank+=r.krank; });
   const abwTotal = catTotal.urlaub + catTotal.fortbildung + catTotal.krank;
 
-  const abwInfo = '<b>Abwesenheiten pro Mitarbeiter</b><br>Gezählt werden Tage mit einer Abwesenheits-Bezeichnung in THEORG, aufgeschlüsselt nach <b>Urlaub</b>, <b>Fortbildung</b> und <b>Krank</b>. Der Balken zeigt je Mitarbeiter die Zusammensetzung – so siehst du auf einen Blick, wer im Urlaub, in Fortbildung oder krank war.';
-  h += `<div class="st">🏖️ Abwesenheiten <span class="sub">Urlaub · Fortbildung · Krank</span> ${infoI(abwInfo)}</div>`;
+  const hPerDay = CONFIG.tagesSollStd;                 // Stunden je Abwesenheitstag
+  const toH = tage => (tage*hPerDay).toFixed(0);       // Tage → Stunden
+  const abwInfo = `<b>Abwesenheiten pro Mitarbeiter</b><br>Gezählt werden Tage mit einer Abwesenheits-Bezeichnung in THEORG, aufgeschlüsselt nach <b>Urlaub</b>, <b>Fortbildung</b> und <b>Krank</b>. Der Balken zeigt je Mitarbeiter die Zusammensetzung.<br>Stunden = Tage × ${hPerDay} h (Tages-Sollzeit).`;
+  h += `<div class="st">🏖️ Abwesenheiten <span class="sub">Urlaub · Fortbildung · Krank · in Tagen & Stunden</span> ${infoI(abwInfo)}</div>`;
   h += `<div class="sg" style="margin-bottom:14px">
-    <div class="si"><div class="si-l">🏖️ Urlaub</div><div class="si-v">${catTotal.urlaub}</div><div class="si-s">Tage gesamt</div></div>
-    <div class="si"><div class="si-l">🎓 Fortbildung</div><div class="si-v">${catTotal.fortbildung}</div><div class="si-s">Tage gesamt</div></div>
-    <div class="si"><div class="si-l">🤒 Krank</div><div class="si-v">${catTotal.krank}</div><div class="si-s">Tage gesamt</div></div>
-    <div class="si"><div class="si-l">MA betroffen</div><div class="si-v">${abwRows.length}</div><div class="si-s">von ${thStats.length} aktiv</div></div>
+    <div class="si"><div class="si-l">🏖️ Urlaub</div><div class="si-v">${catTotal.urlaub} T</div><div class="si-s">${toH(catTotal.urlaub)} h gesamt</div></div>
+    <div class="si"><div class="si-l">🎓 Fortbildung</div><div class="si-v">${catTotal.fortbildung} T</div><div class="si-s">${toH(catTotal.fortbildung)} h gesamt</div></div>
+    <div class="si"><div class="si-l">🤒 Krank</div><div class="si-v">${catTotal.krank} T</div><div class="si-s">${toH(catTotal.krank)} h gesamt</div></div>
+    <div class="si"><div class="si-l">Gesamt</div><div class="si-v">${abwTotal} T</div><div class="si-s">${toH(abwTotal)} h · ${abwRows.length} MA</div></div>
   </div>`;
   if(abwRows.length){
     const maxA = abwRows[0].total || 1;
-    h += `<div class="ausl-card" style="margin-bottom:16px"><h4>Abwesenheitstage pro Mitarbeiter</h4>`;
+    h += `<div class="ausl-card" style="margin-bottom:16px"><h4>Abwesenheit pro Mitarbeiter · Tage & Stunden</h4>`;
     h += `<div class="abw-legend">${CATS.map(c=>`<span><i style="background:${c.color}"></i>${c.label}</span>`).join('')}</div>`;
     abwRows.forEach(r=>{
       const segs = CATS.map(c=>{
         const v=r[c.key]; if(!v) return '';
         const w=(v/maxA*100).toFixed(1);
-        return `<div class="abw-seg" style="width:${w}%;background:${c.color}" title="${c.label}: ${v} Tag${v===1?'':'e'}">${v>=2?v:''}</div>`;
+        return `<div class="abw-seg" style="width:${w}%;background:${c.color}" title="${c.label}: ${v} Tag${v===1?'':'e'} · ${toH(v)} h">${v>=2?v:''}</div>`;
       }).join('');
-      const parts=CATS.filter(c=>r[c.key]).map(c=>`${r[c.key]} ${c.label}`).join(' · ');
+      const parts=CATS.filter(c=>r[c.key]).map(c=>`${r[c.key]} ${c.label} (${toH(r[c.key])} h)`).join(' · ');
       h += `<div class="abw-row"><div class="abw-name" title="${esc(r.name)}">${esc(r.name)}</div>
         <div class="abw-track">${segs}</div>
-        <div class="abw-val" title="${parts}">${r.total} Tag${r.total===1?'':'e'}</div></div>`;
+        <div class="abw-val" title="${parts}">${r.total} T · ${toH(r.total)} h</div></div>`;
     });
     h += `</div>`;
   } else {
@@ -2569,15 +2602,17 @@ function renderControlling(){
 
   // ═══ KW-Kapazität vs. Median (alle KW) ═══
   const kd = ctrlKapazitaetData();
-  const ueber = kd.cap.filter(v=>v>kd.median*1.05).length;
-  const unter = kd.cap.filter(v=>v<kd.median*0.95).length;
-  const kapInfo = `<b>Verfügbare Kapazität pro KW</b><br>Je KW = alle bezahlten Arbeitszeit-Slots (AZ=J) aller Mitarbeiter, umgerechnet in Termine à ${CONFIG.slotMin} min (10-Min-Slot × Anzahl ÷ ${CONFIG.slotMin}).<br><b>Median</b> = Median dieser KW-Kapazität über alle Wochen (angeschnittene Rand-KW ausgeklammert). Über Median → Puffer für Urlaub, unter Median → Überstunden nötig.`;
-  h += `<div class="st">🗓️ Verfügbare Kapazität pro KW <span class="sub">Termine à ${CONFIG.slotMin} min · Median = Median über alle KW</span> ${infoI(kapInfo)}</div>`;
+  // Ampel-Zählung nach Abweichung vom Median (grün/gelb/rot)
+  let ampGruen=0, ampGelb=0, ampRot=0;
+  kd.cap.forEach(v=>{ const ad = kd.median>0?Math.abs((v-kd.median)/kd.median*100):0;
+    if(ad<=CONFIG.ampelGruen) ampGruen++; else if(ad<=CONFIG.ampelGelb) ampGelb++; else ampRot++; });
+  const kapInfo = `<b>Verfügbare Kapazität pro KW</b><br>Je KW = alle bezahlten Arbeitszeit-Slots (AZ=J) aller Mitarbeiter, umgerechnet in Termine à ${CONFIG.slotMin} min bzw. Stunden.<br><b>Median</b> = Median dieser KW-Kapazität über alle Wochen (angeschnittene Rand-KW ausgeklammert).<br><b>Ampel</b> nach Abweichung vom Median: bis ${CONFIG.ampelGruen}% grün, bis ${CONFIG.ampelGelb}% gelb, darüber rot. Über Median → Puffer für Urlaub, unter Median → Überstunden nötig.`;
+  h += `<div class="st">🗓️ Verfügbare Kapazität pro KW <span class="sub">Termine à ${CONFIG.slotMin} min & Stunden · Ampel vs. Median</span> ${infoI(kapInfo)}</div>`;
   h += `<div class="sg" style="margin-bottom:12px">
-    <div class="si"><div class="si-l">Median (normal)</div><div class="si-v">${kd.median}</div><div class="si-s">Termine / Woche</div></div>
-    <div class="si"><div class="si-l">KW über Median</div><div class="si-v">${ueber}</div><div class="si-s">🏖️ Urlaub möglich</div></div>
-    <div class="si"><div class="si-l">KW unter Median</div><div class="si-v">${unter}</div><div class="si-s">⏱️ Überstunden nötig</div></div>
-    <div class="si"><div class="si-l">Kalenderwochen</div><div class="si-v">${kd.weeks.length}</div><div class="si-s">im Export</div></div>
+    <div class="si"><div class="si-l">Median (normal)</div><div class="si-v">${kd.median}</div><div class="si-s">Termine · ${kd.medianH} h / Woche</div></div>
+    <div class="si"><div class="si-l">🟢 im Normalbereich</div><div class="si-v">${ampGruen}</div><div class="si-s">±${CONFIG.ampelGruen}% um Median</div></div>
+    <div class="si"><div class="si-l">🟡 leichte Abw.</div><div class="si-v">${ampGelb}</div><div class="si-s">${CONFIG.ampelGruen}–${CONFIG.ampelGelb}% Abweichung</div></div>
+    <div class="si"><div class="si-l">🔴 starke Abw.</div><div class="si-v">${ampRot}</div><div class="si-s">über ${CONFIG.ampelGelb}% · handeln</div></div>
   </div>`;
   h += `<div class="ausl-card" style="margin-bottom:16px">${ctrlKapazitaetChart(kd)}</div>`;
 

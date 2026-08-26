@@ -1446,10 +1446,13 @@ function analyzeRezepteFull(cellsForDay, allCells, opts){
         termineHeute: new Set(),
         allTermine: new Set(),
         weekTermine: new Set(),
+        windowTermine: new Set(),   // Termine innerhalb der Blanko-Gültigkeit (16 Wo ab VO-Datum)
         lastDate: null
       };
     }
     if(c.termIdent)rezeptMap[key].termineHeute.add(c.termIdent);
+    // VO-Datum nachtragen: nicht jede R-Zelle trägt das rezDatum, aber es ist je Rezept konstant.
+    if(c.rezDatum && !rezeptMap[key].rezDatum) rezeptMap[key].rezDatum = c.rezDatum;
   });
 
   // Referenz für Taktung + Aktualität. Im allActive-Modus = Stichtag (spätester Termin
@@ -1478,6 +1481,11 @@ function analyzeRezepteFull(cellsForDay, allCells, opts){
       const t=c.start.getTime();
       if(t>=weekStartT && t<weekEndT) rm.weekTermine.add(c.termIdent);
       if(!rm.lastDate || c.start>rm.lastDate) rm.lastDate = c.start;
+      // Termine innerhalb der Blanko-Gültigkeit: [VO-Datum, VO-Datum + 112 Tage)
+      if(rm.rezDatum){
+        const rd = rm.rezDatum.getTime();
+        if(t>=rd && t < rd + 112*86400000) rm.windowTermine.add(c.termIdent);
+      }
     }
   });
   
@@ -1506,7 +1514,10 @@ function analyzeRezepteFull(cellsForDay, allCells, opts){
     //   aktuell    = letzter Termin ≤ 4 Wochen vor Stichtag
     if(allActive){
       const openWork = rest>0 || isBlankoHM(p.heilmittel) || !!findBVB(p.icd);
-      const recent = p.lastDate && (refT - p.lastDate.getTime()) <= ACTIVE_WINDOW;
+      // Blanko-VO innerhalb der 16-Wochen-Gültigkeit gilt als aktiv, auch wenn länger kein
+      // Termin lief – genau diese "nicht zu Ende geplanten" VOs wollen wir sehen.
+      const blankoValid = isBlankoHM(p.heilmittel) && p.rezDatum && (refT - p.rezDatum.getTime()) < 112*86400000;
+      const recent = (p.lastDate && (refT - p.lastDate.getTime()) <= ACTIVE_WINDOW) || blankoValid;
       if(!openWork || !recent) return;   // fertig oder eingeschlafen → nicht anzeigen
     }
 
@@ -1542,28 +1553,40 @@ function analyzeRezepteFull(cellsForDay, allCells, opts){
       isBlanko = true;
       tags.blanko = true;
       cats.blanko.push(p);
-      reasons.push('🎯 Schulter → Auf Blanko umstellen!');
+      reasons.push('🎯 Schulter → Rezept auf Blankoverordnung umstellen!');
       badges.push({t:'Blanko mögl.',c:'c-purple'});
       score += 2;
     }
     
-    // 💎 BLANKO-POT. = Aktive Blanko-VO mit noch offenen Behandlungen
-    //   → Patienten die ich noch in Lücken einplanen kann
-    //   → BVB/LVB = kein Limit (immer verplanbar wenn aktiv)
+    // 💎 BLANKO-VO NICHT ZU ENDE GEPLANT
+    //   Eine Blanko-VO ist 16 Wochen (112 Tage) ab VO-Datum gültig und sollte
+    //   durchgehend mit 2× pro Woche verplant werden. Ziel = 2×/Wo × 16 Wo = 32
+    //   Termine, gedeckelt durch das Blanko-Maximum (18 Wirbelsäule/Schulter,
+    //   26 Fraktur). Gezählt werden nur Termine INNERHALB der Gültigkeit.
+    //   Flag = VO noch gültig, aber nicht bis zum Ende (2×/Wo) durchgeplant.
     if(isBlankoHM(p.heilmittel)){
       const max = getBlankoMax(p.icd);
-      const blankoRest = Math.max(0, max-erbracht);
-      const tagseit = p.rezDatum ? Math.floor((Date.now()-p.rezDatum.getTime())/86400000) : null;
+      const zielTermine = Math.min(max || 32, 2*16);              // 2×/Woche über 16 Wochen, gedeckelt durch Max
+      const verplant = p.windowTermine ? p.windowTermine.size : erbracht;  // Termine in Gültigkeit
+      const offen = Math.max(0, zielTermine - verplant);
+      const tagseit = p.rezDatum ? Math.floor((refT-p.rezDatum.getTime())/86400000) : null;
       const tageUebrig = tagseit!==null ? Math.max(0, 112-tagseit) : null;
+      // Soll bis heute bei durchgehend 2× pro Woche
+      const wochenVergangen = tagseit!==null ? Math.min(16, Math.max(0, tagseit/7)) : null;
+      const sollBisHeute = wochenVergangen!==null ? Math.min(zielTermine, Math.round(wochenVergangen*2)) : null;
       p.blankoMax = max;
-      p.blankoRest = blankoRest;
+      p.blankoZiel = zielTermine;
+      p.blankoVerplant = verplant;
+      p.blankoOffen = offen;
+      p.blankoSoll = sollBisHeute;
       p.tageUebrig = tageUebrig;
       badges.push({t:'Blanko aktiv',c:'c-purple'});
       score += 1;
-      
-      // Blanko-Potenzial = aktive Blanko mit Rest ODER BVB (unlimitiert)
-      const isAktivLaufend = tageUebrig===null || tageUebrig > 0;
-      if(isAktivLaufend && (blankoRest > 0 || isBVB)){
+
+      // "nicht zu Ende geplant" = VO läuft noch, aber nicht durchgehend 2×/Wo verplant.
+      // Nur bewertbar mit VO-Datum (sonst ist die 16-Wochen-Gültigkeit nicht bestimmbar).
+      const isAktivLaufend = tageUebrig!==null && tageUebrig > 0;
+      if(p.rezDatum && isAktivLaufend && offen > 0){
         tags.blankopot = true;
         cats.blankopot.push(p);
         score += 1;
@@ -1651,8 +1674,8 @@ function renderRezepte(){
   h += '<div class="rkpis">';
   const kpis = [
     {k:'nr',l:'🔥 Nachrücker',v:r.nr.length,co:'var(--fire)',s:'einplanbar'},
-    {k:'blanko',l:'💊 Auf Blanko',v:r.blanko.length,co:'var(--purple)',s:'umstellen'},
-    {k:'blankopot',l:'💎 Blanko-Pot.',v:r.blankopot.length,co:'var(--accent)',s:'noch verplanbar'},
+    {k:'blanko',l:'💊 Auf Blanko-VO',v:r.blanko.length,co:'var(--purple)',s:'Rezept umstellen'},
+    {k:'blankopot',l:'💎 Blanko-VO',v:r.blankopot.length,co:'var(--accent)',s:'nicht zu Ende geplant'},
     {k:'bvbpot',l:'🔼 BVB-Pot.',v:r.bvbpot.length,co:'var(--primary)',s:'Freq. nicht ausgeschöpft'},
     {k:'untertaktet',l:'🐌 Zu selten',v:r.untertaktet.length,co:'var(--amber)',s:'könnten öfter kommen'},
     {k:'all',l:'📋 Alle',v:r.all.length,co:'var(--dark)',s:'mit Rezept'}
@@ -1695,7 +1718,7 @@ function setNRFilter(f){
 function showRezeptDetail(k){
   const rez = analyzeRezepteFull(null, DATA.cells, {allActive:true});
 
-  const titles = {nr:'🔥 Top-Nachrücker',bvb:'🏥 BVB/LVB-Patienten',blanko:'💊 Auf Blanko umstellen · Schulter-Patienten',blankopot:'💎 Blanko-Potenzial · noch verplanbar',bvbpot:'🔼 BVB-Potenzial · Frequenz nicht ausgeschöpft',untertaktet:'🐌 Zu selten · könnten öfter kommen',all:'📋 Alle Patienten mit Rezept'};
+  const titles = {nr:'🔥 Top-Nachrücker',bvb:'🏥 BVB/LVB-Patienten',blanko:'💊 Rezept auf Blankoverordnung umstellen · Schulter-Patienten',blankopot:'💎 Blanko-VO nicht zu Ende geplant',bvbpot:'🔼 BVB-Potenzial · Frequenz nicht ausgeschöpft',untertaktet:'🐌 Zu selten · könnten öfter kommen',all:'📋 Alle Patienten mit Rezept'};
   let items = rez[k];
   const isNR = k==='nr';
   const isBP = k==='blankopot';
@@ -1735,34 +1758,36 @@ function showRezeptDetail(k){
   if(!items.length){
     h += '<div class="empty">Keine Einträge in dieser Kategorie</div>';
   } else if(isBP){
-    // BLANKO-POTENZIAL: Aktive Blanko-VOs mit noch offenen Behandlungen
+    // BLANKO-VO NICHT ZU ENDE GEPLANT: gültige Blanko-VOs, die nicht durchgehend
+    // mit 2×/Woche über die 16-Wochen-Gültigkeit verplant sind.
     h += `<div style="background:var(--accent-bg);border-radius:12px;padding:12px 14px;margin-bottom:10px;font-size:11px;color:var(--dark);line-height:1.6">
-      <b style="color:var(--accent);font-family:Montserrat;font-weight:800">💎 Noch verplanbares Blanko-Potenzial:</b> 
-      Diese Patienten haben eine aktive Blanko-VO mit noch offenen Behandlungen. 
-      Praxis kann sie flexibel in freie Lücken einplanen — Heilmittel, Menge und Frequenz selbst bestimmen!
+      <b style="color:var(--accent);font-family:Montserrat;font-weight:800">💎 Blanko-VO nicht zu Ende geplant:</b>
+      Eine Blanko-VO ist <b>16 Wochen ab VO-Datum</b> gültig und sollte durchgehend mit <b>2× pro Woche</b> verplant werden
+      (Ziel = 32 Termine, gedeckelt durch das Blanko-Maximum von 18 bzw. 26 bei Frakturen).
+      Bei diesen Patienten fehlen noch Termine innerhalb der Gültigkeit — bitte bis zum Ende durchplanen.
     </div>`;
-    
-    // Nach Anzahl noch verplanbarer Behandlungen sortieren (höchstes Potenzial zuerst)
-    const sortedItems = [...items].sort((a,b)=>{
-      const aRest = Math.max(0, (a.blankoMax||18) - a.erbracht);
-      const bRest = Math.max(0, (b.blankoMax||18) - b.erbracht);
-      return bRest - aRest;
-    });
-    
+
+    // Nach Anzahl noch offener (nicht verplanter) Termine sortieren — größter Rückstand zuerst
+    const sortedItems = [...items].sort((a,b)=> (b.blankoOffen||0) - (a.blankoOffen||0));
+
     sortedItems.forEach(p=>{
       const age = p.geb ? Math.floor((Date.now()-new Date(p.geb).getTime())/(365.25*86400000)) : null;
       const ageStr = age ? `${age}J` : '';
-      const max = p.blankoMax || 18;
-      const rest = Math.max(0, max - p.erbracht);
-      const pct = Math.min(100, Math.round(p.erbracht/max*100));
+      const ziel = p.blankoZiel || Math.min(p.blankoMax||18, 32);
+      const verplant = p.blankoVerplant!=null ? p.blankoVerplant : p.erbracht;
+      const offen = p.blankoOffen!=null ? p.blankoOffen : Math.max(0, ziel - verplant);
+      const soll = p.blankoSoll;
+      const pct = Math.min(100, Math.round(verplant/ziel*100));
+      const hinterher = soll!=null && verplant < soll;   // hinter dem 2×/Wo-Soll zurück
       const tg = p.tageUebrig;
       const tgC = tg!==null && tg<=21 ? 'var(--fire)' : tg!==null && tg<=42 ? 'var(--amber)' : 'var(--muted)';
-      
+
       h += `<div class="pr">
         <div class="pr-i">
           <div class="pr-n">${p.name} ${ageStr ? `<span style="font-size:9px;color:var(--muted);font-weight:600;margin-left:6px">${ageStr}</span>` : ''} <span style="font-size:9px;color:var(--accent);font-weight:700;margin-left:6px">${p.icd||'—'}</span></div>
           <div class="pr-d">
-            <b>${p.heilmittel||'?'}</b> · ${p.erbracht}/${max} verplant · <b style="color:var(--accent);font-size:11px">🎯 noch ${rest} Beh. einplanbar!</b>
+            <b>${p.heilmittel||'?'}</b> · ${verplant}/${ziel} in Gültigkeit verplant · <b style="color:var(--accent);font-size:11px">🎯 noch ${offen} Termine offen</b>
+            ${soll!=null?`<br><span style="color:${hinterher?'var(--fire)':'var(--muted)'}">📈 Soll bei 2×/Wo bis heute: ${soll}${hinterher?` · ${soll-verplant} hinterher`:' · im Plan'}</span>`:''}
             ${tg!==null?`<br><span style="color:${tgC}">🗓 ${tg<0?'⚠ abgelaufen':'noch '+tg+' Tage gültig'}</span>`:''}
           </div>
           <div class="progress-mini"><div class="progress-mini-f" style="width:${pct}%;background:var(--accent)"></div></div>
@@ -1773,8 +1798,8 @@ function showRezeptDetail(k){
   } else if(k==='blanko'){
     // BLANKO = "Auf Blanko umstellen!" — Schulter-Patienten ohne Blanko
     h += `<div style="background:var(--purple-bg);border-radius:12px;padding:12px 14px;margin-bottom:10px;font-size:11px;color:var(--dark);line-height:1.6">
-      <b style="color:var(--purple);font-family:Montserrat;font-weight:800">🎯 Aktion: Auf Blanko umstellen!</b> 
-      Diese Patienten haben eine Schulter-Indikation (M75.x, S42-S46), aber noch ein konventionelles Rezept. 
+      <b style="color:var(--purple);font-family:Montserrat;font-weight:800">🎯 Aktion: Rezept auf Blankoverordnung umstellen!</b>
+      Diese Patienten haben eine Schulter-Indikation (M75.x, S42-S46), aber noch ein konventionelles Rezept.
       Beim Arzt kann eine Umstellung auf Blankoverordnung angestoßen werden — 
       16 Wochen flexibel, bis zu 18 Behandlungen (26 bei Frakturen), Praxis entscheidet selbst.
     </div>`;
@@ -2329,7 +2354,7 @@ function periodSelectorHTML(){
   </div>`;
 }
 
-// ── KW-Kapazität vs. Meridian (Gesamt-Kapazität in Terminen, Median über alle KW) ──
+// ── KW-Kapazität vs. Median (Gesamt-Kapazität in Terminen, Median über alle KW) ──
 function ctrlKapazitaetData(){
   // Personal-Kapazität = alle AZ=J-Arbeitszeit-Slots (10 min), egal ob belegt → in Termine à CONFIG.slotMin.
   const kwSlots = {}; // wk -> Set('th|starttime')
@@ -2340,25 +2365,25 @@ function ctrlKapazitaetData(){
   });
   const weeks = Object.keys(kwSlots).sort();
   const cap = weeks.map(w=> Math.round(kwSlots[w].size*10/CONFIG.slotMin));
-  // Meridian = Median über alle KW; Randwochen (erste/letzte, oft angeschnitten) für den Median ausklammern.
+  // Median = Median über alle KW; Randwochen (erste/letzte, oft angeschnitten) für den Median ausklammern.
   let basis = cap.slice();
   if(weeks.length>4) basis = cap.slice(1,-1);
   const sorted=[...basis].sort((a,b)=>a-b);
   const mid=Math.floor(sorted.length/2);
-  const meridian = sorted.length ? (sorted.length%2 ? sorted[mid] : Math.round((sorted[mid-1]+sorted[mid])/2)) : 0;
-  return {weeks, cap, meridian};
+  const median = sorted.length ? (sorted.length%2 ? sorted[mid] : Math.round((sorted[mid-1]+sorted[mid])/2)) : 0;
+  return {weeks, cap, median};
 }
 function ctrlKapazitaetChart(data){
-  const {weeks, cap, meridian} = data;
+  const {weeks, cap, median} = data;
   if(!weeks.length) return '<div class="empty">Keine Arbeitszeit-Daten für die KW-Kapazität gefunden.</div>';
   const W=780,H=250,padL=46,padR=16,padT=28,padB=54;
-  const yMax = Math.max(1, Math.ceil(Math.max(meridian, ...cap)*1.12));
+  const yMax = Math.max(1, Math.ceil(Math.max(median, ...cap)*1.12));
   const n=weeks.length;
   const step=(W-padL-padR)/n;
   const bw=Math.min(38, step*0.62);
   const Xc=i=> padL + (i+0.5)*step;
   const Y=v=> padT + (1-(v/yMax))*(H-padT-padB);
-  const bandLo=meridian*0.95, bandHi=meridian*1.05;
+  // Ampel nach Abweichung vom Median: ≤5% grün, ≤10% gelb, darüber rot
   // Gitter + Y-Achse
   let grid=''; const steps=4;
   for(let s=0;s<=steps;s++){ const val=yMax*s/steps, yy=Y(val);
@@ -2370,21 +2395,25 @@ function ctrlKapazitaetChart(data){
   let bars='', xlab=''; const showEvery=n<=22?1:2;
   weeks.forEach((w,i)=>{
     const v=cap[i], x=(Xc(i)-bw/2), y=Y(v), hgt=Math.max(0,(H-padB)-y);
-    const over=v>bandHi, under=v<bandLo, isToday=w===todayWk;
-    const col= over?'var(--teal)': under?'var(--accent)':'var(--amber)';
-    const tag= over?'über Meridian → Urlaub möglich': under?'unter Meridian → Überstunden':'im Normalbereich';
+    const isToday=w===todayWk;
+    const dev = median>0 ? (v-median)/median*100 : 0;   // Abweichung vom Median in %
+    const adev = Math.abs(dev);
+    const col = adev<=5 ? 'var(--teal)' : adev<=10 ? 'var(--amber)' : 'var(--accent)';
+    const ampel = adev<=5 ? 'im Normalbereich (±5%)' : adev<=10 ? 'leichte Abweichung (5–10%)' : 'starke Abweichung (>10%)';
+    const richtung = dev>0 ? '🏖️ über Median → Urlaub möglich' : dev<0 ? '⏱️ unter Median → Überstunden' : 'genau im Median';
+    const tag = `${dev>0?'+':''}${Math.round(dev)}% · ${ampel} · ${richtung}`;
     bars+=`<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${hgt.toFixed(1)}" rx="3" fill="${col}"${isToday?' stroke="var(--dark,#0f172a)" stroke-width="2"':''}><title>${w}: ${v} Termine Kapazität · ${tag}${isToday?' · aktuelle KW':''}</title></rect>`;
     if(isToday){ xlab+=`<text x="${Xc(i).toFixed(1)}" y="${(y-6).toFixed(1)}" text-anchor="middle" font-size="9" font-weight="800" fill="var(--dark,#0f172a)">📍heute</text>`; }
     if(i%showEvery===0 || i===n-1 || isToday){ xlab+=`<text x="${Xc(i).toFixed(1)}" y="${H-padB+16}" text-anchor="middle" font-size="8.5" font-weight="${isToday?'800':'400'}" fill="${isToday?'var(--dark,#0f172a)':'var(--muted,#94a3b8)'}">${w.replace(/^\d{4}-/,'')}</text>`; }
   });
-  // Meridian-Linie
-  const my=Y(meridian);
+  // Median-Linie
+  const my=Y(median);
   const merLine=`<line x1="${padL}" y1="${my.toFixed(1)}" x2="${W-padR}" y2="${my.toFixed(1)}" stroke="var(--dark,#0f172a)" stroke-width="2" stroke-dasharray="7 4"/>`
-    + `<text x="${W-padR}" y="${(my-6).toFixed(1)}" text-anchor="end" font-size="10" font-weight="800" fill="var(--dark,#0f172a)">Meridian ${meridian}</text>`;
+    + `<text x="${W-padR}" y="${(my-6).toFixed(1)}" text-anchor="end" font-size="10" font-weight="800" fill="var(--dark,#0f172a)">Median ${median}</text>`;
   const legend = `<div style="margin-bottom:6px;font-size:11px;color:var(--dark)">
-      <span style="display:inline-flex;align-items:center;gap:5px;margin-right:14px"><span style="width:11px;height:11px;border-radius:3px;background:var(--teal);display:inline-block"></span>über Meridian → Urlaub möglich</span>
-      <span style="display:inline-flex;align-items:center;gap:5px;margin-right:14px"><span style="width:11px;height:11px;border-radius:3px;background:var(--amber);display:inline-block"></span>im Normalbereich (±5%)</span>
-      <span style="display:inline-flex;align-items:center;gap:5px"><span style="width:11px;height:11px;border-radius:3px;background:var(--accent);display:inline-block"></span>unter Meridian → Überstunden</span>
+      <span style="display:inline-flex;align-items:center;gap:5px;margin-right:14px"><span style="width:11px;height:11px;border-radius:3px;background:var(--teal);display:inline-block"></span>bis 5% Abweichung → normal</span>
+      <span style="display:inline-flex;align-items:center;gap:5px;margin-right:14px"><span style="width:11px;height:11px;border-radius:3px;background:var(--amber);display:inline-block"></span>5–10% Abweichung</span>
+      <span style="display:inline-flex;align-items:center;gap:5px"><span style="width:11px;height:11px;border-radius:3px;background:var(--accent);display:inline-block"></span>über 10% Abweichung</span>
     </div>`;
   return legend + `<svg viewBox="0 0 ${W} ${H}" width="100%" style="max-width:100%;height:auto;display:block">${grid}${bars}${merLine}${xlab}</svg>`;
 }
@@ -2431,7 +2460,7 @@ function renderControlling(){
     </div>
   </div>`;
 
-  const auslInfo = '<b>Auslastung pro Therapeut</b><br>Auslastung = <b>belegte Zeit ÷ volle Arbeitszeit</b>.<br>• <b>Arbeitszeit</b> = alle bezahlten 10-Min-Slots (AZ=J), ohne Abzug.<br>• <b>Belegte Zeit</b> = Arbeitszeit minus wirklich leere Fenster. Termine, Blocker, Fahrtzeit und Doku zählen als belegt.<br>Nur echte Lücken (Slot, in dem gar nichts steht) senken den Wert. Angezeigt: belegte Min / Arbeits-Min · 🚗 = Fahrt/Blocker/Doku.';
+  const auslInfo = '<b>Auslastung pro Therapeut</b><br>Auslastung = <b>belegte Zeit ÷ volle Arbeitszeit</b>.<br>• <b>Arbeitszeit</b> = alle bezahlten 10-Min-Slots (AZ=J), ohne Abzug.<br>• <b>Belegte Zeit</b> = Arbeitszeit minus wirklich leere Fenster. Termine, Blocker, Fahrtzeit und Doku zählen als belegt.<br>Nur echte Lücken (Slot, in dem gar nichts steht) senken den Wert. Rechts: belegte Stunden / Arbeitsstunden (Details beim Überfahren mit der Maus).';
   h += `<div class="st">📊 Auslastung pro Therapeut ${infoI(auslInfo)}</div>`;
   h += `<div class="ausl-card" style="margin-bottom:16px"><h4>${ctrlPeriodLabel()}</h4>`;
   if(thStats.length){
@@ -2440,7 +2469,7 @@ function renderControlling(){
       h += `<div class="ausl-row">
         <div class="ausl-label">${t.name}</div>
         <div class="ausl-bar"><div class="ausl-fill" style="width:${t.avgAus}%;background:${color}">${t.avgAus}%</div></div>
-        <div class="ausl-val" title="Belegte Zeit ${Math.round(t.totalProd)} min ÷ Arbeitszeit ${Math.round(t.totalWz)} min · davon Fahrt/Blocker/Doku ${Math.round(t.totalFahrt)} min (zählt als belegt) · nur echte Lücken mindern">${Math.round(t.totalProd)}/${Math.round(t.totalWz)}min${t.totalFahrt>0?` · 🚗${Math.round(t.totalFahrt)}`:''}</div>
+        <div class="ausl-val" title="Belegte Zeit ${Math.round(t.totalProd)} min ÷ Arbeitszeit ${Math.round(t.totalWz)} min · davon Fahrt/Blocker/Doku ${Math.round(t.totalFahrt)} min (zählt als belegt) · nur echte Lücken mindern">${(t.totalProd/60).toFixed(0)} / ${(t.totalWz/60).toFixed(0)} h</div>
       </div>`;
     });
   } else { h += `<div class="empty" style="margin:0">Keine Arbeitszeit im gewählten Zeitraum.</div>`; }
@@ -2538,16 +2567,16 @@ function renderControlling(){
     h += `<div class="empty" style="margin-bottom:16px">Keine Abwesenheiten im gewählten Zeitraum.</div>`;
   }
 
-  // ═══ KW-Kapazität vs. Meridian (alle KW) ═══
+  // ═══ KW-Kapazität vs. Median (alle KW) ═══
   const kd = ctrlKapazitaetData();
-  const ueber = kd.cap.filter(v=>v>kd.meridian*1.05).length;
-  const unter = kd.cap.filter(v=>v<kd.meridian*0.95).length;
-  const kapInfo = `<b>Verfügbare Kapazität pro KW</b><br>Je KW = alle bezahlten Arbeitszeit-Slots (AZ=J) aller Mitarbeiter, umgerechnet in Termine à ${CONFIG.slotMin} min (10-Min-Slot × Anzahl ÷ ${CONFIG.slotMin}).<br><b>Meridian</b> = Median dieser KW-Kapazität über alle Wochen (angeschnittene Rand-KW ausgeklammert). Über Meridian → Puffer für Urlaub, unter Meridian → Überstunden nötig.`;
-  h += `<div class="st">🗓️ Verfügbare Kapazität pro KW <span class="sub">Termine à ${CONFIG.slotMin} min · Meridian = Median über alle KW</span> ${infoI(kapInfo)}</div>`;
+  const ueber = kd.cap.filter(v=>v>kd.median*1.05).length;
+  const unter = kd.cap.filter(v=>v<kd.median*0.95).length;
+  const kapInfo = `<b>Verfügbare Kapazität pro KW</b><br>Je KW = alle bezahlten Arbeitszeit-Slots (AZ=J) aller Mitarbeiter, umgerechnet in Termine à ${CONFIG.slotMin} min (10-Min-Slot × Anzahl ÷ ${CONFIG.slotMin}).<br><b>Median</b> = Median dieser KW-Kapazität über alle Wochen (angeschnittene Rand-KW ausgeklammert). Über Median → Puffer für Urlaub, unter Median → Überstunden nötig.`;
+  h += `<div class="st">🗓️ Verfügbare Kapazität pro KW <span class="sub">Termine à ${CONFIG.slotMin} min · Median = Median über alle KW</span> ${infoI(kapInfo)}</div>`;
   h += `<div class="sg" style="margin-bottom:12px">
-    <div class="si"><div class="si-l">Meridian (normal)</div><div class="si-v">${kd.meridian}</div><div class="si-s">Termine / Woche</div></div>
-    <div class="si"><div class="si-l">KW über Meridian</div><div class="si-v">${ueber}</div><div class="si-s">🏖️ Urlaub möglich</div></div>
-    <div class="si"><div class="si-l">KW unter Meridian</div><div class="si-v">${unter}</div><div class="si-s">⏱️ Überstunden nötig</div></div>
+    <div class="si"><div class="si-l">Median (normal)</div><div class="si-v">${kd.median}</div><div class="si-s">Termine / Woche</div></div>
+    <div class="si"><div class="si-l">KW über Median</div><div class="si-v">${ueber}</div><div class="si-s">🏖️ Urlaub möglich</div></div>
+    <div class="si"><div class="si-l">KW unter Median</div><div class="si-v">${unter}</div><div class="si-s">⏱️ Überstunden nötig</div></div>
     <div class="si"><div class="si-l">Kalenderwochen</div><div class="si-v">${kd.weeks.length}</div><div class="si-s">im Export</div></div>
   </div>`;
   h += `<div class="ausl-card" style="margin-bottom:16px">${ctrlKapazitaetChart(kd)}</div>`;

@@ -1609,6 +1609,7 @@ function analyzeRezepteFull(cellsForDay, allCells, opts){
       const wochenVergangen = tagseit!==null ? Math.min(16, Math.max(0, tagseit/7)) : null;
       const sollBisHeute = wochenVergangen!==null ? Math.min(zielTermine, Math.round(wochenVergangen*2)) : null;
       p.blankoMax = max;
+      p.blankoAvg = verplant/16;                                  // Ø Termine pro Woche über die 16 Wochen Gültigkeit
       p.blankoZiel = zielTermine;
       p.blankoVerplant = verplant;
       p.blankoOffen = offen;
@@ -1796,23 +1797,19 @@ function showRezeptDetail(k){
     // mit 2×/Woche über die 16-Wochen-Gültigkeit verplant sind.
     h += `<div style="background:var(--accent-bg);border-radius:12px;padding:12px 14px;margin-bottom:10px;font-size:11px;color:var(--dark);line-height:1.6">
       <b style="color:var(--accent);font-family:Montserrat;font-weight:800">💎 Blanko-VO nicht zu Ende geplant:</b>
-      Eine Blanko-VO ist <b>16 Wochen ab VO-Datum</b> gültig und sollte durchgehend mit <b>2× pro Woche</b> verplant werden
-      (Ziel = 32 Termine: 2× pro Woche über 16 Wochen).
-      Bei diesen Patienten fehlen noch Termine innerhalb der Gültigkeit — bitte bis zum Ende mit 2× pro Woche durchplanen.
+      Geprüft wird nur der Durchschnitt: Wie oft pro Woche ist der Patient über die <b>16 Wochen Gültigkeit</b> verplant?
+      <b>Ø 2× pro Woche = passt</b> (wird nicht angezeigt). Liegt der Schnitt darunter, steht der Patient hier — bitte auf 2× pro Woche auffüllen.
     </div>`;
 
-    // Nach Anzahl noch offener (nicht verplanter) Termine sortieren — größter Rückstand zuerst
-    const sortedItems = [...items].sort((a,b)=> (b.blankoOffen||0) - (a.blankoOffen||0));
+    // Nach niedrigstem Wochenschnitt sortieren — am wenigsten geplant zuerst
+    const sortedItems = [...items].sort((a,b)=> (a.blankoAvg||0) - (b.blankoAvg||0));
 
     sortedItems.forEach(p=>{
       const age = p.geb ? Math.floor((Date.now()-new Date(p.geb).getTime())/(365.25*86400000)) : null;
       const ageStr = age ? `${age}J` : '';
-      const ziel = p.blankoZiel || 32;
-      const verplant = p.blankoVerplant!=null ? p.blankoVerplant : p.erbracht;
-      const offen = p.blankoOffen!=null ? p.blankoOffen : Math.max(0, ziel - verplant);
-      const soll = p.blankoSoll;
-      const pct = Math.min(100, Math.round(verplant/ziel*100));
-      const hinterher = soll!=null && verplant < soll;   // hinter dem 2×/Wo-Soll zurück
+      const avg = p.blankoAvg!=null ? p.blankoAvg : (p.blankoVerplant||0)/16;
+      const avgStr = avg.toFixed(1).replace('.',',');
+      const pct = Math.min(100, Math.round(avg/2*100));
       const tg = p.tageUebrig;
       const tgC = tg!==null && tg<=21 ? 'var(--fire)' : tg!==null && tg<=42 ? 'var(--amber)' : 'var(--muted)';
 
@@ -1820,9 +1817,8 @@ function showRezeptDetail(k){
         <div class="pr-i">
           <div class="pr-n">${p.name} ${ageStr ? `<span style="font-size:9px;color:var(--muted);font-weight:600;margin-left:6px">${ageStr}</span>` : ''} <span style="font-size:9px;color:var(--accent);font-weight:700;margin-left:6px">${p.icd||'—'}</span></div>
           <div class="pr-d">
-            <b>${p.heilmittel||'?'}</b> · ${verplant}/${ziel} in Gültigkeit verplant · <b style="color:var(--accent);font-size:11px">🎯 noch ${offen} Termine offen</b>
-            ${soll!=null?`<br><span style="color:${hinterher?'var(--fire)':'var(--muted)'}">📈 Soll bei 2×/Wo bis heute: ${soll}${hinterher?` · ${soll-verplant} hinterher`:' · im Plan'}</span>`:''}
-            ${tg!==null?`<br><span style="color:${tgC}">🗓 ${tg<0?'⚠ abgelaufen':'noch '+tg+' Tage gültig'}</span>`:''}
+            <b>${p.heilmittel||'?'}</b> · <b style="color:var(--fire);font-size:11px">Ø ${avgStr}×/Woche geplant</b> · Ziel 2×/Woche
+            ${tg!==null?` · <span style="color:${tgC}">🗓 ${tg<0?'⚠ abgelaufen':'noch '+tg+' Tage gültig'}</span>`:''}
           </div>
           <div class="progress-mini"><div class="progress-mini-f" style="width:${pct}%;background:var(--accent)"></div></div>
         </div>

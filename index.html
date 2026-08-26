@@ -1585,12 +1585,12 @@ function analyzeRezepteFull(cellsForDay, allCells, opts){
     // 💎 BLANKO-VO NICHT ZU ENDE GEPLANT
     //   Eine Blanko-VO ist 16 Wochen (112 Tage) ab VO-Datum gültig und sollte
     //   durchgehend mit 2× pro Woche verplant werden. Ziel = 2×/Wo × 16 Wo = 32
-    //   Termine, gedeckelt durch das Blanko-Maximum (18 Wirbelsäule/Schulter,
-    //   26 Fraktur). Gezählt werden nur Termine INNERHALB der Gültigkeit.
+    //   Termine — OHNE Deckelung durch das Blanko-Maximum (Praxis-Vorgabe).
+    //   Gezählt werden nur Termine INNERHALB der Gültigkeit.
     //   Flag = VO noch gültig, aber nicht bis zum Ende (2×/Wo) durchgeplant.
     if(isBlankoHM(p.heilmittel)){
       const max = getBlankoMax(p.icd);
-      const zielTermine = Math.min(max || 32, 2*16);              // 2×/Woche über 16 Wochen, gedeckelt durch Max
+      const zielTermine = 2*16;                                   // 32 = 2×/Woche über 16 Wochen (kein Deckel)
       const verplant = p.windowTermine ? p.windowTermine.size : erbracht;  // Termine in Gültigkeit
       const offen = Math.max(0, zielTermine - verplant);
       const tagseit = p.rezDatum ? Math.floor((refT-p.rezDatum.getTime())/86400000) : null;
@@ -1787,8 +1787,8 @@ function showRezeptDetail(k){
     h += `<div style="background:var(--accent-bg);border-radius:12px;padding:12px 14px;margin-bottom:10px;font-size:11px;color:var(--dark);line-height:1.6">
       <b style="color:var(--accent);font-family:Montserrat;font-weight:800">💎 Blanko-VO nicht zu Ende geplant:</b>
       Eine Blanko-VO ist <b>16 Wochen ab VO-Datum</b> gültig und sollte durchgehend mit <b>2× pro Woche</b> verplant werden
-      (Ziel = 32 Termine, gedeckelt durch das Blanko-Maximum von 18 bzw. 26 bei Frakturen).
-      Bei diesen Patienten fehlen noch Termine innerhalb der Gültigkeit — bitte bis zum Ende durchplanen.
+      (Ziel = 32 Termine: 2× pro Woche über 16 Wochen).
+      Bei diesen Patienten fehlen noch Termine innerhalb der Gültigkeit — bitte bis zum Ende mit 2× pro Woche durchplanen.
     </div>`;
 
     // Nach Anzahl noch offener (nicht verplanter) Termine sortieren — größter Rückstand zuerst
@@ -1797,7 +1797,7 @@ function showRezeptDetail(k){
     sortedItems.forEach(p=>{
       const age = p.geb ? Math.floor((Date.now()-new Date(p.geb).getTime())/(365.25*86400000)) : null;
       const ageStr = age ? `${age}J` : '';
-      const ziel = p.blankoZiel || Math.min(p.blankoMax||18, 32);
+      const ziel = p.blankoZiel || 32;
       const verplant = p.blankoVerplant!=null ? p.blankoVerplant : p.erbracht;
       const offen = p.blankoOffen!=null ? p.blankoOffen : Math.max(0, ziel - verplant);
       const soll = p.blankoSoll;

@@ -257,6 +257,24 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--dark);min
 .cp-navbtn:disabled{opacity:.35;cursor:default}
 .cp-sel,.cp-date{border:1px solid var(--border);border-radius:8px;padding:6px 8px;font-size:12.5px;font-family:inherit;background:var(--card);color:var(--dark)}
 .cp-kw{font-family:'Montserrat',sans-serif;font-weight:900;font-size:14px;color:var(--primary);min-width:70px;text-align:center}
+.cp-today{font-size:11px;font-weight:700;color:var(--teal);background:rgba(20,184,166,.12);border-radius:100px;padding:3px 10px;white-space:nowrap}
+/* Info-Button (erklärt die Berechnung je Chart) */
+.info-i{position:relative;display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;margin-left:7px;border-radius:50%;background:var(--border);color:var(--muted);font-size:11px;font-weight:800;font-style:normal;cursor:pointer;vertical-align:middle;user-select:none;transition:all .15s}
+.info-i:hover{background:var(--primary);color:#fff}
+.info-i .info-pop{display:none;position:absolute;top:24px;left:50%;transform:translateX(-50%);width:290px;background:var(--dark,#0f172a);color:#fff;font-size:11.5px;font-weight:400;line-height:1.5;text-align:left;letter-spacing:normal;text-transform:none;padding:11px 13px;border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.28);z-index:60}
+.info-i .info-pop b{color:#fff}
+.info-i .info-pop::before{content:"";position:absolute;top:-6px;left:50%;transform:translateX(-50%);border-left:6px solid transparent;border-right:6px solid transparent;border-bottom:6px solid var(--dark,#0f172a)}
+.info-i.open{background:var(--primary);color:#fff}
+.info-i.open .info-pop{display:block}
+/* Abwesenheiten: gestapelter Balken nach Typ */
+.abw-row{display:grid;grid-template-columns:150px 1fr auto;align-items:center;gap:12px;padding:6px 0}
+.abw-name{font-size:13px;font-weight:600;color:var(--dark);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.abw-track{display:flex;height:22px;border-radius:6px;overflow:hidden;background:var(--border)}
+.abw-seg{height:100%;display:flex;align-items:center;justify-content:center;color:#fff;font-size:11px;font-weight:800;min-width:0}
+.abw-val{font-size:12px;font-weight:700;color:var(--muted);white-space:nowrap}
+.abw-legend{display:flex;gap:16px;flex-wrap:wrap;margin-bottom:12px;font-size:12px;color:var(--dark)}
+.abw-legend span{display:inline-flex;align-items:center;gap:6px}
+.abw-legend i{width:12px;height:12px;border-radius:3px;display:inline-block}
 /* Aufgaben-Cockpit */
 .aufg-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px;margin-bottom:18px}
 .aufg-card{background:var(--card);border:1px solid var(--border);border-left:5px solid var(--primary);border-radius:16px;padding:18px 20px;box-shadow:var(--shadow);cursor:pointer;transition:all .18s;display:flex;flex-direction:column;gap:5px;position:relative;overflow:hidden}
@@ -2221,6 +2239,19 @@ function ampelForRate(rate){
   return {c:'#16a34a', l:'Grün', ico:'🟢'};
 }
 
+// Info-Button: erklärt die Berechnung eines Charts (Klick = auf/zu)
+function infoI(text){
+  return `<span class="info-i" onclick="event.stopPropagation();this.classList.toggle('open')" title="Wie wird das berechnet?">i<span class="info-pop" onclick="event.stopPropagation()">${text}</span></span>`;
+}
+// Abwesenheits-Typ aus der Bezeichnung ableiten
+function abwKategorie(bez){
+  const b=(bez||'').toLowerCase();
+  if(b.includes('urlaub')) return 'urlaub';
+  if(b.includes('fortbildung')) return 'fortbildung';
+  if(b.includes('krank')) return 'krank';
+  return null;
+}
+
 // ── Zeitraum-Selektor: aktive Tage bestimmen ──
 function ctrlAllWeeks(){
   const set = new Set();
@@ -2269,12 +2300,18 @@ function periodSelectorHTML(){
     detail = `<span class="cp-detail">📅 ${ctrlPeriodLabel()}</span>`;
   } else if(ctrlMode==='woche'){
     const ws=ctrlAllWeeks(); const i=ws.indexOf(ctrlWeek);
-    let opts=''; ws.forEach(w=>{ opts+=`<option value="${w}"${w===ctrlWeek?' selected':''}>${w}</option>`; });
+    const todayWk = isoWeekKey(new Date());
+    let opts=''; ws.forEach(w=>{ opts+=`<option value="${w}"${w===ctrlWeek?' selected':''}>${w}${w===todayWk?' · heute':''}</option>`; });
+    const todayBadge = ws.includes(todayWk)
+      ? `<button class="cp-today" onclick="ctrlSetWeek('${todayWk}')" title="Zur aktuellen Kalenderwoche springen">📍 heute: ${isoWeekLabel(todayWk)}</button>`
+      : `<span class="cp-today" style="color:var(--muted);background:var(--border)">heute (${isoWeekLabel(todayWk)}) nicht im Export</span>`;
     detail = `<span class="cp-detail">
         <button class="cp-navbtn" onclick="ctrlStepWeek(-1)"${i<=0?' disabled':''}>‹</button>
-        <span class="cp-kw">${ctrlWeek||'–'}</span>
+        <span class="cp-kw">${ctrlWeek||'–'}${ctrlWeek===todayWk?' 📍':''}</span>
         <button class="cp-navbtn" onclick="ctrlStepWeek(1)"${i>=ws.length-1?' disabled':''}>›</button>
         <select class="cp-sel" onchange="ctrlSetWeek(this.value)">${opts}</select>
+        ${todayBadge}
+        ${infoI('<b>Kalenderwoche (ISO 8601)</b><br>Eine KW läuft von Montag bis Sonntag. KW 1 ist die Woche, die den ersten Donnerstag des Jahres enthält. „📍 heute" markiert die Woche des heutigen Datums.')}
       </span>`;
   } else {
     detail = `<span class="cp-detail">
@@ -2329,14 +2366,16 @@ function ctrlKapazitaetChart(data){
     grid+=`<text x="${padL-6}" y="${(yy+3).toFixed(1)}" text-anchor="end" font-size="9" fill="var(--muted,#94a3b8)">${Math.round(val)}</text>`;
   }
   // Balken + X-Labels
+  const todayWk = isoWeekKey(new Date());
   let bars='', xlab=''; const showEvery=n<=22?1:2;
   weeks.forEach((w,i)=>{
     const v=cap[i], x=(Xc(i)-bw/2), y=Y(v), hgt=Math.max(0,(H-padB)-y);
-    const over=v>bandHi, under=v<bandLo;
+    const over=v>bandHi, under=v<bandLo, isToday=w===todayWk;
     const col= over?'var(--teal)': under?'var(--accent)':'var(--amber)';
     const tag= over?'über Meridian → Urlaub möglich': under?'unter Meridian → Überstunden':'im Normalbereich';
-    bars+=`<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${hgt.toFixed(1)}" rx="3" fill="${col}"><title>${w}: ${v} Termine Kapazität · ${tag}</title></rect>`;
-    if(i%showEvery===0 || i===n-1){ xlab+=`<text x="${Xc(i).toFixed(1)}" y="${H-padB+16}" text-anchor="middle" font-size="8.5" fill="var(--muted,#94a3b8)">${w.replace(/^\d{4}-/,'')}</text>`; }
+    bars+=`<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${hgt.toFixed(1)}" rx="3" fill="${col}"${isToday?' stroke="var(--dark,#0f172a)" stroke-width="2"':''}><title>${w}: ${v} Termine Kapazität · ${tag}${isToday?' · aktuelle KW':''}</title></rect>`;
+    if(isToday){ xlab+=`<text x="${Xc(i).toFixed(1)}" y="${(y-6).toFixed(1)}" text-anchor="middle" font-size="9" font-weight="800" fill="var(--dark,#0f172a)">📍heute</text>`; }
+    if(i%showEvery===0 || i===n-1 || isToday){ xlab+=`<text x="${Xc(i).toFixed(1)}" y="${H-padB+16}" text-anchor="middle" font-size="8.5" font-weight="${isToday?'800':'400'}" fill="${isToday?'var(--dark,#0f172a)':'var(--muted,#94a3b8)'}">${w.replace(/^\d{4}-/,'')}</text>`; }
   });
   // Meridian-Linie
   const my=Y(meridian);
@@ -2353,14 +2392,19 @@ function ctrlKapazitaetChart(data){
 function renderControlling(){
   const dates = ctrlActiveDates();
   const dset = new Set(dates);
+
+  // ── Tagesanalysen EINMAL berechnen (Zellen einmal nach Datum gruppieren) ──
+  const byDate = {};
+  DATA.cells.forEach(c=>{ (byDate[c.dateStr]=byDate[c.dateStr]||[]).push(c); });
+  const dayAnal = {};
+  DATA.dates.forEach(d=>{ dayAnal[d] = analyzeDay(byDate[d]||[]); });
+
   // ── Auslastung pro Therapeut über den gewählten Zeitraum ──
   // Auslastung = belegte Zeit ÷ volle Arbeitszeit; belegte Zeit (a.prod) = Arbeitszeit − echte Lücken
   // (Termine + Blocker + Fahrt + Doku zählen als belegt), nur wirklich freie Lücken mindern.
   const thAgg = {};
   dates.forEach(d=>{
-    const dayCells = DATA.cells.filter(c=>c.dateStr===d);
-    const anal = analyzeDay(dayCells);
-    anal.therapists.forEach(t=>{
+    dayAnal[d].therapists.forEach(t=>{
       const a = thAgg[t.name] = thAgg[t.name] || {prod:0, wz:0, pat:0, fahrt:0, days:new Set()};
       a.prod += t.produktivMin||0; a.wz += t.wzMin||0; a.pat += t.patientMin||0; a.fahrt += t.fahrtMin||0; a.days.add(d);
     });
@@ -2387,7 +2431,8 @@ function renderControlling(){
     </div>
   </div>`;
 
-  h += `<div class="st">📊 Auslastung pro Therapeut</div>`;
+  const auslInfo = '<b>Auslastung pro Therapeut</b><br>Auslastung = <b>belegte Zeit ÷ volle Arbeitszeit</b>.<br>• <b>Arbeitszeit</b> = alle bezahlten 10-Min-Slots (AZ=J), ohne Abzug.<br>• <b>Belegte Zeit</b> = Arbeitszeit minus wirklich leere Fenster. Termine, Blocker, Fahrtzeit und Doku zählen als belegt.<br>Nur echte Lücken (Slot, in dem gar nichts steht) senken den Wert. Angezeigt: belegte Min / Arbeits-Min · 🚗 = Fahrt/Blocker/Doku.';
+  h += `<div class="st">📊 Auslastung pro Therapeut ${infoI(auslInfo)}</div>`;
   h += `<div class="ausl-card" style="margin-bottom:16px"><h4>${ctrlPeriodLabel()}</h4>`;
   if(thStats.length){
     thStats.forEach(t=>{
@@ -2401,75 +2446,42 @@ function renderControlling(){
   } else { h += `<div class="empty" style="margin:0">Keine Arbeitszeit im gewählten Zeitraum.</div>`; }
   h += `</div>`;
 
-  // ═══ Abwesenheit (nur Abwesenheiten, keine Fahrtzeiten) über den gewählten Zeitraum ═══
-  const abwByTh = {};
-  DATA.cells.forEach(c=>{
-    if(!c.therapist || !dset.has(c.dateStr)) return;
-    if(isAbwesenheit(c.bezeichnung)) (abwByTh[c.therapist]=abwByTh[c.therapist]||new Set()).add(c.dateStr);
-  });
-  const abwRows = Object.entries(abwByTh).map(([n,set])=>({name:n,tage:set.size})).sort((a,b)=>b.tage-a.tage);
-  const abwTotal = abwRows.reduce((s,x)=>s+x.tage,0);
-
-  h += `<div class="st">🏖️ Abwesenheiten <span class="sub">Urlaub · Fortbildung · Krank</span></div>`;
-  h += `<div class="sg" style="margin-bottom:14px">
-    <div class="si"><div class="si-l">Abwesenheitstage</div><div class="si-v">${abwTotal}</div><div class="si-s">im gewählten Zeitraum</div></div>
-    <div class="si"><div class="si-l">MA betroffen</div><div class="si-v">${abwRows.length}</div><div class="si-s">von ${thStats.length} aktiv</div></div>
-    <div class="si"><div class="si-l">ø pro MA</div><div class="si-v">${abwRows.length?(abwTotal/abwRows.length).toFixed(1):'0'}</div><div class="si-s">Tage</div></div>
-  </div>`;
-  if(abwRows.length){
-    const maxA = abwRows[0].tage || 1;
-    h += `<div class="ausl-card" style="margin-bottom:16px"><h4>Abwesenheitstage pro Mitarbeiter</h4>`;
-    abwRows.forEach(t=>{
-      const pct = Math.round(t.tage/maxA*100);
-      h += `<div class="ausl-row"><div class="ausl-label">${esc(t.name)}</div>
-        <div class="ausl-bar"><div class="ausl-fill" style="width:${pct}%;background:var(--primary)">${t.tage}</div></div>
-        <div class="ausl-val">${t.tage} Tag${t.tage===1?'':'e'}</div></div>`;
+  // ═══ Wochenreport pro Mitarbeiter (alle KW) – SELBE Formel wie Auslastung pro Therapeut ═══
+  // Pro (Mitarbeiter, KW): produktivMin ÷ wzMin aus denselben Tagesanalysen.
+  const weekAgg = {};   // th -> wk -> {prod, wz}
+  const abwWk   = {};   // th -> Set(wk) mit Abwesenheit
+  DATA.dates.forEach(d=>{
+    const wk = isoWeekKey(new Date(d+'T12:00:00'));
+    dayAnal[d].therapists.forEach(t=>{
+      const r = weekAgg[t.name] = weekAgg[t.name] || {};
+      const rr = r[wk] = r[wk] || {prod:0, wz:0};
+      rr.prod += t.produktivMin||0; rr.wz += t.wzMin||0;
     });
-    h += `</div>`;
-  } else {
-    h += `<div class="empty" style="margin-bottom:16px">Keine Abwesenheiten im gewählten Zeitraum.</div>`;
-  }
-
-  // ═══ Wochenreport pro Mitarbeiter (alle KW, Auslastung % je KW) ═══
-  const cs = computeControllingStats();
-  const weekKeys = Object.keys(cs.weekTh).sort();
-  const thWeek = {};
-  DATA.cells.forEach(c=>{
-    if(!c.therapist || !c.azFlag) return;
-    const wk = isoWeekKey(c.start);
-    (thWeek[c.therapist] = thWeek[c.therapist]||{});
-    (thWeek[c.therapist][wk] = thWeek[c.therapist][wk] || {times:new Set(), term:{}});
   });
   DATA.cells.forEach(c=>{
-    if(!c.therapist) return;
-    const wk = isoWeekKey(c.start);
-    const rec = thWeek[c.therapist] && thWeek[c.therapist][wk];
-    if(!rec) return;
-    if(c.azFlag) rec.times.add(c.start.getTime());
-    if(c.termIdent && c.belegt && c.belArt==='R'){
-      if(!rec.term[c.termIdent]) rec.term[c.termIdent] = [c.start, c.end];
-      else { if(c.start<rec.term[c.termIdent][0]) rec.term[c.termIdent][0]=c.start; if(c.end>rec.term[c.termIdent][1]) rec.term[c.termIdent][1]=c.end; }
-    }
+    if(!c.therapist || !isAbwesenheit(c.bezeichnung)) return;
+    (abwWk[c.therapist] = abwWk[c.therapist] || new Set()).add(isoWeekKey(c.start));
   });
-  const thNames = Object.keys(thWeek).sort();
+  const weekKeys = ctrlAllWeeks();
+  const thNames = Object.keys(weekAgg).sort((a,b)=>a.localeCompare(b,'de'));
+  const todayWkR = isoWeekKey(new Date());
   if(weekKeys.length && thNames.length){
-    h += `<div class="st">📅 Wochenreport pro Mitarbeiter <span class="sub">Auslastung % je KW</span></div>`;
+    const wrInfo = '<b>Wochenreport pro Mitarbeiter</b><br>Für jede KW: <b>belegte Zeit ÷ Arbeitszeit</b> – identisch zur „Auslastung pro Therapeut", nur je Kalenderwoche summiert.<br>🏖️ = Woche ohne Arbeitszeit, aber mit Abwesenheit (Urlaub/Fortbildung/Krank). „–" = keine Arbeitszeit erfasst.';
+    h += `<div class="st">📅 Wochenreport pro Mitarbeiter <span class="sub">Auslastung % je KW</span> ${infoI(wrInfo)}</div>`;
     h += `<div class="wr-scroll"><table class="wr-tab"><thead><tr><th class="wr-name">Mitarbeiter</th>`;
-    weekKeys.forEach(wk=>{ h += `<th>${isoWeekLabel(wk)}</th>`; });
+    weekKeys.forEach(wk=>{ h += `<th${wk===todayWkR?' style="color:var(--primary)"':''}>${isoWeekLabel(wk)}${wk===todayWkR?' 📍':''}</th>`; });
     h += `</tr></thead><tbody>`;
     thNames.forEach(n=>{
       h += `<tr><td class="wr-name">${esc(n)}</td>`;
       weekKeys.forEach(wk=>{
-        const rec = thWeek[n][wk];
-        if(!rec || rec.times.size===0){
-          const abw = cs.weekTh[wk] && [...cs.weekTh[wk].abw].some(k=>k.startsWith(n+'|'));
+        const rec = weekAgg[n][wk];
+        if(!rec || rec.wz===0){
+          const abw = abwWk[n] && abwWk[n].has(wk);
           h += `<td class="wr-cell wr-empty">${abw?'🏖️':'–'}</td>`;
         } else {
-          const wz = rec.times.size*10;
-          const patMin = mergeRanges(Object.values(rec.term)).reduce((s,r)=>s+(r[1]-r[0])/60000,0);
-          const aus = wz>0?Math.round(patMin/wz*100):0;
+          const aus = Math.min(100, Math.round(rec.prod/rec.wz*100));
           const col = aus>=90?'var(--teal)':aus>=80?'var(--amber)':'var(--accent)';
-          h += `<td class="wr-cell" style="color:${col};font-weight:800">${aus}%</td>`;
+          h += `<td class="wr-cell" style="color:${col};font-weight:800" title="belegt ${Math.round(rec.prod)} / Arbeitszeit ${Math.round(rec.wz)} min">${aus}%</td>`;
         }
       });
       h += `</tr>`;
@@ -2477,11 +2489,61 @@ function renderControlling(){
     h += `</tbody></table></div>`;
   }
 
+  // ═══ Abwesenheiten nach Typ (Urlaub / Fortbildung / Krank) über den gewählten Zeitraum ═══
+  const CATS = [
+    {key:'urlaub',      label:'Urlaub',      color:'var(--teal)'},
+    {key:'fortbildung', label:'Fortbildung', color:'var(--primary)'},
+    {key:'krank',       label:'Krank',       color:'var(--accent)'}
+  ];
+  const abwByTh = {};   // th -> {urlaub:Set,fortbildung:Set,krank:Set}
+  const catTotal = {urlaub:0, fortbildung:0, krank:0};
+  DATA.cells.forEach(c=>{
+    if(!c.therapist || !dset.has(c.dateStr)) return;
+    const k = abwKategorie(c.bezeichnung); if(!k) return;
+    const rec = abwByTh[c.therapist] = abwByTh[c.therapist] || {urlaub:new Set(),fortbildung:new Set(),krank:new Set()};
+    rec[k].add(c.dateStr);
+  });
+  const abwRows = Object.entries(abwByTh).map(([name,r])=>{
+    const u=r.urlaub.size, f=r.fortbildung.size, k=r.krank.size;
+    return {name, urlaub:u, fortbildung:f, krank:k, total:u+f+k};
+  }).filter(r=>r.total>0).sort((a,b)=>b.total-a.total);
+  abwRows.forEach(r=>{ catTotal.urlaub+=r.urlaub; catTotal.fortbildung+=r.fortbildung; catTotal.krank+=r.krank; });
+  const abwTotal = catTotal.urlaub + catTotal.fortbildung + catTotal.krank;
+
+  const abwInfo = '<b>Abwesenheiten pro Mitarbeiter</b><br>Gezählt werden Tage mit einer Abwesenheits-Bezeichnung in THEORG, aufgeschlüsselt nach <b>Urlaub</b>, <b>Fortbildung</b> und <b>Krank</b>. Der Balken zeigt je Mitarbeiter die Zusammensetzung – so siehst du auf einen Blick, wer im Urlaub, in Fortbildung oder krank war.';
+  h += `<div class="st">🏖️ Abwesenheiten <span class="sub">Urlaub · Fortbildung · Krank</span> ${infoI(abwInfo)}</div>`;
+  h += `<div class="sg" style="margin-bottom:14px">
+    <div class="si"><div class="si-l">🏖️ Urlaub</div><div class="si-v">${catTotal.urlaub}</div><div class="si-s">Tage gesamt</div></div>
+    <div class="si"><div class="si-l">🎓 Fortbildung</div><div class="si-v">${catTotal.fortbildung}</div><div class="si-s">Tage gesamt</div></div>
+    <div class="si"><div class="si-l">🤒 Krank</div><div class="si-v">${catTotal.krank}</div><div class="si-s">Tage gesamt</div></div>
+    <div class="si"><div class="si-l">MA betroffen</div><div class="si-v">${abwRows.length}</div><div class="si-s">von ${thStats.length} aktiv</div></div>
+  </div>`;
+  if(abwRows.length){
+    const maxA = abwRows[0].total || 1;
+    h += `<div class="ausl-card" style="margin-bottom:16px"><h4>Abwesenheitstage pro Mitarbeiter</h4>`;
+    h += `<div class="abw-legend">${CATS.map(c=>`<span><i style="background:${c.color}"></i>${c.label}</span>`).join('')}</div>`;
+    abwRows.forEach(r=>{
+      const segs = CATS.map(c=>{
+        const v=r[c.key]; if(!v) return '';
+        const w=(v/maxA*100).toFixed(1);
+        return `<div class="abw-seg" style="width:${w}%;background:${c.color}" title="${c.label}: ${v} Tag${v===1?'':'e'}">${v>=2?v:''}</div>`;
+      }).join('');
+      const parts=CATS.filter(c=>r[c.key]).map(c=>`${r[c.key]} ${c.label}`).join(' · ');
+      h += `<div class="abw-row"><div class="abw-name" title="${esc(r.name)}">${esc(r.name)}</div>
+        <div class="abw-track">${segs}</div>
+        <div class="abw-val" title="${parts}">${r.total} Tag${r.total===1?'':'e'}</div></div>`;
+    });
+    h += `</div>`;
+  } else {
+    h += `<div class="empty" style="margin-bottom:16px">Keine Abwesenheiten im gewählten Zeitraum.</div>`;
+  }
+
   // ═══ KW-Kapazität vs. Meridian (alle KW) ═══
   const kd = ctrlKapazitaetData();
   const ueber = kd.cap.filter(v=>v>kd.meridian*1.05).length;
   const unter = kd.cap.filter(v=>v<kd.meridian*0.95).length;
-  h += `<div class="st">🗓️ Verfügbare Kapazität pro KW <span class="sub">Termine à ${CONFIG.slotMin} min · Meridian = Median über alle KW</span></div>`;
+  const kapInfo = `<b>Verfügbare Kapazität pro KW</b><br>Je KW = alle bezahlten Arbeitszeit-Slots (AZ=J) aller Mitarbeiter, umgerechnet in Termine à ${CONFIG.slotMin} min (10-Min-Slot × Anzahl ÷ ${CONFIG.slotMin}).<br><b>Meridian</b> = Median dieser KW-Kapazität über alle Wochen (angeschnittene Rand-KW ausgeklammert). Über Meridian → Puffer für Urlaub, unter Meridian → Überstunden nötig.`;
+  h += `<div class="st">🗓️ Verfügbare Kapazität pro KW <span class="sub">Termine à ${CONFIG.slotMin} min · Meridian = Median über alle KW</span> ${infoI(kapInfo)}</div>`;
   h += `<div class="sg" style="margin-bottom:12px">
     <div class="si"><div class="si-l">Meridian (normal)</div><div class="si-v">${kd.meridian}</div><div class="si-s">Termine / Woche</div></div>
     <div class="si"><div class="si-l">KW über Meridian</div><div class="si-v">${ueber}</div><div class="si-s">🏖️ Urlaub möglich</div></div>

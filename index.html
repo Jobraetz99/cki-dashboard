@@ -357,6 +357,9 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--dark);min
 .tz-person{display:inline-flex;align-items:center;gap:7px;background:var(--card);border:1px solid var(--border);border-radius:100px;padding:5px 12px 5px 5px;box-shadow:var(--shadow);font-size:12px;font-weight:700;color:var(--dark)}
 .tz-person .asg-chip{cursor:default;width:24px;height:24px}
 .tz-person-n{font-size:11px;color:var(--muted);font-weight:700}
+/* ── Tagesziel: Gruppen-Überschriften (Standardaufgaben / Export) ── */
+.tz-grp{font-family:'Montserrat',sans-serif;font-weight:900;font-size:13px;color:var(--dark);letter-spacing:.3px;margin:18px 0 10px;padding-bottom:6px;border-bottom:2px solid var(--border)}
+.tz-grp:first-of-type{margin-top:4px}
 /* ── Tagesziel: Umschalter Liste ↔ Kalender ── */
 .tz-modebar{display:inline-flex;background:var(--card);border:1px solid var(--border);border-radius:12px;padding:4px;gap:4px;margin-bottom:14px;box-shadow:var(--shadow)}
 .tz-mode{border:none;background:transparent;color:var(--muted);font-family:'Montserrat',sans-serif;font-weight:800;font-size:12.5px;padding:8px 16px;border-radius:9px;cursor:pointer;transition:all .15s}
@@ -3247,8 +3250,8 @@ function gotoFolgeVO(){ currentFvoFilter='offen'; switchView('folgevo'); }
 function taskDone(id){ return lsGet('cki_check_'+id, false); }
 function toggleTask(id){ lsSet('cki_check_'+id, !taskDone(id)); renderAufgaben(); }
 // ── Kategorie auf-/zuklappen (Standard: zu) ──
-function secOpen(key){ return lsGet('cki_secopen_'+key, false); }
-function toggleSec(key){ lsSet('cki_secopen_'+key, !secOpen(key)); renderAufgaben(); }
+function secOpen(key,def){ return lsGet('cki_secopen_'+key, def===undefined?false:!!def); }
+function toggleSec(key,def){ lsSet('cki_secopen_'+key, !secOpen(key,def)); renderAufgaben(); }
 function hhmm(d){ return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0'); }
 function jsq(s){ return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'"); }
 function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
@@ -3496,6 +3499,31 @@ const TZ_BLOCKS = [
 ];
 function gapHourOf(g){ return g.start.getHours() + g.start.getMinutes()/60; }
 
+// ── Standardaufgaben aus der Arbeitsaufteilung Physio CKI (Vorlage) ──────────
+// Täglich wiederkehrend; Abhak-Status ist über die Aufgaben-ID an das Datum
+// gebunden und setzt sich daher jeden Tag automatisch zurück.
+const TZ_TAGESGESCHAEFT = [
+  {t:'Tagesgeschäft', s:'laufende Aufgaben des Tages abarbeiten'},
+  {t:'Tagesberichte', s:''},
+  {t:'Plan für Heute + Morgen füllen', s:''},
+  {t:'Akten für den nächsten Tag raussuchen', s:''},
+  {t:'Grimz-fuq Box Kontrolle', s:''},
+  {t:'HB Akten aus dem Tagesgeschäft kontrollieren', s:''}
+];
+const TZ_BACKOFFICE = [
+  {t:'Backoffice', s:'täglich wiederkehrende Backoffice-Aufgaben bearbeiten'}
+];
+// Wochen-Schwerpunkte: 1=Mo … 5=Fr (Sa/So keine)
+const TZ_SCHWERPUNKT = {
+  1:['Absetzungen','€ für die Woche eintragen'],
+  2:['Privat oder HB Kontrolle'],
+  3:['Privat oder HB Kontrolle'],
+  4:['Heimkontrollen'],
+  5:['Ausgefallene Termine','Stornoliste']
+};
+const TZ_FRUEHSCHICHT = [{t:'Alle Privat Patienten für den heutigen Tag eintragen', s:''}];
+const TZ_SPAETSCHICHT = [{t:'Alle HB Akten für den nächsten Tag eintragen', s:''}];
+
 function renderAufgaben(){
   const a = computeActionItems();
   const dd = new Date(currentDate+'T12:00:00').toLocaleDateString('de-DE',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
@@ -3547,8 +3575,22 @@ function renderAufgaben(){
         sub:`Serie fertig · Arzt: ${r.arzt?esc(r.arzt):'?'}` })) }
   ];
 
+  // ── Standardaufgaben aus der Arbeitsaufteilung (Vorlage) ──
+  const wdNum = new Date(currentDate+'T12:00:00').getDay();
+  const wdName = ['Sonntag','Montag','Dienstag','Mittwoch','Donnerstag','Freitag','Samstag'][wdNum];
+  const spTasks = (TZ_SCHWERPUNKT[wdNum]||[]).map(t=>({t:t, s:'Schwerpunkt am '+wdName}));
+  const mkStd = (pfx,arr)=>arr.map((x,i)=>({id:'std|'+currentDate+'|'+pfx+i, main:esc(x.t), sub:esc(x.s||'')}));
+  const stdSections = [
+    { key:'std_tg', ico:'📋', color:'var(--primary)', ttl:'Tagesgeschäft', defOpen:true, items:mkStd('tg',TZ_TAGESGESCHAEFT) },
+    { key:'std_bo', ico:'🖥️', color:'#0891b2', ttl:'Backoffice', defOpen:true, items:mkStd('bo',TZ_BACKOFFICE) },
+    { key:'std_sp', ico:'⭐', color:'var(--amber)', ttl:'Schwerpunkt '+wdName, defOpen:true, items:mkStd('sp',spTasks) },
+    { key:'std_fs', ico:'🌅', color:'var(--accent)', ttl:'Frühschicht', defOpen:true, items:mkStd('fs',TZ_FRUEHSCHICHT) },
+    { key:'std_ss', ico:'🌙', color:'#7c3aed', ttl:'Spätschicht', defOpen:true, items:mkStd('ss',TZ_SPAETSCHICHT) }
+  ].filter(s=>s.items.length);
+  const allSections = stdSections.concat(sections);
+
   let total=0, done=0;
-  sections.forEach(s=>s.items.forEach(it=>{ total++; if(taskDone(it.id)) done++; }));
+  allSections.forEach(s=>s.items.forEach(it=>{ total++; if(taskDone(it.id)) done++; }));
   const pct = total>0 ? Math.round(done/total*100) : 100;
   const allDone = total>0 && done===total;
   const barColor = allDone ? 'var(--teal)' : 'var(--primary)';
@@ -3634,7 +3676,7 @@ function renderAufgaben(){
   const team = getTeam();
   if(team.length){
     const stats={}; team.forEach(m=>stats[m.n]={open:0,done:0}); let unass=0;
-    sections.forEach(s=>s.items.forEach(it=>{
+    allSections.forEach(s=>s.items.forEach(it=>{
       const who=effectiveAssignee(it.id,s.key), d=taskDone(it.id);
       if(who&&stats[who]){ if(d) stats[who].done++; else stats[who].open++; }
       else if(!d){ unass++; }
@@ -3646,20 +3688,21 @@ function renderAufgaben(){
     h += '</div>';
   }
 
-  // ── Einklappbare, abhakbare Listen pro Kategorie (Standard: zugeklappt) ──
+  // ── Einklappbare, abhakbare Listen pro Kategorie ──
+  // Standardaufgaben (Arbeitsaufteilung) standardmäßig offen, Export-Aufgaben zugeklappt.
   const me = getMe();
-  sections.forEach(s=>{
+  const renderSec = s=>{
     let items = s.items;
     if(tzOnlyMine && me) items = items.filter(it=>effectiveAssignee(it.id,s.key)===me);
     if(!items.length) return;
     const sDone = items.filter(it=>taskDone(it.id)).length;
-    const open = secOpen(s.key);
+    const open = secOpen(s.key, s.defOpen);
     h += `<div class="task-sec">
-      <div class="task-sec-head${open?' open':''}" style="border-left:4px solid ${s.color}" onclick="toggleSec('${s.key}')">
+      <div class="task-sec-head${open?' open':''}" style="border-left:4px solid ${s.color}" onclick="toggleSec('${s.key}',${s.defOpen?'true':'false'})">
         <div class="task-sec-ttl"><span class="task-caret">▸</span> ${s.ico} ${s.ttl} <span class="task-sec-cnt">${sDone}/${items.length}</span></div>
         <div style="display:flex;align-items:center;gap:8px;margin-left:auto">
           ${team.length?`<span class="cat-asg">Standard: ${catAssignSelect(s.key)}</span>`:''}
-          <button class="task-open" onclick="event.stopPropagation();${s.go}">Tab öffnen →</button>
+          ${s.go?`<button class="task-open" onclick="event.stopPropagation();${s.go}">Tab öffnen →</button>`:''}
         </div>
       </div>
       <div class="task-list"${open?'':' style="display:none"'}>`;
@@ -3672,7 +3715,11 @@ function renderAufgaben(){
       </div>`;
     });
     h += `</div></div>`;
-  });
+  };
+  h += `<div class="tz-grp">📌 Standardaufgaben · Arbeitsaufteilung Physio CKI</div>`;
+  stdSections.forEach(renderSec);
+  h += `<div class="tz-grp">🗂️ Aufgaben aus dem Theorg-Export</div>`;
+  sections.forEach(renderSec);
 
   document.getElementById('content').innerHTML = h;
 }

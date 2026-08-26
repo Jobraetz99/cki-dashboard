@@ -445,7 +445,12 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--dark);min
     <div id="spPicker" style="display:none;margin:8px 0">
       <select id="spLocation" style="padding:10px 12px;border-radius:8px;border:1px solid #d5d9e0;font-family:'Poppins',sans-serif;font-size:14px;width:100%;max-width:320px"></select>
     </div>
-    <div id="msStatus" style="font-size:12px;color:var(--muted);min-height:16px;margin-bottom:14px"></div>
+    <div id="msStatus" style="font-size:12px;color:var(--muted);min-height:16px;margin-bottom:6px"></div>
+    <div id="msProgWrap" style="display:none;max-width:420px;margin:0 auto 14px">
+      <div style="height:8px;background:#e2e8f0;border-radius:100px;overflow:hidden">
+        <div id="msProgFill" style="height:100%;width:0%;background:var(--primary);border-radius:100px;transition:width .2s"></div>
+      </div>
+    </div>
     <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin:6px 0 14px">— oder Datei manuell laden —</div>
 
     <label class="drop" id="drop">
@@ -3820,6 +3825,14 @@ let msalApp = null, spSiteId = null, spByLicense = {}, spRefreshTimer = null;
 let spLocations = [], spCurrentLoc = null;   // Standort-Ordner (ein Ordner pro Standort)
 
 function msStatus(t){ const e=document.getElementById('msStatus'); if(e) e.textContent = t||''; }
+// Fortschrittsbalken unter der Statuszeile (frac 0–1, null = ausblenden)
+function msProgress(frac){
+  const w=document.getElementById('msProgWrap'), f=document.getElementById('msProgFill');
+  if(!w||!f) return;
+  if(frac===null){ w.style.display='none'; f.style.width='0%'; return; }
+  w.style.display='block';
+  f.style.width = Math.max(2, Math.min(100, Math.round(frac*100)))+'%';
+}
 
 function initMsal(){
   if(msalApp) return msalApp;
@@ -3961,22 +3974,69 @@ async function loadSpLocation(loc){
 async function loadSpFile(f){
   try{
     const token = await getToken();
-    msStatus('Lade '+f.name+' ('+(f.size/1e6).toFixed(1)+' MB) …');
+    const mb = (f.size/1e6).toFixed(1);
+    msStatus('Lade '+f.name+' ('+mb+' MB) …');
+    msProgress(0);
     // Vorautorisierte Download-URL holen – umgeht das CORS/Redirect-Problem des /content-Endpunkts
-    let buf;
     const durl = f['@microsoft.graph.downloadUrl'] ||
       (await graphGet('/sites/'+spSiteId+'/drive/items/'+f.id+'?$select=id,name,size,@microsoft.graph.downloadUrl', token))['@microsoft.graph.downloadUrl'];
+    let rows = null;
     if(durl){
       const r = await fetch(durl);
       if(!r.ok){ throw new Error('Download '+r.status); }
-      buf = await r.arrayBuffer();
+      if(r.body && r.body.getReader){
+        // ── Streaming: herunterladen und GLEICHZEITIG dekodieren + Zeilen parsen ──
+        // Die Parse-Arbeit läuft in den Wartezeiten zwischen den Netzwerk-Chunks
+        // mit; nach dem letzten Byte sind die Zeilen sofort fertig. Zusätzlich
+        // Fortschritt mit %, MB, Geschwindigkeit und Restzeit.
+        rows = [];
+        const reader = r.body.getReader();
+        const dec = new TextDecoder('windows-1252');
+        let rest = '', received = 0, lastUi = 0;
+        const t0 = Date.now();
+        while(true){
+          const {done, value} = await reader.read();
+          if(done) break;
+          received += value.byteLength;
+          const now = Date.now();
+          if(now - lastUi > 200){   // UI max. 5×/s aktualisieren
+            lastUi = now;
+            const secs = (now - t0)/1000;
+            const speed = received/1e6/Math.max(secs, .1);            // MB/s
+            const eta = (f.size && speed>0) ? Math.max(0, Math.round(((f.size-received)/1e6)/speed)) : null;
+            msStatus('⬇️ '+f.name+' · '+(received/1e6).toFixed(0)+' / '+mb+' MB · '+speed.toFixed(1)+' MB/s'+(eta!==null?' · noch ~'+(eta>=60?Math.round(eta/60)+' Min':eta+' s'):''));
+            msProgress(f.size ? received/f.size : 0);
+          }
+          rest += dec.decode(value, {stream:true});
+          const lines = rest.split(/\r?\n/);
+          rest = lines.pop();                                         // letzte (evtl. unvollständige) Zeile aufheben
+          for(const line of lines){ if(line.trim()) rows.push(line.split(';')); }
+        }
+        rest += dec.decode();                                         // Decoder-Rest ausspülen
+        if(rest.trim()) rows.push(rest.split(';'));
+      } else {
+        // Fallback ohne Streaming-Unterstützung
+        const buf = await r.arrayBuffer();
+        msStatus('✅ Heruntergeladen ('+mb+' MB) · verarbeite '+f.name+' …');
+        await new Promise(r=>setTimeout(r,50));
+        ingestCSVBytes(new Uint8Array(buf), f.name);
+      }
     } else {
-      buf = await graphGet('/sites/'+spSiteId+'/drive/items/'+f.id+'/content', token, true);
+      const buf = await graphGet('/sites/'+spSiteId+'/drive/items/'+f.id+'/content', token, true);
+      msStatus('✅ Heruntergeladen ('+mb+' MB) · verarbeite '+f.name+' …');
+      await new Promise(r=>setTimeout(r,50));
+      ingestCSVBytes(new Uint8Array(buf), f.name);
     }
-    // Große Dateien: Phase anzeigen, damit klar ist, dass es nicht hängt
-    msStatus('✅ Heruntergeladen ('+(f.size/1e6).toFixed(1)+' MB) · verarbeite '+f.name+' … (bei großen Dateien kann das 1–2 Min dauern)');
-    await new Promise(r=>setTimeout(r,50));  // UI-Paint zulassen, bevor der Parser den Thread blockiert
-    ingestCSVBytes(new Uint8Array(buf), f.name);
+    if(rows){
+      msProgress(1);
+      msStatus('✅ Heruntergeladen ('+mb+' MB) · baue Dashboard auf …');
+      await new Promise(r=>setTimeout(r,50));  // UI-Paint zulassen, bevor parseData den Thread nutzt
+      if(rows.length<2){ msProgress(null); showError('Datei enthält keine Daten'); return; }
+      const sheetName = rows[0].length>=148 ? '140' : (rows[0].length>=160 ? '141' : '140');
+      parseData(rows, sheetName);
+      renderDashboard();
+    }
+    msProgress(null);
     if(spRefreshTimer) clearTimeout(spRefreshTimer);
     spRefreshTimer = setTimeout(()=>{
       if(spCurrentLoc){ loadSpLocation(spCurrentLoc); }   // aktuellen Standort neu laden
@@ -3984,6 +4044,7 @@ async function loadSpFile(f){
     }, 30*60*1000); // Auto-Refresh 30 Min
   }catch(e){
     console.error(e);
+    msProgress(null);
     msStatus('⚠️ Fehler beim Laden: '+e.message);
   }
 }

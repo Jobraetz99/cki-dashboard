@@ -360,6 +360,11 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--dark);min
 /* ── Tagesziel: Gruppen-Überschriften (Standardaufgaben / Export) ── */
 .tz-grp{font-family:'Montserrat',sans-serif;font-weight:900;font-size:13px;color:var(--dark);letter-spacing:.3px;margin:18px 0 10px;padding-bottom:6px;border-bottom:2px solid var(--border)}
 .tz-grp:first-of-type{margin-top:4px}
+/* ── Tagesziel: Bereichs-Chips (Tagesgeschäft / Backoffice) ── */
+.area-chip{display:inline-flex;align-items:center;justify-content:center;min-width:28px;height:20px;border-radius:6px;font-size:9.5px;font-weight:900;letter-spacing:.4px;cursor:pointer;padding:0 5px;flex-shrink:0;font-family:'Montserrat',sans-serif}
+.area-tg{background:#eef2ff;color:var(--primary);border:1px solid var(--primary)}
+.area-bo{background:#ecfeff;color:#0891b2;border:1px solid #0891b2}
+.area-inh{opacity:.55}
 /* ── Tagesziel: Umschalter Liste ↔ Kalender ── */
 .tz-modebar{display:inline-flex;background:var(--card);border:1px solid var(--border);border-radius:12px;padding:4px;gap:4px;margin-bottom:14px;box-shadow:var(--shadow)}
 .tz-mode{border:none;background:transparent;color:var(--muted);font-family:'Montserrat',sans-serif;font-weight:800;font-size:12.5px;padding:8px 16px;border-radius:9px;cursor:pointer;transition:all .15s}
@@ -3261,6 +3266,39 @@ const TEAM_PALETTE = ['#4f46e5','#0891b2','#059669','#d97706','#db2777','#7c3aed
 let tzOnlyMine = false;                                   // Laufzeit-Filter „nur meine"
 let tzMode = lsGet('cki_tzmode','liste');                 // Tagesziel-Ansicht: 'liste' | 'kalender'
 function setTzMode(m){ tzMode = (m==='kalender'?'kalender':'liste'); lsSet('cki_tzmode', tzMode); renderAufgaben(); }
+
+// ── Bereiche: Tagesgeschäft (Theke) / Backoffice ─────────────────────────────
+// Filterebene über Aufgabenliste/Tagesplan. Jede Kategorie hat einen Standard-
+// Bereich (Dropdown im Kategorie-Kopf), jede Aufgabe kann per Chip-Klick
+// abweichend zugeordnet werden ('' = vom Kategorie-Standard erben).
+const TZ_AREAS = { tg:'Tagesgeschäft', bo:'Backoffice' };
+let tzArea = lsGet('cki_tzarea','alle');                  // 'alle' | 'tg' | 'bo'
+function setTzArea(a){ tzArea=(a==='tg'||a==='bo')?a:'alle'; lsSet('cki_tzarea',tzArea); renderAufgaben(); }
+// Voreinstellung je Kategorie (per Dropdown jederzeit änderbar)
+const TZ_AREA_DEFAULTS = { std_tg:'tg', std_bo:'bo', std_sp:'tg', std_fs:'tg', std_ss:'tg',
+  gapHeute:'tg', gapMorgen:'tg', abr:'bo', ft:'tg', fvo:'bo', dauer:'tg' };
+function getCatArea(k){ const v=lsGet('cki_catarea_'+k, TZ_AREA_DEFAULTS[k]||'tg'); return (v==='bo')?'bo':'tg'; }
+function setCatArea(k,v){ lsSet('cki_catarea_'+k, v==='bo'?'bo':'tg'); renderAufgaben(); }
+function getTaskArea(id){ return lsGet('cki_area_'+id,''); }
+function cycleTaskArea(id){ const cur=getTaskArea(id); lsSet('cki_area_'+id, cur===''?'tg':(cur==='tg'?'bo':'')); renderAufgaben(); }
+function effectiveArea(id,catkey){ return getTaskArea(id) || getCatArea(catkey); }
+// Dropdown für den Kategorie-Kopf
+function catAreaSelect(k){
+  const cur=getCatArea(k);
+  return '<select class="asg-sel" onclick="event.stopPropagation()" onchange="setCatArea(\''+jsq(k)+'\',this.value)">'+
+    '<option value="tg"'+(cur==='tg'?' selected':'')+'>Tagesgeschäft</option>'+
+    '<option value="bo"'+(cur==='bo'?' selected':'')+'>Backoffice</option></select>';
+}
+// Klickbarer Bereichs-Chip je Aufgabe (Klick: erben → TG → BO → erben)
+function areaChip(id,catkey){
+  const ov=getTaskArea(id); const eff=ov||getCatArea(catkey); const inh=!ov;
+  return '<span class="area-chip area-'+eff+(inh?' area-inh':'')+'" onclick="event.stopPropagation();cycleTaskArea(\''+jsq(id)+'\')" title="Bereich: '+TZ_AREAS[eff]+(inh?' · von Kategorie geerbt':'')+' · klicken zum Ändern">'+(eff==='bo'?'BO':'TG')+'</span>';
+}
+// Filterleiste über dem Umschalter Aufgabenliste/Tagesplan
+function tzAreaBar(){
+  const b=(k,ico,lbl)=>'<button class="tz-mode'+(tzArea===k?' a':'')+'" onclick="setTzArea(\''+k+'\')">'+ico+' '+lbl+'</button>';
+  return '<div class="tz-modebar">'+b('alle','🗂️','Alle Aufgaben')+b('bo','🖥️','Aufgaben Backoffice')+b('tg','🏥','Aufgaben Tagesgeschäft')+'</div>';
+}
 function getTeam(){ const t=lsGet('cki_team',[]); return Array.isArray(t)?t:[]; }
 function saveTeam(arr){ lsSet('cki_team',arr); }
 function teamColor(name){ const t=getTeam(); const i=t.findIndex(m=>m.n===name); return TEAM_PALETTE[(i<0?String(name).length:i)%TEAM_PALETTE.length]; }
@@ -3380,12 +3418,13 @@ function buildTagesplan(a, rez){
   // 3) Nur Patienten mit mindestens einer offenen Aufgabe
   const me = getMe();
   let liste = Object.values(patAppt).map(p=>{
-    const tasks = (byKey[p.key]||[]).slice();
+    let tasks = (byKey[p.key]||[]).slice();
     if(dauerKeys.has(p.key)){
       const cats = dauerKeys.get(p.key)||[];
       const catStr = cats.length ? esc(cats.join(', '))+' dauerplanfähig' : 'dauerplanfähig';
       tasks.push({id:'dauer|'+p.key, cat:'dauer', ico:'🎯', txt:'Dauerplan ansprechen', sub:catStr+' · noch keine Dauer-Maske'});
     }
+    if(tzArea!=='alle') tasks = tasks.filter(t=>effectiveArea(t.id,t.cat)===tzArea);
     return Object.assign(p, {tasks});
   }).filter(p=>p.tasks.length>0);
   liste.sort((x,y)=> x.start-y.start || x.name.localeCompare(y.name));
@@ -3426,6 +3465,7 @@ function buildTagesplan(a, rez){
       h += `<div class="tp-task${d?' done':''}">
         <div class="tp-task-cb" onclick="toggleTask('${jsq(t.id)}')">${d?'✓':''}</div>
         <div class="tp-task-body" onclick="toggleTask('${jsq(t.id)}')"><span class="tp-task-txt">${t.ico} ${t.txt}</span><span class="tp-task-sub">${t.sub}</span></div>
+        ${areaChip(t.id,t.cat)}
         ${assigneeChip(t.id,t.cat)}
       </div>`;
     });
@@ -3589,6 +3629,11 @@ function renderAufgaben(){
   ].filter(s=>s.items.length);
   const allSections = stdSections.concat(sections);
 
+  // ── Bereichsfilter anwenden (Alle / Backoffice / Tagesgeschäft) ──
+  if(tzArea!=='alle'){
+    allSections.forEach(s=>{ s.items = s.items.filter(it=>effectiveArea(it.id,s.key)===tzArea); });
+  }
+
   let total=0, done=0;
   allSections.forEach(s=>s.items.forEach(it=>{ total++; if(taskDone(it.id)) done++; }));
   const pct = total>0 ? Math.round(done/total*100) : 100;
@@ -3607,11 +3652,16 @@ function renderAufgaben(){
   });
   h += `</div>`;
 
+  // ── Bereichsfilter: Alle / Backoffice / Tagesgeschäft ──
+  h += tzAreaBar();
+
   // ── Umschalter: Aufgabenliste ↔ Tagesplan (Kalender) ──
-  h += tzModeToggle();
+  // Backoffice sitzt nicht an der Theke → nur Aufgabenliste, kein Tagesplan.
+  const effMode = (tzArea==='bo') ? 'liste' : tzMode;
+  if(tzArea!=='bo') h += tzModeToggle();
 
   // ── Kalender-Ansicht: Patienten mit Termin heute + offenem To-Do ──
-  if(tzMode==='kalender'){
+  if(effMode==='kalender'){
     h += renderTeamBar();
     h += buildTagesplan(a, rez);
     document.getElementById('content').innerHTML = h;
@@ -3667,7 +3717,9 @@ function renderAufgaben(){
   h += renderTeamBar();
 
   if(total===0){
-    h += `<div class="empty" style="background:var(--teal-bg);border:1px solid var(--teal);color:var(--teal)"><b>🎉 Alles erledigt!</b><br><span style="font-size:11px">Keine offenen Aufgaben für diesen Tag – Lücken gefüllt, Rezepte verplant und abgerechnet.</span></div>`;
+    h += (tzArea!=='alle')
+      ? `<div class="empty" style="background:var(--teal-bg);border:1px solid var(--teal);color:var(--teal)"><b>🎉 Keine Aufgaben im Bereich ${TZ_AREAS[tzArea]}</b><br><span style="font-size:11px">Aufgaben lassen sich über das Bereich-Dropdown je Kategorie oder den TG/BO-Chip je Aufgabe zuordnen.</span></div>`
+      : `<div class="empty" style="background:var(--teal-bg);border:1px solid var(--teal);color:var(--teal)"><b>🎉 Alles erledigt!</b><br><span style="font-size:11px">Keine offenen Aufgaben für diesen Tag – Lücken gefüllt, Rezepte verplant und abgerechnet.</span></div>`;
     document.getElementById('content').innerHTML = h;
     return;
   }
@@ -3701,6 +3753,7 @@ function renderAufgaben(){
       <div class="task-sec-head${open?' open':''}" style="border-left:4px solid ${s.color}" onclick="toggleSec('${s.key}',${s.defOpen?'true':'false'})">
         <div class="task-sec-ttl"><span class="task-caret">▸</span> ${s.ico} ${s.ttl} <span class="task-sec-cnt">${sDone}/${items.length}</span></div>
         <div style="display:flex;align-items:center;gap:8px;margin-left:auto">
+          <span class="cat-asg">Bereich: ${catAreaSelect(s.key)}</span>
           ${team.length?`<span class="cat-asg">Standard: ${catAssignSelect(s.key)}</span>`:''}
           ${s.go?`<button class="task-open" onclick="event.stopPropagation();${s.go}">Tab öffnen →</button>`:''}
         </div>
@@ -3711,14 +3764,15 @@ function renderAufgaben(){
       h += `<div class="task${d?' done':''}" onclick="toggleTask('${jsq(it.id)}')">
         <div class="task-cb">${d?'✓':''}</div>
         <div class="task-body"><div class="task-main">${it.main}</div><div class="task-sub">${it.sub}</div></div>
+        ${areaChip(it.id,s.key)}
         ${assigneeChip(it.id,s.key)}
       </div>`;
     });
     h += `</div></div>`;
   };
-  h += `<div class="tz-grp">📌 Standardaufgaben · Arbeitsaufteilung Physio CKI</div>`;
+  if(stdSections.some(s=>s.items.length)) h += `<div class="tz-grp">📌 Standardaufgaben · Arbeitsaufteilung Physio CKI</div>`;
   stdSections.forEach(renderSec);
-  h += `<div class="tz-grp">🗂️ Aufgaben aus dem Theorg-Export</div>`;
+  if(sections.some(s=>s.items.length)) h += `<div class="tz-grp">🗂️ Aufgaben aus dem Theorg-Export</div>`;
   sections.forEach(renderSec);
 
   document.getElementById('content').innerHTML = h;
@@ -3895,6 +3949,9 @@ async function loadSpFile(f){
     } else {
       buf = await graphGet('/sites/'+spSiteId+'/drive/items/'+f.id+'/content', token, true);
     }
+    // Große Dateien: Phase anzeigen, damit klar ist, dass es nicht hängt
+    msStatus('✅ Heruntergeladen ('+(f.size/1e6).toFixed(1)+' MB) · verarbeite '+f.name+' … (bei großen Dateien kann das 1–2 Min dauern)');
+    await new Promise(r=>setTimeout(r,50));  // UI-Paint zulassen, bevor der Parser den Thread blockiert
     ingestCSVBytes(new Uint8Array(buf), f.name);
     if(spRefreshTimer) clearTimeout(spRefreshTimer);
     spRefreshTimer = setTimeout(()=>{

@@ -449,6 +449,7 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--dark);min
     <div class="hdr-r">
       <span class="demo-badge">🎭 Demo v2.1</span>
       <span id="meta" style="font-size:11px;color:var(--muted)"></span>
+      <select id="hdrLocation" class="hdr-btn" style="display:none" title="Standort wechseln"></select>
       <button class="hdr-btn" onclick="resetDash()">📂 Neue Datei</button>
     </div>
   </div>
@@ -3565,6 +3566,7 @@ const SP = {
 };
 
 let msalApp = null, spSiteId = null, spByLicense = {}, spRefreshTimer = null;
+let spLocations = [], spCurrentLoc = null;   // Standort-Ordner (ein Ordner pro Standort)
 
 function msStatus(t){ const e=document.getElementById('msStatus'); if(e) e.textContent = t||''; }
 
@@ -3625,24 +3627,83 @@ async function connectSharePoint(){
     const site = await graphGet('/sites/'+SP.hostname+':'+SP.sitePath, token);
     spSiteId = site.id;
     autoRegisterMe();   // eingeloggten MS-Nutzer automatisch als „ich" übernehmen
-    msStatus('Suche Export-Dateien …');
-    const listing = await graphGet('/sites/'+spSiteId+'/drive/root:/'+encodeURI(SP.folderPath)+':/children?$top=999&$select=name,id,size,lastModifiedDateTime', token);
-    const csvs = (listing.value||[]).filter(f=>/\.csv$/i.test(f.name));
-    if(!csvs.length){ msStatus('⚠️ Keine CSV im Ordner gefunden.'); btn.disabled=false; return; }
-    spByLicense = buildLicenseMap(csvs);
-    const keys = Object.keys(spByLicense);
-    const multi = keys.length>1 || (keys.length===1 && keys[0]!=='__single__');
-    if(multi){
-      const sel = document.getElementById('spLocation');
-      sel.innerHTML = keys.map(k=>'<option value="'+k+'">'+(k==='__single__'?spByLicense[k].name:('Lizenz '+k))+'</option>').join('');
-      document.getElementById('spPicker').style.display='block';
-      sel.onchange = ()=>loadSpFile(spByLicense[sel.value]);
+    msStatus('Suche Standorte …');
+    const listing = await graphGet('/sites/'+spSiteId+'/drive/root:/'+encodeURI(SP.folderPath)+':/children?$top=999&$select=name,id,size,folder,lastModifiedDateTime', token);
+    const items = listing.value||[];
+    const folders = items.filter(f=>f.folder);              // je Unterordner = ein Standort
+    const rootCsvs = items.filter(f=>/\.csv$/i.test(f.name)); // lose CSVs direkt im Ordner (Alt-Struktur)
+
+    if(folders.length){
+      // ── Standort-pro-Ordner ─────────────────────────────
+      spLocations = folders
+        .map(f=>({ name:f.name, id:f.id }))
+        .sort((a,b)=>a.name.localeCompare(b.name,'de'));
+      renderLocationPickers();
+      await loadSpLocation(spLocations[0]);
+    } else if(rootCsvs.length){
+      // ── Alt-Struktur: lose CSVs, Gruppierung per Dateiname-Lizenz ──
+      spLocations = [];
+      spByLicense = buildLicenseMap(rootCsvs);
+      const keys = Object.keys(spByLicense);
+      const multi = keys.length>1 || (keys.length===1 && keys[0]!=='__single__');
+      if(multi){
+        const sel = document.getElementById('spLocation');
+        sel.innerHTML = keys.map(k=>'<option value="'+k+'">'+(k==='__single__'?spByLicense[k].name:('Lizenz '+k))+'</option>').join('');
+        document.getElementById('spPicker').style.display='block';
+        sel.onchange = ()=>loadSpFile(spByLicense[sel.value]);
+      }
+      await loadSpFile(spByLicense[keys[0]]);
+    } else {
+      msStatus('⚠️ Keine Standort-Ordner oder CSV-Dateien gefunden.'); btn.disabled=false; return;
     }
-    await loadSpFile(spByLicense[keys[0]]);
   }catch(e){
     console.error(e);
     msStatus('⚠️ Fehler: '+e.message);
     btn.disabled = false;
+  }
+}
+
+// Standort-Dropdowns (Login-Screen + Header) mit den gefundenen Ordnern füllen
+function renderLocationPickers(){
+  if(!spLocations.length) return;
+  const opts = spLocations.map(l=>'<option value="'+l.id+'">'+l.name+'</option>').join('');
+
+  const up = document.getElementById('spLocation');
+  if(up){ up.innerHTML = opts; up.onchange = ()=>{ const l=spLocations.find(x=>x.id===up.value); if(l) loadSpLocation(l); }; }
+  const picker = document.getElementById('spPicker'); if(picker) picker.style.display='block';
+
+  const hdr = document.getElementById('hdrLocation');
+  if(hdr){
+    hdr.innerHTML = opts;
+    hdr.style.display = spLocations.length>1 ? 'inline-block' : 'none';
+    hdr.onchange = ()=>{ const l=spLocations.find(x=>x.id===hdr.value); if(l) loadSpLocation(l); };
+  }
+}
+
+// Beide Dropdowns auf den aktuell geladenen Standort setzen
+function syncLocationPickers(){
+  if(!spCurrentLoc) return;
+  const up = document.getElementById('spLocation'); if(up) up.value = spCurrentLoc.id;
+  const hdr = document.getElementById('hdrLocation'); if(hdr) hdr.value = spCurrentLoc.id;
+}
+
+// CSVs eines Standort-Ordners auflisten und die neueste laden
+async function loadSpLocation(loc){
+  try{
+    spCurrentLoc = loc;
+    syncLocationPickers();
+    const token = await getToken();
+    msStatus('Lade Standort „'+loc.name+'" …');
+    const listing = await graphGet('/sites/'+spSiteId+'/drive/items/'+loc.id+'/children?$top=999&$select=name,id,size,@microsoft.graph.downloadUrl,lastModifiedDateTime', token);
+    const csvs = (listing.value||[]).filter(f=>/\.csv$/i.test(f.name));
+    if(!csvs.length){ msStatus('⚠️ Keine CSV im Standort „'+loc.name+'".'); return; }
+    // neueste Datei (Lizenz-Schema, sonst lastModified)
+    const map = buildLicenseMap(csvs);
+    const newest = Object.values(map).sort((a,b)=>String(b._stamp).localeCompare(String(a._stamp)))[0];
+    await loadSpFile(newest);
+  }catch(e){
+    console.error(e);
+    msStatus('⚠️ Fehler beim Laden des Standorts: '+e.message);
   }
 }
 
@@ -3663,7 +3724,10 @@ async function loadSpFile(f){
     }
     ingestCSVBytes(new Uint8Array(buf), f.name);
     if(spRefreshTimer) clearTimeout(spRefreshTimer);
-    spRefreshTimer = setTimeout(()=>{ if(spSiteId) connectSharePoint(); }, 30*60*1000); // Auto-Refresh 30 Min
+    spRefreshTimer = setTimeout(()=>{
+      if(spCurrentLoc){ loadSpLocation(spCurrentLoc); }   // aktuellen Standort neu laden
+      else if(spSiteId){ connectSharePoint(); }
+    }, 30*60*1000); // Auto-Refresh 30 Min
   }catch(e){
     console.error(e);
     msStatus('⚠️ Fehler beim Laden: '+e.message);

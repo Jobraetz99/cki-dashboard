@@ -169,7 +169,7 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--dark);min
 .fc-rate{font-family:'Montserrat',sans-serif;font-weight:900;font-size:18px}
 .fc-det{font-size:10.5px;color:var(--muted);margin-top:2px}
 .lf-head{font-family:Montserrat;font-weight:800;font-size:12px;color:var(--dark);margin-bottom:8px}
-.lf-ta{width:100%;min-height:56px;border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-family:Poppins;font-size:12px;color:var(--dark);background:var(--bg,#fff);outline:none;resize:vertical;box-sizing:border-box}
+.lf-ta{width:100%;min-height:120px;border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-family:Poppins;font-size:12px;color:var(--dark);background:var(--bg,#fff);outline:none;resize:vertical;box-sizing:border-box}
 .lf-ta:focus{border-color:var(--primary)}
 .lf-hint{font-size:10px;color:var(--muted);margin-top:5px}
 
@@ -365,6 +365,11 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--dark);min
 .area-tg{background:#eef2ff;color:var(--primary);border:1px solid var(--primary)}
 .area-bo{background:#ecfeff;color:#0891b2;border:1px solid #0891b2}
 .area-inh{opacity:.55}
+/* ── Tagesziel: Zeitblock-Chips (Vormittag / Mittag / Nachmittag) ── */
+.time-chip{display:inline-flex;align-items:center;justify-content:center;min-width:28px;height:20px;border-radius:6px;font-size:9.5px;font-weight:900;letter-spacing:.4px;cursor:pointer;padding:0 5px;flex-shrink:0;font-family:'Montserrat',sans-serif}
+.time-vm{background:#fffbeb;color:#d97706;border:1px solid #d97706}
+.time-mi{background:#ecfdf5;color:#059669;border:1px solid #059669}
+.time-nm{background:#f5f3ff;color:#7c3aed;border:1px solid #7c3aed}
 /* ── Tagesziel: Umschalter Liste ↔ Kalender ── */
 .tz-modebar{display:inline-flex;background:var(--card);border:1px solid var(--border);border-radius:12px;padding:4px;gap:4px;margin-bottom:14px;box-shadow:var(--shadow)}
 .tz-mode{border:none;background:transparent;color:var(--muted);font-family:'Montserrat',sans-serif;font-weight:800;font-size:12.5px;padding:8px 16px;border-radius:9px;cursor:pointer;transition:all .15s}
@@ -2759,15 +2764,32 @@ function patDauerKategorien(p){
 function quarterOrdinal(d){ return d.getFullYear()*4 + Math.floor(d.getMonth()/3); }
 function quarterLabel(ord){ const y=Math.floor(ord/4); const q=(ord%4)+1; return 'Q'+q+' '+y; }
 
-// ── Telefonleitfaden (Platzhalter, lokal speicherbar) ──
-function leitfadenGet(key){ return lsGet('cki_leitfaden_'+key, ''); }
+// ── Telefonleitfaden (Wording aus „Hilfestellung Tagesgeschäft", lokal anpassbar) ──
+const LF_DEFAULTS = {
+  luecken: `Lücke heute/morgen füllen (Nachrücker anrufen):
+„Lieber Patient, ich rufe im Auftrag von (Name des Therapeuten) an — bei ihm ist heute um (Uhrzeit) noch ein Termin frei geworden und er hat direkt an Sie gedacht. Möchten Sie den Termin wahrnehmen?"`,
+  rezepte: `Vorletzter/letzter Termin — wie geht es weiter?
+„Lieber Patient, heute ist Ihr vorletzter Termin. Wissen Sie schon, wie es weitergeht? Gerne können wir die Behandlungstermine schon vorausplanen, um eine längere Behandlungsunterbrechung zu vermeiden. Nennen Sie mir gerne Ihre Zeiten — an welchen Tagen können Sie und in welcher Zeitspanne?
+Super — dann machen wir den nächsten Termin aus und die restlichen lasse ich Ihnen per Mail zukommen."`,
+  offene: `Nach der ersten Behandlung:
+„Lieber Patient, wie war Ihre erste Behandlung? Sollen wir die weiteren Termine für Sie planen, um eine längere Behandlungsunterbrechung zu vermeiden?"
+
+€ Zuzahlung offen:
+„Lieber Patient, Ihre Zuzahlung steht noch aus. Möchten Sie bar oder mit Karte zahlen? Sie haben nichts dabei? Kein Problem, ich gebe Ihnen die Rechnung mit."`,
+  potential: `Dauerplan anbieten (DP):
+„Lieber Patient, ich rufe im Auftrag von (Name des Therapeuten) an. Laut Ihrer Diagnose deutet alles auf eine langfristige Behandlung hin. Gerne können wir Ihnen unseren Dauerplan anbieten — das bedeutet: Sie haben Ihre Termine immer an festen Tagen, zu festen Uhrzeiten, bei Ihrem festen Therapeuten."`,
+  folgevo: `Vorletzter/letzter Termin — Folge-VO ansprechen:
+„Lieber Patient, heute ist Ihr vorletzter Termin. Wissen Sie schon, wie es weitergeht? Gerne können wir die Behandlungstermine schon vorausplanen, um eine längere Behandlungsunterbrechung zu vermeiden. Nennen Sie mir gerne Ihre Zeiten — an welchen Tagen können Sie und in welcher Zeitspanne?
+Super — dann machen wir den nächsten Termin aus und die restlichen lasse ich Ihnen per Mail zukommen."`
+};
+function leitfadenGet(key){ const v=lsGet('cki_leitfaden_'+key, null); return (v===null||v==='') ? (LF_DEFAULTS[key]||'') : v; }
 function leitfadenSave(key, el){ lsSet('cki_leitfaden_'+key, el.value); }
 function leitfadenBox(key, titel, platzhalter){
   const val = leitfadenGet(key);
   return `<div class="lf-box">
     <div class="lf-head">💬 Telefonleitfaden – ${titel}</div>
     <textarea class="lf-ta" placeholder="${platzhalter}" oninput="leitfadenSave('${key}',this)">${esc(val)}</textarea>
-    <div class="lf-hint">Platzhalter · Text wird lokal im Browser gespeichert. Endgültige Formulierung folgt später.</div>
+    <div class="lf-hint">Wording „Hilfestellung Tagesgeschäft" · Änderungen werden lokal im Browser gespeichert.</div>
   </div>`;
 }
 
@@ -3294,6 +3316,28 @@ function areaChip(id,catkey){
   const ov=getTaskArea(id); const eff=ov||getCatArea(catkey); const inh=!ov;
   return '<span class="area-chip area-'+eff+(inh?' area-inh':'')+'" onclick="event.stopPropagation();cycleTaskArea(\''+jsq(id)+'\')" title="Bereich: '+TZ_AREAS[eff]+(inh?' · von Kategorie geerbt':'')+' · klicken zum Ändern">'+(eff==='bo'?'BO':'TG')+'</span>';
 }
+// ── Zeitblöcke: Vormittag / Mittag / Nachmittag ──────────────────────────────
+// Jede Kategorie hat einen Standard-Zeitblock (Dropdown im Kategorie-Kopf),
+// jede Aufgabe kann per Chip-Klick abweichen ('' = erben). Lücken-Aufgaben
+// erben automatisch den Zeitblock ihrer Uhrzeit (it.tdef).
+const TZ_TIMES = { vm:'Vormittag', mi:'Mittag', nm:'Nachmittag' };
+const TZ_TIME_DEFAULTS = { std_fs:'vm', std_ss:'nm' };
+function getCatTime(k){ const v=lsGet('cki_cattime_'+k, TZ_TIME_DEFAULTS[k]||'vm'); return TZ_TIMES[v]?v:'vm'; }
+function setCatTime(k,v){ lsSet('cki_cattime_'+k, TZ_TIMES[v]?v:'vm'); renderAufgaben(); }
+function getTaskTime(id){ return lsGet('cki_time_'+id,''); }
+function cycleTaskTime(id){ const o=['','vm','mi','nm']; const cur=getTaskTime(id); lsSet('cki_time_'+id, o[(o.indexOf(cur)+1)%o.length]); renderAufgaben(); }
+function effectiveTime(id,catkey,tdef){ return getTaskTime(id) || tdef || getCatTime(catkey); }
+function timeBlockOfHour(hr){ return hr<11.5 ? 'vm' : hr<16.5 ? 'mi' : 'nm'; }
+function catTimeSelect(k){
+  const cur=getCatTime(k);
+  return '<select class="asg-sel" onclick="event.stopPropagation()" onchange="setCatTime(\''+jsq(k)+'\',this.value)">'+
+    ['vm','mi','nm'].map(t=>'<option value="'+t+'"'+(cur===t?' selected':'')+'>'+TZ_TIMES[t]+'</option>').join('')+'</select>';
+}
+function timeChip(id,catkey,tdef){
+  const ov=getTaskTime(id); const eff=ov||tdef||getCatTime(catkey); const inh=!ov;
+  const lbl={vm:'VM',mi:'MI',nm:'NM'}[eff];
+  return '<span class="time-chip time-'+eff+(inh?' area-inh':'')+'" onclick="event.stopPropagation();cycleTaskTime(\''+jsq(id)+'\')" title="Zeitblock: '+TZ_TIMES[eff]+(inh?' · automatisch/geerbt':'')+' · klicken zum Ändern">'+lbl+'</span>';
+}
 // Filterleiste über dem Umschalter Aufgabenliste/Tagesplan
 function tzAreaBar(){
   const b=(k,ico,lbl)=>'<button class="tz-mode'+(tzArea===k?' a':'')+'" onclick="setTzArea(\''+k+'\')">'+ico+' '+lbl+'</button>';
@@ -3575,16 +3619,7 @@ function renderAufgaben(){
   const gapsMorgen = gapsForDate(morgenStr);
   const morgenLabel = morgenStr ? new Date(morgenStr+'T12:00:00').toLocaleDateString('de-DE',{weekday:'short',day:'2-digit',month:'2-digit'}) : '–';
 
-  // ── Blaue KPI-Kacheln ──
   const rez = collectRezepte(); // bereits Maske-D-gefiltert wenn ausgeblendet
-  const serieEndetBald = rez.filter(r=>!r.istAbgerechnet && r.echteMenge>0 && r.erbracht>0 && r.rest<=1);
-  const dauerCount = (DATA.dauerPats && DATA.dauerPats.size) || 0;
-  const kpis = [
-    {ico:'🔁', l:'Dauerpatienten', v:dauerCount, s:'mit Dauerplan (Maske D)'},
-    {ico:'⏳', l:'Serie endet bald', v:serieEndetBald.length, s:'letzter/vorletzter Termin'},
-    {ico:'⚡', l:'Lücken heute', v:gapsHeute.length, s:'Nachrücker anrufen'},
-    {ico:'📅', l:'Lücken morgen', v:gapsMorgen.length, s:morgenLabel}
-  ];
 
   // Kategorien → einzelne abhakbare Einträge
   const sections = [
@@ -3592,11 +3627,13 @@ function renderAufgaben(){
       items: gapsHeute.map(g=>({
         id:'gap|'+currentDate+'|'+g.therapist+'|'+hhmm(g.start),
         main:esc(g.therapist)+' · '+hhmm(g.start)+'–'+hhmm(g.end),
+        tdef:timeBlockOfHour(gapHourOf(g)),
         sub:Math.round(g.min)+' min frei · Nachrücker anrufen' })) },
     { key:'gapMorgen', ico:'📅', color:'#0891b2', ttl:'Lücken morgen schließen'+(morgenStr?' · '+morgenLabel:''), go:"switchView('luecken')",
       items: (morgenStr?gapsMorgen:[]).map(g=>({
         id:'gap|'+morgenStr+'|'+g.therapist+'|'+hhmm(g.start),
         main:esc(g.therapist)+' · '+hhmm(g.start)+'–'+hhmm(g.end),
+        tdef:timeBlockOfHour(gapHourOf(g)),
         sub:Math.round(g.min)+' min frei · vorab Nachrücker organisieren' })) },
     { key:'abr', ico:'💰', color:'var(--fire)', ttl:'Rezepte abrechnen', go:"gotoOffene('abr')",
       items: a.typA.map(r=>({
@@ -3642,15 +3679,7 @@ function renderAufgaben(){
 
   let h = `<div class="summary">
     <h2>🎯 Tagesziel · ${dd}</h2>
-    <div class="tz-lead">Was müssen wir heute tun? Alle offenen Aufgaben an einem Ort – mit Verantwortlichen je Kategorie und je Aufgabe. Zuweisungen &amp; Abhaken werden teamweit geteilt.</div>
   </div>`;
-
-  // ── Blaue KPI-Kacheln ──
-  h += `<div class="tz-kpis">`;
-  kpis.forEach(k=>{
-    h += `<div class="tz-kpi"><div class="tz-kpi-ico">${k.ico}</div><div class="tz-kpi-v">${k.v}</div><div class="tz-kpi-l">${k.l}</div><div class="tz-kpi-s">${k.s}</div></div>`;
-  });
-  h += `</div>`;
 
   // ── Bereichsfilter: Alle / Backoffice / Tagesgeschäft ──
   h += tzAreaBar();
@@ -3667,6 +3696,23 @@ function renderAufgaben(){
     document.getElementById('content').innerHTML = h;
     return;
   }
+
+  // ── Tagesablauf: offene Aufgaben automatisch nach Zeitblock gruppiert ──
+  const tb = {vm:[],mi:[],nm:[]};
+  allSections.forEach(s=>s.items.forEach(it=>{
+    if(!taskDone(it.id)) tb[effectiveTime(it.id,s.key,it.tdef)].push(it);
+  }));
+  h += `<div class="tz-blocks">`;
+  TZ_BLOCKS.forEach(b=>{
+    const list = tb[b.key]||[];
+    h += `<div class="tz-block">
+      <div class="tz-block-head">${b.ico} ${b.ttl} <span class="tz-block-time">${b.von}–${b.bis}</span></div>
+      <div class="tz-block-v">${list.length}<span class="tz-block-u"> offen</span></div>`;
+    list.slice(0,4).forEach(it=>{ h += `<div class="tz-slot">${it.main}</div>`; });
+    if(list.length>4) h += `<div class="tz-slot tz-more">+${list.length-4} weitere</div>`;
+    h += `</div>`;
+  });
+  h += `</div>`;
 
   // ── Tagesabschluss (nach 20:30) ──
   const now = new Date();
@@ -3686,30 +3732,6 @@ function renderAufgaben(){
     </div>
     <div class="tz-bar"><div class="tz-fill" style="width:${Math.max(pct,6)}%;background:${barColor}">${pct}%</div></div>
   </div>`;
-
-  // ── Drei Zeitblöcke + Gesamtansicht (Lücken heute) ──
-  h += `<div class="tz-blocks">`;
-  TZ_BLOCKS.forEach(b=>{
-    const bg = gapsHeute.filter(g=>{ const hr=gapHourOf(g); return hr>=b.h0 && hr<b.h1; });
-    const totMin = Math.round(bg.reduce((s,g)=>s+g.min,0));
-    h += `<div class="tz-block">
-      <div class="tz-block-head">${b.ico} ${b.ttl} <span class="tz-block-time">${b.von}–${b.bis}</span></div>
-      <div class="tz-block-v">${bg.length}<span class="tz-block-u"> Lücken</span></div>
-      <div class="tz-block-s">${totMin} min frei</div>`;
-    bg.slice(0,4).forEach(g=>{
-      h += `<div class="tz-slot">${esc(g.therapist)} · ${hhmm(g.start)}–${hhmm(g.end)} <span class="tz-slot-min">${Math.round(g.min)}′</span></div>`;
-    });
-    if(bg.length>4) h += `<div class="tz-slot tz-more">+${bg.length-4} weitere</div>`;
-    h += `</div>`;
-  });
-  // Gesamtansicht
-  const totAll = Math.round(gapsHeute.reduce((s,g)=>s+g.min,0));
-  h += `<div class="tz-block tz-block-total" onclick="switchView('luecken')">
-    <div class="tz-block-head">📊 Ganztags <span class="tz-block-time">Gesamt</span></div>
-    <div class="tz-block-v">${gapsHeute.length}<span class="tz-block-u"> Lücken</span></div>
-    <div class="tz-block-s">${totAll} min · alle öffnen →</div>
-  </div>`;
-  h += `</div>`;
 
   h += `<div style="margin-bottom:14px">${dauerToggleHTML()}</div>`;
 
@@ -3753,6 +3775,7 @@ function renderAufgaben(){
       <div class="task-sec-head${open?' open':''}" style="border-left:4px solid ${s.color}" onclick="toggleSec('${s.key}',${s.defOpen?'true':'false'})">
         <div class="task-sec-ttl"><span class="task-caret">▸</span> ${s.ico} ${s.ttl} <span class="task-sec-cnt">${sDone}/${items.length}</span></div>
         <div style="display:flex;align-items:center;gap:8px;margin-left:auto">
+          <span class="cat-asg">Zeit: ${catTimeSelect(s.key)}</span>
           <span class="cat-asg">Bereich: ${catAreaSelect(s.key)}</span>
           ${team.length?`<span class="cat-asg">Standard: ${catAssignSelect(s.key)}</span>`:''}
           ${s.go?`<button class="task-open" onclick="event.stopPropagation();${s.go}">Tab öffnen →</button>`:''}
@@ -3764,6 +3787,7 @@ function renderAufgaben(){
       h += `<div class="task${d?' done':''}" onclick="toggleTask('${jsq(it.id)}')">
         <div class="task-cb">${d?'✓':''}</div>
         <div class="task-body"><div class="task-main">${it.main}</div><div class="task-sub">${it.sub}</div></div>
+        ${timeChip(it.id,s.key,it.tdef)}
         ${areaChip(it.id,s.key)}
         ${assigneeChip(it.id,s.key)}
       </div>`;

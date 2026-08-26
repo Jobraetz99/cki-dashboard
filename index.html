@@ -247,6 +247,16 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--dark);min
 .ausl-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:16px;margin-bottom:16px}
 .ausl-card{background:var(--card);border-radius:var(--radius);padding:24px;border:1px solid var(--border);box-shadow:var(--shadow)}
 .ausl-card h4{font-family:'Montserrat',sans-serif;font-size:12px;font-weight:800;letter-spacing:1px;text-transform:uppercase;color:var(--muted);margin-bottom:16px}
+/* Controlling: Zeitraum-Selektor */
+.ctrl-period{display:flex;align-items:center;gap:14px;flex-wrap:wrap;background:var(--card);border:1px solid var(--border);border-radius:14px;padding:10px 14px;box-shadow:var(--shadow);margin-bottom:16px}
+.cp-seg{display:inline-flex;background:var(--border);border-radius:100px;padding:3px}
+.cp-tab{border:none;background:none;font-family:'Montserrat',sans-serif;font-weight:800;font-size:12.5px;color:var(--muted);padding:7px 16px;border-radius:100px;cursor:pointer;transition:all .15s}
+.cp-tab.a{background:var(--primary);color:#fff;box-shadow:0 2px 8px rgba(0,0,0,.12)}
+.cp-detail{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--dark);font-weight:600}
+.cp-navbtn{border:1px solid var(--border);background:var(--card);border-radius:8px;width:30px;height:30px;font-size:15px;cursor:pointer;color:var(--dark)}
+.cp-navbtn:disabled{opacity:.35;cursor:default}
+.cp-sel,.cp-date{border:1px solid var(--border);border-radius:8px;padding:6px 8px;font-size:12.5px;font-family:inherit;background:var(--card);color:var(--dark)}
+.cp-kw{font-family:'Montserrat',sans-serif;font-weight:900;font-size:14px;color:var(--primary);min-width:70px;text-align:center}
 /* Aufgaben-Cockpit */
 .aufg-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px;margin-bottom:18px}
 .aufg-card{background:var(--card);border:1px solid var(--border);border-left:5px solid var(--primary);border-radius:16px;padding:18px 20px;box-shadow:var(--shadow);cursor:pointer;transition:all .18s;display:flex;flex-direction:column;gap:5px;position:relative;overflow:hidden}
@@ -439,6 +449,7 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--dark);min
     <div class="hdr-r">
       <span class="demo-badge">🎭 Demo v2.1</span>
       <span id="meta" style="font-size:11px;color:var(--muted)"></span>
+      <select id="hdrLocation" class="hdr-btn" style="display:none" title="Standort wechseln"></select>
       <button class="hdr-btn" onclick="resetDash()">📂 Neue Datei</button>
     </div>
   </div>
@@ -474,6 +485,10 @@ let currentNRFilter = 'all';
 let currentOffeneFilter = 'w4';
 let currentFvoFilter = 'offen';
 let currentPotFilter = 'alle';
+// ── Controlling: Zeitraum-Selektor ──
+let ctrlMode = 'zeitraum';          // 'heute' | 'woche' | 'zeitraum'
+let ctrlWeek = null;                // KW-Key (z.B. '2026-KW32') im Woche-Modus
+let ctrlFrom = null, ctrlTo = null; // dateStr im Zeitraum-Modus
 
 // ── Konfiguration (anpassbar) ──────────────────────────────
 const CONFIG = {
@@ -2206,35 +2221,164 @@ function ampelForRate(rate){
   return {c:'#16a34a', l:'Grün', ico:'🟢'};
 }
 
+// ── Zeitraum-Selektor: aktive Tage bestimmen ──
+function ctrlAllWeeks(){
+  const set = new Set();
+  DATA.dates.forEach(d=> set.add(isoWeekKey(new Date(d+'T12:00:00'))));
+  return [...set].sort();
+}
+function ctrlActiveDates(){
+  if(!DATA || !DATA.dates.length) return [];
+  const all = DATA.dates;
+  if(ctrlMode==='heute'){
+    const today = new Date(); today.setHours(0,0,0,0);
+    const ts = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
+    if(all.includes(ts)) return [ts];
+    return [all[all.length-1]]; // Fallback: letzter Tag im Export
+  }
+  if(ctrlMode==='woche'){
+    if(!ctrlWeek){ const ws=ctrlAllWeeks(); ctrlWeek=ws[ws.length-1]; }
+    return all.filter(d=>isoWeekKey(new Date(d+'T12:00:00'))===ctrlWeek);
+  }
+  const from = ctrlFrom||all[0], to = ctrlTo||all[all.length-1];
+  return all.filter(d=>d>=from && d<=to);
+}
+function ctrlPeriodLabel(){
+  const ds = ctrlActiveDates();
+  if(ctrlMode==='heute') return ds.length? new Date(ds[0]+'T12:00:00').toLocaleDateString('de-DE',{weekday:'long',day:'2-digit',month:'2-digit',year:'numeric'}) : '–';
+  if(ctrlMode==='woche') return (ctrlWeek||'–')+' · '+ds.length+' Tag'+(ds.length===1?'':'e');
+  const all=DATA.dates, from=ctrlFrom||all[0], to=ctrlTo||all[all.length-1];
+  const f=new Date(from+'T12:00:00').toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'2-digit'});
+  const t=new Date(to+'T12:00:00').toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'2-digit'});
+  return f+' – '+t+' · '+ds.length+' Tage';
+}
+function ctrlSetMode(m){
+  ctrlMode=m;
+  if(m==='woche' && !ctrlWeek){ const ws=ctrlAllWeeks(); ctrlWeek=ws[ws.length-1]; }
+  if(m==='zeitraum'){ if(!ctrlFrom)ctrlFrom=DATA.dates[0]; if(!ctrlTo)ctrlTo=DATA.dates[DATA.dates.length-1]; }
+  renderControlling();
+}
+function ctrlStepWeek(delta){ const ws=ctrlAllWeeks(); let i=ws.indexOf(ctrlWeek); if(i<0)i=ws.length-1; i=Math.min(ws.length-1,Math.max(0,i+delta)); ctrlWeek=ws[i]; renderControlling(); }
+function ctrlSetWeek(w){ ctrlWeek=w; renderControlling(); }
+function ctrlSetFrom(v){ if(v){ ctrlFrom=v; if(ctrlTo && ctrlTo<v) ctrlTo=v; renderControlling(); } }
+function ctrlSetTo(v){ if(v){ ctrlTo=v; if(ctrlFrom && ctrlFrom>v) ctrlFrom=v; renderControlling(); } }
+function periodSelectorHTML(){
+  const all=DATA.dates, min=all[0], max=all[all.length-1];
+  let detail='';
+  if(ctrlMode==='heute'){
+    detail = `<span class="cp-detail">📅 ${ctrlPeriodLabel()}</span>`;
+  } else if(ctrlMode==='woche'){
+    const ws=ctrlAllWeeks(); const i=ws.indexOf(ctrlWeek);
+    let opts=''; ws.forEach(w=>{ opts+=`<option value="${w}"${w===ctrlWeek?' selected':''}>${w}</option>`; });
+    detail = `<span class="cp-detail">
+        <button class="cp-navbtn" onclick="ctrlStepWeek(-1)"${i<=0?' disabled':''}>‹</button>
+        <span class="cp-kw">${ctrlWeek||'–'}</span>
+        <button class="cp-navbtn" onclick="ctrlStepWeek(1)"${i>=ws.length-1?' disabled':''}>›</button>
+        <select class="cp-sel" onchange="ctrlSetWeek(this.value)">${opts}</select>
+      </span>`;
+  } else {
+    detail = `<span class="cp-detail">
+        von <input type="date" class="cp-date" min="${min}" max="${max}" value="${ctrlFrom||min}" onchange="ctrlSetFrom(this.value)">
+        bis <input type="date" class="cp-date" min="${min}" max="${max}" value="${ctrlTo||max}" onchange="ctrlSetTo(this.value)">
+      </span>`;
+  }
+  return `<div class="ctrl-period">
+    <div class="cp-seg">
+      <button class="cp-tab${ctrlMode==='heute'?' a':''}" onclick="ctrlSetMode('heute')">Heute</button>
+      <button class="cp-tab${ctrlMode==='woche'?' a':''}" onclick="ctrlSetMode('woche')">Woche</button>
+      <button class="cp-tab${ctrlMode==='zeitraum'?' a':''}" onclick="ctrlSetMode('zeitraum')">Zeitraum</button>
+    </div>
+    ${detail}
+  </div>`;
+}
+
+// ── KW-Kapazität vs. Meridian (Gesamt-Kapazität in Terminen, Median über alle KW) ──
+function ctrlKapazitaetData(){
+  // Personal-Kapazität = alle AZ=J-Arbeitszeit-Slots (10 min), egal ob belegt → in Termine à CONFIG.slotMin.
+  const kwSlots = {}; // wk -> Set('th|starttime')
+  DATA.cells.forEach(c=>{
+    if(!c.azFlag || !c.therapist) return;
+    const wk = isoWeekKey(c.start);
+    (kwSlots[wk] = kwSlots[wk] || new Set()).add(c.therapist+'|'+c.start.getTime());
+  });
+  const weeks = Object.keys(kwSlots).sort();
+  const cap = weeks.map(w=> Math.round(kwSlots[w].size*10/CONFIG.slotMin));
+  // Meridian = Median über alle KW; Randwochen (erste/letzte, oft angeschnitten) für den Median ausklammern.
+  let basis = cap.slice();
+  if(weeks.length>4) basis = cap.slice(1,-1);
+  const sorted=[...basis].sort((a,b)=>a-b);
+  const mid=Math.floor(sorted.length/2);
+  const meridian = sorted.length ? (sorted.length%2 ? sorted[mid] : Math.round((sorted[mid-1]+sorted[mid])/2)) : 0;
+  return {weeks, cap, meridian};
+}
+function ctrlKapazitaetChart(data){
+  const {weeks, cap, meridian} = data;
+  if(!weeks.length) return '<div class="empty">Keine Arbeitszeit-Daten für die KW-Kapazität gefunden.</div>';
+  const W=780,H=250,padL=46,padR=16,padT=28,padB=54;
+  const yMax = Math.max(1, Math.ceil(Math.max(meridian, ...cap)*1.12));
+  const n=weeks.length;
+  const step=(W-padL-padR)/n;
+  const bw=Math.min(38, step*0.62);
+  const Xc=i=> padL + (i+0.5)*step;
+  const Y=v=> padT + (1-(v/yMax))*(H-padT-padB);
+  const bandLo=meridian*0.95, bandHi=meridian*1.05;
+  // Gitter + Y-Achse
+  let grid=''; const steps=4;
+  for(let s=0;s<=steps;s++){ const val=yMax*s/steps, yy=Y(val);
+    grid+=`<line x1="${padL}" y1="${yy.toFixed(1)}" x2="${W-padR}" y2="${yy.toFixed(1)}" stroke="var(--border,#e5e7eb)" stroke-width="1"/>`;
+    grid+=`<text x="${padL-6}" y="${(yy+3).toFixed(1)}" text-anchor="end" font-size="9" fill="var(--muted,#94a3b8)">${Math.round(val)}</text>`;
+  }
+  // Balken + X-Labels
+  let bars='', xlab=''; const showEvery=n<=22?1:2;
+  weeks.forEach((w,i)=>{
+    const v=cap[i], x=(Xc(i)-bw/2), y=Y(v), hgt=Math.max(0,(H-padB)-y);
+    const over=v>bandHi, under=v<bandLo;
+    const col= over?'var(--teal)': under?'var(--accent)':'var(--amber)';
+    const tag= over?'über Meridian → Urlaub möglich': under?'unter Meridian → Überstunden':'im Normalbereich';
+    bars+=`<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${hgt.toFixed(1)}" rx="3" fill="${col}"><title>${w}: ${v} Termine Kapazität · ${tag}</title></rect>`;
+    if(i%showEvery===0 || i===n-1){ xlab+=`<text x="${Xc(i).toFixed(1)}" y="${H-padB+16}" text-anchor="middle" font-size="8.5" fill="var(--muted,#94a3b8)">${w.replace(/^\d{4}-/,'')}</text>`; }
+  });
+  // Meridian-Linie
+  const my=Y(meridian);
+  const merLine=`<line x1="${padL}" y1="${my.toFixed(1)}" x2="${W-padR}" y2="${my.toFixed(1)}" stroke="var(--dark,#0f172a)" stroke-width="2" stroke-dasharray="7 4"/>`
+    + `<text x="${W-padR}" y="${(my-6).toFixed(1)}" text-anchor="end" font-size="10" font-weight="800" fill="var(--dark,#0f172a)">Meridian ${meridian}</text>`;
+  const legend = `<div style="margin-bottom:6px;font-size:11px;color:var(--dark)">
+      <span style="display:inline-flex;align-items:center;gap:5px;margin-right:14px"><span style="width:11px;height:11px;border-radius:3px;background:var(--teal);display:inline-block"></span>über Meridian → Urlaub möglich</span>
+      <span style="display:inline-flex;align-items:center;gap:5px;margin-right:14px"><span style="width:11px;height:11px;border-radius:3px;background:var(--amber);display:inline-block"></span>im Normalbereich (±5%)</span>
+      <span style="display:inline-flex;align-items:center;gap:5px"><span style="width:11px;height:11px;border-radius:3px;background:var(--accent);display:inline-block"></span>unter Meridian → Überstunden</span>
+    </div>`;
+  return legend + `<svg viewBox="0 0 ${W} ${H}" width="100%" style="max-width:100%;height:auto;display:block">${grid}${bars}${merLine}${xlab}</svg>`;
+}
+
 function renderControlling(){
-  // Auslastung konsistent zur Lücken-Ansicht: produktive Zeit (inkl. Fahrtzeit) ÷ Arbeitszeit.
-  // Echte Leerzeit drückt die Auslastung, Fahrtzeit nicht.
-  const thAgg = {}; // name -> {prod, wz, pat, fahrt, days:Set}
-  DATA.dates.forEach(d=>{
+  const dates = ctrlActiveDates();
+  const dset = new Set(dates);
+  // ── Auslastung pro Therapeut über den gewählten Zeitraum ──
+  // Auslastung = belegte Zeit ÷ volle Arbeitszeit; belegte Zeit (a.prod) = Arbeitszeit − echte Lücken
+  // (Termine + Blocker + Fahrt + Doku zählen als belegt), nur wirklich freie Lücken mindern.
+  const thAgg = {};
+  dates.forEach(d=>{
     const dayCells = DATA.cells.filter(c=>c.dateStr===d);
     const anal = analyzeDay(dayCells);
     anal.therapists.forEach(t=>{
       const a = thAgg[t.name] = thAgg[t.name] || {prod:0, wz:0, pat:0, fahrt:0, days:new Set()};
-      a.prod  += t.produktivMin||0;
-      a.wz    += t.wzMin||0;
-      a.pat   += t.patientMin||0;
-      a.fahrt += t.fahrtMin||0;
-      a.days.add(d);
+      a.prod += t.produktivMin||0; a.wz += t.wzMin||0; a.pat += t.patientMin||0; a.fahrt += t.fahrtMin||0; a.days.add(d);
     });
   });
   const thStats = Object.entries(thAgg).map(([name,a])=>({
     name,
-    avgAus: a.wz>0?Math.round(a.prod/a.wz*100):0,
+    avgAus: a.wz>0?Math.min(100,Math.round(a.prod/a.wz*100)):0,
     totalPat: a.pat, totalWz: a.wz, totalProd: a.prod, totalFahrt: a.fahrt,
     days: a.days.size
   })).sort((x,y)=>y.avgAus-x.avgAus).filter(t=>t.totalWz>0);
-  
+
   const overallAus = thStats.length ? Math.round(thStats.reduce((s,t)=>s+t.avgAus,0)/thStats.length) : 0;
   const totalTermine = new Set();
-  DATA.cells.forEach(c=>{if(c.termIdent && c.belegt && c.belArt==='R')totalTermine.add(c.termIdent);});
-  
-  let h = `<div class="summary">
-    <h2>Praxis-Controlling · ${DATA.dates.length} Tag${DATA.dates.length>1?'e':''}</h2>
+  DATA.cells.forEach(c=>{ if(dset.has(c.dateStr) && c.termIdent && c.belegt && c.belArt==='R') totalTermine.add(c.termIdent); });
+
+  let h = periodSelectorHTML();
+  h += `<div class="summary">
+    <h2>Praxis-Controlling · ${ctrlPeriodLabel()}</h2>
     <div class="sg">
       <div class="si"><div class="si-l">ø Auslastung</div><div class="si-v">${overallAus}%</div><div class="si-s">über alle Therapeuten</div></div>
       <div class="si"><div class="si-l">Termine total</div><div class="si-v">${totalTermine.size}</div><div class="si-s">Rezept-Patienten</div></div>
@@ -2242,93 +2386,54 @@ function renderControlling(){
       <div class="si"><div class="si-l">Beste Ausl.</div><div class="si-v">${thStats[0]?.avgAus||0}%</div><div class="si-s">${thStats[0]?.name||'-'}</div></div>
     </div>
   </div>`;
-  
+
   h += `<div class="st">📊 Auslastung pro Therapeut</div>`;
-  h += `<div class="ausl-card" style="margin-bottom:16px"><h4>Durchschnitt über alle Tage</h4>`;
-  thStats.forEach(t=>{
-    const color = t.avgAus>=90?'var(--teal)':t.avgAus>=80?'var(--amber)':'var(--accent)';
-    h += `<div class="ausl-row">
-      <div class="ausl-label">${t.name}</div>
-      <div class="ausl-bar"><div class="ausl-fill" style="width:${t.avgAus}%;background:${color}">${t.avgAus}%</div></div>
-      <div class="ausl-val" title="Patientenzeit ${Math.round(t.totalPat)} min · Fahrtzeit ${Math.round(t.totalFahrt)} min · Arbeitszeit ${Math.round(t.totalWz)} min">${Math.round(t.totalProd)}/${Math.round(t.totalWz)}min${t.totalFahrt>0?` · 🚗${Math.round(t.totalFahrt)}`:''}</div>
-    </div>`;
-  });
+  h += `<div class="ausl-card" style="margin-bottom:16px"><h4>${ctrlPeriodLabel()}</h4>`;
+  if(thStats.length){
+    thStats.forEach(t=>{
+      const color = t.avgAus>=90?'var(--teal)':t.avgAus>=80?'var(--amber)':'var(--accent)';
+      h += `<div class="ausl-row">
+        <div class="ausl-label">${t.name}</div>
+        <div class="ausl-bar"><div class="ausl-fill" style="width:${t.avgAus}%;background:${color}">${t.avgAus}%</div></div>
+        <div class="ausl-val" title="Belegte Zeit ${Math.round(t.totalProd)} min ÷ Arbeitszeit ${Math.round(t.totalWz)} min · davon Fahrt/Blocker/Doku ${Math.round(t.totalFahrt)} min (zählt als belegt) · nur echte Lücken mindern">${Math.round(t.totalProd)}/${Math.round(t.totalWz)}min${t.totalFahrt>0?` · 🚗${Math.round(t.totalFahrt)}`:''}</div>
+      </div>`;
+    });
+  } else { h += `<div class="empty" style="margin:0">Keine Arbeitszeit im gewählten Zeitraum.</div>`; }
   h += `</div>`;
-  
-  // Heilmittel-Verteilung
-  const hmCount = {};
+
+  // ═══ Abwesenheit (nur Abwesenheiten, keine Fahrtzeiten) über den gewählten Zeitraum ═══
+  const abwByTh = {};
   DATA.cells.forEach(c=>{
-    if(!c.heilmittel || c.belArt!=='R' || !c.termIdent)return;
-    if(!hmCount[c.heilmittel])hmCount[c.heilmittel] = new Set();
-    hmCount[c.heilmittel].add(c.termIdent);
+    if(!c.therapist || !dset.has(c.dateStr)) return;
+    if(isAbwesenheit(c.bezeichnung)) (abwByTh[c.therapist]=abwByTh[c.therapist]||new Set()).add(c.dateStr);
   });
-  const hmList = Object.entries(hmCount).map(([k,v])=>({name:k,count:v.size})).sort((a,b)=>b.count-a.count).slice(0,10);
-  const hmTotal = hmList.reduce((s,x)=>s+x.count,0);
-  
-  if(hmList.length){
-    h += `<div class="st">💊 Top Heilmittel (Verordnungen)</div>`;
-    h += `<div class="ausl-card">`;
-    hmList.forEach(hm=>{
-      const pct = Math.round(hm.count/hmTotal*100);
-      h += `<div class="ausl-row">
-        <div class="ausl-label">${hm.name}</div>
-        <div class="ausl-bar"><div class="ausl-fill" style="width:${pct}%;background:var(--primary)">${pct}%</div></div>
-        <div class="ausl-val">${hm.count}</div>
-      </div>`;
-    });
-    h += `</div>`;
-  }
-  
-  // Tageweise Übersicht
-  if(DATA.dates.length>1){
-    h += `<div class="st">📅 Tagesauslastung im Vergleich</div>`;
-    h += `<div class="ausl-card">`;
-    DATA.dates.forEach(d=>{
-      const dayCells = DATA.cells.filter(c=>c.dateStr===d);
-      const dayAnal = analyzeDayForControlling(dayCells);
-      const dd = new Date(d+'T12:00:00').toLocaleDateString('de-DE',{weekday:'short',day:'2-digit',month:'2-digit'});
-      const color = dayAnal.aus>=90?'var(--teal)':dayAnal.aus>=80?'var(--amber)':'var(--accent)';
-      h += `<div class="ausl-row">
-        <div class="ausl-label">${dd}</div>
-        <div class="ausl-bar"><div class="ausl-fill" style="width:${dayAnal.aus}%;background:${color}">${dayAnal.aus}%</div></div>
-        <div class="ausl-val">${dayAnal.termine} Term.</div>
-      </div>`;
-    });
-    h += `</div>`;
-  }
-
-  // ═══ Fahrtzeiten & Abwesenheit (Section 8) ═══
-  const cs = computeControllingStats();
-  const fahrtRows = Object.entries(cs.fahrtByTh).map(([n,m])=>({name:n,min:Math.round(m)})).sort((a,b)=>b.min-a.min);
-  const fahrtTotal = fahrtRows.reduce((s,x)=>s+x.min,0);
-  const abwRows = Object.entries(cs.abwByTh).map(([n,set])=>({name:n,tage:set.size})).sort((a,b)=>b.tage-a.tage);
+  const abwRows = Object.entries(abwByTh).map(([n,set])=>({name:n,tage:set.size})).sort((a,b)=>b.tage-a.tage);
   const abwTotal = abwRows.reduce((s,x)=>s+x.tage,0);
-  const von = DATA.dates[0] ? new Date(DATA.dates[0]+'T12:00:00').toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'numeric'}) : '–';
 
-  h += `<div class="st">🚗 Fahrtzeiten &amp; Abwesenheit <span class="sub">seit ${von}</span></div>`;
+  h += `<div class="st">🏖️ Abwesenheiten <span class="sub">Urlaub · Fortbildung · Krank</span></div>`;
   h += `<div class="sg" style="margin-bottom:14px">
-    <div class="si"><div class="si-l">🚗 Fahrtzeit gesamt</div><div class="si-v">${(fahrtTotal/60).toFixed(1)} h</div><div class="si-s">${fahrtTotal} min · alle MA</div></div>
-    <div class="si"><div class="si-l">🏖️ Abwesenheitstage</div><div class="si-v">${abwTotal}</div><div class="si-s">Urlaub/Fortbildung/Krank</div></div>
-    <div class="si"><div class="si-l">📄 Dokumentation</div><div class="si-v">–</div><div class="si-s">kein Datenfeld im Export</div></div>
-    <div class="si"><div class="si-l">👥 MA mit Fahrtzeit</div><div class="si-v">${fahrtRows.length}</div><div class="si-s">von ${thStats.length} aktiv</div></div>
+    <div class="si"><div class="si-l">Abwesenheitstage</div><div class="si-v">${abwTotal}</div><div class="si-s">im gewählten Zeitraum</div></div>
+    <div class="si"><div class="si-l">MA betroffen</div><div class="si-v">${abwRows.length}</div><div class="si-s">von ${thStats.length} aktiv</div></div>
+    <div class="si"><div class="si-l">ø pro MA</div><div class="si-v">${abwRows.length?(abwTotal/abwRows.length).toFixed(1):'0'}</div><div class="si-s">Tage</div></div>
   </div>`;
-
-  if(fahrtRows.length){
-    const maxF = fahrtRows[0].min || 1;
-    h += `<div class="ausl-card" style="margin-bottom:16px"><h4>🚗 Fahrtzeit pro Mitarbeiter</h4>`;
-    fahrtRows.forEach(t=>{
-      const pct = Math.round(t.min/maxF*100);
+  if(abwRows.length){
+    const maxA = abwRows[0].tage || 1;
+    h += `<div class="ausl-card" style="margin-bottom:16px"><h4>Abwesenheitstage pro Mitarbeiter</h4>`;
+    abwRows.forEach(t=>{
+      const pct = Math.round(t.tage/maxA*100);
       h += `<div class="ausl-row"><div class="ausl-label">${esc(t.name)}</div>
-        <div class="ausl-bar"><div class="ausl-fill" style="width:${pct}%;background:var(--amber)">${(t.min/60).toFixed(1)}h</div></div>
-        <div class="ausl-val">${t.min} min</div></div>`;
+        <div class="ausl-bar"><div class="ausl-fill" style="width:${pct}%;background:var(--primary)">${t.tage}</div></div>
+        <div class="ausl-val">${t.tage} Tag${t.tage===1?'':'e'}</div></div>`;
     });
     h += `</div>`;
+  } else {
+    h += `<div class="empty" style="margin-bottom:16px">Keine Abwesenheiten im gewählten Zeitraum.</div>`;
   }
 
-  // ═══ Wochenreport pro Mitarbeiter (Section 8) ═══
+  // ═══ Wochenreport pro Mitarbeiter (alle KW, Auslastung % je KW) ═══
+  const cs = computeControllingStats();
   const weekKeys = Object.keys(cs.weekTh).sort();
-  // Auslastung je Therapeut je KW
-  const thWeek = {}; // th -> week -> {pat,wz}
+  const thWeek = {};
   DATA.cells.forEach(c=>{
     if(!c.therapist || !c.azFlag) return;
     const wk = isoWeekKey(c.start);
@@ -2357,7 +2462,6 @@ function renderControlling(){
       weekKeys.forEach(wk=>{
         const rec = thWeek[n][wk];
         if(!rec || rec.times.size===0){
-          // Abwesenheit?
           const abw = cs.weekTh[wk] && [...cs.weekTh[wk].abw].some(k=>k.startsWith(n+'|'));
           h += `<td class="wr-cell wr-empty">${abw?'🏖️':'–'}</td>`;
         } else {
@@ -2373,76 +2477,20 @@ function renderControlling(){
     h += `</tbody></table></div>`;
   }
 
-  // ═══ 90-Tage Verfügbarkeits-Ampel (Section 9) ═══
-  const heute = new Date(); heute.setHours(0,0,0,0);
-  const bis = new Date(heute.getTime()+90*86400000);
-  // KW-weise: geplante Arbeitstage vs. Abwesenheitstage in den nächsten 90 Tagen
-  const fcWeeks = {};
-  DATA.cells.forEach(c=>{
-    if(!c.therapist) return;
-    if(c.start < heute || c.start > bis) return;
-    const wk = isoWeekKey(c.start);
-    if(!fcWeeks[wk]) fcWeeks[wk] = { work:new Set(), abw:new Set() };
-    const tdKey = c.therapist+'|'+c.dateStr;
-    if(isAbwesenheit(c.bezeichnung)) fcWeeks[wk].abw.add(tdKey);
-    if(c.azFlag) fcWeeks[wk].work.add(tdKey);
-  });
-  const fcKeys = Object.keys(fcWeeks).sort();
-  h += `<div class="st">🚦 90-Tage Verfügbarkeit <span class="sub">Ampel: 🟢 &lt;10% · 🟡 ≥10% · 🔴 ≥20% Abwesenheit</span></div>`;
-  if(fcKeys.length){
-    h += `<div class="fc-grid">`;
-    fcKeys.forEach(wk=>{
-      const w = fcWeeks[wk];
-      const arbeit = w.work.size, abw = w.abw.size;
-      const total = arbeit + abw;
-      const rate = total>0 ? abw/total : 0;
-      const amp = ampelForRate(rate);
-      h += `<div class="fc-card" style="border-top-color:${amp.c}">
-        <div class="fc-kw">${isoWeekLabel(wk)}</div>
-        <div class="fc-amp">${amp.ico}</div>
-        <div class="fc-rate" style="color:${amp.c}">${Math.round(rate*100)}%</div>
-        <div class="fc-det">${abw} Abw. · ${arbeit} Arbeit</div>
-      </div>`;
-    });
-    h += `</div>`;
-  } else {
-    h += `<div class="empty">Keine geplanten Termine/Abwesenheiten in den nächsten 90 Tagen im Export gefunden. Sobald Urlaub &amp; Fortbildung im Voraus in THEORG eingetragen sind, erscheinen sie hier KW-weise mit Ampel.</div>`;
-  }
+  // ═══ KW-Kapazität vs. Meridian (alle KW) ═══
+  const kd = ctrlKapazitaetData();
+  const ueber = kd.cap.filter(v=>v>kd.meridian*1.05).length;
+  const unter = kd.cap.filter(v=>v<kd.meridian*0.95).length;
+  h += `<div class="st">🗓️ Verfügbare Kapazität pro KW <span class="sub">Termine à ${CONFIG.slotMin} min · Meridian = Median über alle KW</span></div>`;
+  h += `<div class="sg" style="margin-bottom:12px">
+    <div class="si"><div class="si-l">Meridian (normal)</div><div class="si-v">${kd.meridian}</div><div class="si-s">Termine / Woche</div></div>
+    <div class="si"><div class="si-l">KW über Meridian</div><div class="si-v">${ueber}</div><div class="si-s">🏖️ Urlaub möglich</div></div>
+    <div class="si"><div class="si-l">KW unter Meridian</div><div class="si-v">${unter}</div><div class="si-s">⏱️ Überstunden nötig</div></div>
+    <div class="si"><div class="si-l">Kalenderwochen</div><div class="si-v">${kd.weeks.length}</div><div class="si-s">im Export</div></div>
+  </div>`;
+  h += `<div class="ausl-card" style="margin-bottom:16px">${ctrlKapazitaetChart(kd)}</div>`;
 
   document.getElementById('content').innerHTML = h;
-}
-
-function analyzeDayForControlling(cells){
-  const byTh = {};
-  cells.forEach(c=>{
-    if(!c.therapist)return;
-    if(!byTh[c.therapist])byTh[c.therapist] = [];
-    byTh[c.therapist].push(c);
-  });
-  
-  let totalPat = 0, totalWz = 0;
-  const termine = new Set();
-  Object.values(byTh).forEach(thCells=>{
-    const azWorkCells = thCells.filter(c=>c.azFlag);
-    if(!azWorkCells.length)return;
-    const uniqueTimes = new Set(azWorkCells.map(c=>c.start.getTime()));
-    const wzMin = uniqueTimes.size * 10;
-    
-    const termineMap = {};
-    thCells.forEach(c=>{
-      if(c.termIdent && c.belegt && c.belArt==='R'){
-        termine.add(c.termIdent);
-        if(!termineMap[c.termIdent]){termineMap[c.termIdent]={start:c.start,end:c.end};}
-        else {if(c.start<termineMap[c.termIdent].start)termineMap[c.termIdent].start=c.start;if(c.end>termineMap[c.termIdent].end)termineMap[c.termIdent].end=c.end;}
-      }
-    });
-    const merged = mergeRanges(Object.values(termineMap).map(t=>[t.start,t.end]));
-    const patMin = merged.reduce((s,r)=>s+(r[1]-r[0])/60000,0);
-    totalPat += patMin;
-    totalWz += wzMin;
-  });
-  
-  return {aus: totalWz>0?Math.round(totalPat/totalWz*100):0, termine:termine.size};
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -3518,6 +3566,7 @@ const SP = {
 };
 
 let msalApp = null, spSiteId = null, spByLicense = {}, spRefreshTimer = null;
+let spLocations = [], spCurrentLoc = null;   // Standort-Ordner (ein Ordner pro Standort)
 
 function msStatus(t){ const e=document.getElementById('msStatus'); if(e) e.textContent = t||''; }
 
@@ -3578,24 +3627,83 @@ async function connectSharePoint(){
     const site = await graphGet('/sites/'+SP.hostname+':'+SP.sitePath, token);
     spSiteId = site.id;
     autoRegisterMe();   // eingeloggten MS-Nutzer automatisch als „ich" übernehmen
-    msStatus('Suche Export-Dateien …');
-    const listing = await graphGet('/sites/'+spSiteId+'/drive/root:/'+encodeURI(SP.folderPath)+':/children?$top=999&$select=name,id,size,lastModifiedDateTime', token);
-    const csvs = (listing.value||[]).filter(f=>/\.csv$/i.test(f.name));
-    if(!csvs.length){ msStatus('⚠️ Keine CSV im Ordner gefunden.'); btn.disabled=false; return; }
-    spByLicense = buildLicenseMap(csvs);
-    const keys = Object.keys(spByLicense);
-    const multi = keys.length>1 || (keys.length===1 && keys[0]!=='__single__');
-    if(multi){
-      const sel = document.getElementById('spLocation');
-      sel.innerHTML = keys.map(k=>'<option value="'+k+'">'+(k==='__single__'?spByLicense[k].name:('Lizenz '+k))+'</option>').join('');
-      document.getElementById('spPicker').style.display='block';
-      sel.onchange = ()=>loadSpFile(spByLicense[sel.value]);
+    msStatus('Suche Standorte …');
+    const listing = await graphGet('/sites/'+spSiteId+'/drive/root:/'+encodeURI(SP.folderPath)+':/children?$top=999&$select=name,id,size,folder,lastModifiedDateTime', token);
+    const items = listing.value||[];
+    const folders = items.filter(f=>f.folder);              // je Unterordner = ein Standort
+    const rootCsvs = items.filter(f=>/\.csv$/i.test(f.name)); // lose CSVs direkt im Ordner (Alt-Struktur)
+
+    if(folders.length){
+      // ── Standort-pro-Ordner ─────────────────────────────
+      spLocations = folders
+        .map(f=>({ name:f.name, id:f.id }))
+        .sort((a,b)=>a.name.localeCompare(b.name,'de'));
+      renderLocationPickers();
+      await loadSpLocation(spLocations[0]);
+    } else if(rootCsvs.length){
+      // ── Alt-Struktur: lose CSVs, Gruppierung per Dateiname-Lizenz ──
+      spLocations = [];
+      spByLicense = buildLicenseMap(rootCsvs);
+      const keys = Object.keys(spByLicense);
+      const multi = keys.length>1 || (keys.length===1 && keys[0]!=='__single__');
+      if(multi){
+        const sel = document.getElementById('spLocation');
+        sel.innerHTML = keys.map(k=>'<option value="'+k+'">'+(k==='__single__'?spByLicense[k].name:('Lizenz '+k))+'</option>').join('');
+        document.getElementById('spPicker').style.display='block';
+        sel.onchange = ()=>loadSpFile(spByLicense[sel.value]);
+      }
+      await loadSpFile(spByLicense[keys[0]]);
+    } else {
+      msStatus('⚠️ Keine Standort-Ordner oder CSV-Dateien gefunden.'); btn.disabled=false; return;
     }
-    await loadSpFile(spByLicense[keys[0]]);
   }catch(e){
     console.error(e);
     msStatus('⚠️ Fehler: '+e.message);
     btn.disabled = false;
+  }
+}
+
+// Standort-Dropdowns (Login-Screen + Header) mit den gefundenen Ordnern füllen
+function renderLocationPickers(){
+  if(!spLocations.length) return;
+  const opts = spLocations.map(l=>'<option value="'+l.id+'">'+l.name+'</option>').join('');
+
+  const up = document.getElementById('spLocation');
+  if(up){ up.innerHTML = opts; up.onchange = ()=>{ const l=spLocations.find(x=>x.id===up.value); if(l) loadSpLocation(l); }; }
+  const picker = document.getElementById('spPicker'); if(picker) picker.style.display='block';
+
+  const hdr = document.getElementById('hdrLocation');
+  if(hdr){
+    hdr.innerHTML = opts;
+    hdr.style.display = spLocations.length>1 ? 'inline-block' : 'none';
+    hdr.onchange = ()=>{ const l=spLocations.find(x=>x.id===hdr.value); if(l) loadSpLocation(l); };
+  }
+}
+
+// Beide Dropdowns auf den aktuell geladenen Standort setzen
+function syncLocationPickers(){
+  if(!spCurrentLoc) return;
+  const up = document.getElementById('spLocation'); if(up) up.value = spCurrentLoc.id;
+  const hdr = document.getElementById('hdrLocation'); if(hdr) hdr.value = spCurrentLoc.id;
+}
+
+// CSVs eines Standort-Ordners auflisten und die neueste laden
+async function loadSpLocation(loc){
+  try{
+    spCurrentLoc = loc;
+    syncLocationPickers();
+    const token = await getToken();
+    msStatus('Lade Standort „'+loc.name+'" …');
+    const listing = await graphGet('/sites/'+spSiteId+'/drive/items/'+loc.id+'/children?$top=999&$select=name,id,size,@microsoft.graph.downloadUrl,lastModifiedDateTime', token);
+    const csvs = (listing.value||[]).filter(f=>/\.csv$/i.test(f.name));
+    if(!csvs.length){ msStatus('⚠️ Keine CSV im Standort „'+loc.name+'".'); return; }
+    // neueste Datei (Lizenz-Schema, sonst lastModified)
+    const map = buildLicenseMap(csvs);
+    const newest = Object.values(map).sort((a,b)=>String(b._stamp).localeCompare(String(a._stamp)))[0];
+    await loadSpFile(newest);
+  }catch(e){
+    console.error(e);
+    msStatus('⚠️ Fehler beim Laden des Standorts: '+e.message);
   }
 }
 
@@ -3616,7 +3724,10 @@ async function loadSpFile(f){
     }
     ingestCSVBytes(new Uint8Array(buf), f.name);
     if(spRefreshTimer) clearTimeout(spRefreshTimer);
-    spRefreshTimer = setTimeout(()=>{ if(spSiteId) connectSharePoint(); }, 30*60*1000); // Auto-Refresh 30 Min
+    spRefreshTimer = setTimeout(()=>{
+      if(spCurrentLoc){ loadSpLocation(spCurrentLoc); }   // aktuellen Standort neu laden
+      else if(spSiteId){ connectSharePoint(); }
+    }, 30*60*1000); // Auto-Refresh 30 Min
   }catch(e){
     console.error(e);
     msStatus('⚠️ Fehler beim Laden: '+e.message);

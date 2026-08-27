@@ -2474,49 +2474,57 @@ function ctrlKapazitaetChart(data){
     grid+=`<line x1="${padL}" y1="${yy.toFixed(1)}" x2="${W-padR}" y2="${yy.toFixed(1)}" stroke="var(--border,#e5e7eb)" stroke-width="1"/>`;
     grid+=`<text x="${padL-6}" y="${(yy+3).toFixed(1)}" text-anchor="end" font-size="9" fill="var(--muted,#94a3b8)">${Math.round(val*CONFIG.slotMin/60)} h</text>`;
   }
-  // Balken + %-Labels + X-Labels
+  // Balken + X-Labels · Zahlen erscheinen per Klick auf einen Balken (übersichtlicher, alles in Stunden)
   const todayWk = isoWeekKey(new Date());
   let bars='', pctlab='', xlab=''; const showEvery=n<=22?1:2;
-  const showPct = n<=30;   // bei sehr vielen KW die %-Zahlen ausdünnen
   weeks.forEach((w,i)=>{
     const v=cap[i], x=(Xc(i)-bw/2), y=Y(v), hgt=Math.max(0,(H-padB)-y);
     const isToday=w===todayWk;
+    const isSel = ctrlKapSel===w;
     const dev = refMax>0 ? (v-refMax)/refMax*100 : 0;   // Abweichung von der maximalen Kapazität in %
     const adev = Math.abs(dev);
-    const diff = v - refMax;                                             // exaktes Defizit zur Max-Kapazität in Terminen
-    const diffH = Math.round(Math.abs(diff)*CONFIG.slotMin/60);          // dasselbe in Stunden
+    const diffH = Math.round((v-refMax)*CONFIG.slotMin/60);              // Defizit zur Max-Kapazität in Stunden
     const col = adev<=gT ? 'var(--teal)' : adev<=gE ? 'var(--amber)' : 'var(--accent)';
     const ampel = adev<=gT ? `beobachten (bis ${gT}%)` : adev<=gE ? `handeln (${gT}–${gE}%)` : `🚨 Notstand (über ${gE}%)`;
-    const richtung = diff<0 ? `⏱️ es fehlen ${-diff} Termine (${diffH} h) zur Max-Kapazität` : 'volle Kapazität erreicht';
+    const richtung = diffH<0 ? `⏱️ es fehlen ${-diffH} h zur Max-Kapazität` : 'volle Kapazität erreicht';
     const pct = `${dev>0?'+':''}${Math.round(dev)}%`;
-    const diffLab = `${diff>0?'+':diff<0?'−':''}${Math.abs(diff)}`;
-    const tag = `${pct} · ${ampel} · ${richtung}`;
-    bars+=`<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${hgt.toFixed(1)}" rx="3" fill="${col}"${isToday?' stroke="var(--dark,#0f172a)" stroke-width="2"':''}><title>${w}: ${v} Termine · ${capH[i]} h Kapazität · ${tag}${isToday?' · aktuelle KW':''}</title></rect>`;
-    // Über dem Balken: exaktes Defizit/Puffer in Terminen (fett) + %-Zahl darüber, in der Ampelfarbe
-    if(showPct && (i%showEvery===0 || i===n-1 || isToday)){
+    const diffLab = `${diffH>0?'+':diffH<0?'−':''}${Math.abs(diffH)} h`;
+    bars+=`<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${hgt.toFixed(1)}" rx="3" fill="${col}" style="cursor:pointer" onclick="ctrlKapSelect('${w}')"${(isToday||isSel)?' stroke="var(--dark,#0f172a)" stroke-width="2"':''}><title>${w}: ${capH[i]} h Kapazität · ${pct} · ${ampel} · ${richtung}${isToday?' · aktuelle KW':''}</title></rect>`;
+    // Zahlen nur am angeklickten Balken (und 📍-Markierung an der aktuellen KW)
+    if(isSel){
       const yBase = isToday ? y-16 : y-5;
-      pctlab+=`<text x="${Xc(i).toFixed(1)}" y="${yBase.toFixed(1)}" text-anchor="middle" font-size="8.5" font-weight="800" fill="${col}">${diffLab}</text>`;
-      pctlab+=`<text x="${Xc(i).toFixed(1)}" y="${(yBase-9).toFixed(1)}" text-anchor="middle" font-size="7.5" font-weight="700" fill="${col}" opacity=".75">${pct}</text>`;
+      pctlab+=`<text x="${Xc(i).toFixed(1)}" y="${yBase.toFixed(1)}" text-anchor="middle" font-size="9" font-weight="800" fill="${col}" style="pointer-events:none">${diffLab}</text>`;
+      pctlab+=`<text x="${Xc(i).toFixed(1)}" y="${(yBase-10).toFixed(1)}" text-anchor="middle" font-size="8" font-weight="700" fill="${col}" opacity=".8" style="pointer-events:none">${pct}</text>`;
     }
-    if(isToday){ pctlab+=`<text x="${Xc(i).toFixed(1)}" y="${(y-5).toFixed(1)}" text-anchor="middle" font-size="9" font-weight="800" fill="var(--dark,#0f172a)">📍heute</text>`; }
+    if(isToday){ pctlab+=`<text x="${Xc(i).toFixed(1)}" y="${(y-5).toFixed(1)}" text-anchor="middle" font-size="9" font-weight="800" fill="var(--dark,#0f172a)" style="pointer-events:none">📍heute</text>`; }
     if(i%showEvery===0 || i===n-1 || isToday){ xlab+=`<text x="${Xc(i).toFixed(1)}" y="${H-padB+16}" text-anchor="middle" font-size="8.5" font-weight="${isToday?'800':'400'}" fill="${isToday?'var(--dark,#0f172a)':'var(--muted,#94a3b8)'}">${w.replace(/^\d{4}-/,'')}</text>`; }
   });
-  // Max-Kapazitäts-Linie (Termine + Stunden)
+  // Max-Kapazitäts-Linie (Stunden)
   const my=Y(refMax);
   const merLine=`<line x1="${padL}" y1="${my.toFixed(1)}" x2="${W-padR}" y2="${my.toFixed(1)}" stroke="var(--dark,#0f172a)" stroke-width="2" stroke-dasharray="7 4"/>`
-    + `<text x="${W-padR}" y="${(my-6).toFixed(1)}" text-anchor="end" font-size="10" font-weight="800" fill="var(--dark,#0f172a)">Max. Kapazität ${refMax} Termine · ${refMaxH} h</text>`;
+    + `<text x="${W-padR}" y="${(my-6).toFixed(1)}" text-anchor="end" font-size="10" font-weight="800" fill="var(--dark,#0f172a)">Max. Kapazität ${refMaxH} h</text>`;
   // Echte Ampel-Legende mit den Schwellen
   const dot = c => `<span style="width:11px;height:11px;border-radius:50%;background:${c};display:inline-block"></span>`;
-  const defSum = cap.reduce((a,v)=> a + (v<refMax ? refMax-v : 0), 0);
-  const defSumH = Math.round(defSum*CONFIG.slotMin/60);
+  const defSumH = Math.round(cap.reduce((a,v)=> a + (v<refMax ? refMax-v : 0), 0)*CONFIG.slotMin/60);
+  // Detail-Zeile zum angeklickten Balken
+  let selInfo='';
+  const si = weeks.indexOf(ctrlKapSel);
+  if(si>=0){
+    const sdH = Math.round((cap[si]-refMax)*CONFIG.slotMin/60);
+    const sPct = refMax>0 ? Math.round((cap[si]-refMax)/refMax*100) : 0;
+    selInfo = `<span style="display:inline-flex;align-items:center;gap:5px;font-weight:800;color:var(--dark)">▸ ${ctrlKapSel}: ${capH[si]} h Kapazität · ${sdH<0?'fehlen '+(-sdH)+' h':'volle Kapazität'} (${sPct>0?'+':''}${sPct}%)</span>`;
+  }
   const legend = `<div style="margin-bottom:6px;font-size:11px;color:var(--dark);display:flex;gap:14px;flex-wrap:wrap;align-items:center">
       <span style="display:inline-flex;align-items:center;gap:5px">${dot('var(--teal)')}bis ${gT}% unter Max → beobachten</span>
       <span style="display:inline-flex;align-items:center;gap:5px">${dot('var(--amber)')}${gT}–${gE}% → handeln</span>
       <span style="display:inline-flex;align-items:center;gap:5px">${dot('var(--accent)')}über ${gE}% → Notstand</span>
-      <span style="display:inline-flex;align-items:center;gap:5px;font-weight:800;color:var(--accent)">Σ Defizit zur Max-Kapazität: ${defSum} Termine (${defSumH} h)</span>
+      <span style="display:inline-flex;align-items:center;gap:5px;font-weight:800;color:var(--accent)">Σ Defizit zur Max-Kapazität: ${defSumH} h</span>
+      ${selInfo || '<span style="color:var(--muted)">💡 Balken anklicken für die genauen Zahlen</span>'}
     </div>`;
   return legend + `<svg viewBox="0 0 ${W} ${H}" width="100%" style="max-width:100%;height:auto;display:block">${grid}${bars}${pctlab}${merLine}${xlab}</svg>`;
 }
+let ctrlKapSel = null;   // angeklickte KW im Kapazitäts-Chart
+function ctrlKapSelect(w){ ctrlKapSel = (ctrlKapSel===w ? null : w); renderControlling(); }
 
 function renderControlling(){
   const dates = ctrlActiveDates();
@@ -2681,9 +2689,9 @@ function renderControlling(){
   kd.cap.forEach(v=>{ const ad = kd.refMax>0?Math.abs((v-kd.refMax)/kd.refMax*100):0;
     if(ad<=CONFIG.ampelGruen) ampGruen++; else if(ad<=CONFIG.ampelGelb) ampGelb++; else ampRot++; });
   const kapInfo = `<b>Verfügbare Kapazität pro KW</b><br>Je KW = alle bezahlten Arbeitszeit-Slots (AZ=J) aller Mitarbeiter, umgerechnet in Termine à ${CONFIG.slotMin} min bzw. Stunden.<br><b>Referenz = maximale Kapazität</b>: die höchste KW-Kapazität über <u>alle</u> Wochen im Export (angeschnittene Rand-KW ausgeklammert) — sie bleibt auch bei gefiltertem Zeitraum stabil.<br><b>Anzeige</b> folgt dem Zeitraum-Selektor oben: es werden nur die Kalenderwochen des gewählten Zeitraums gezeigt.<br><b>Ampel</b> nach Abweichung von der Max-Kapazität: bis ${CONFIG.ampelGruen}% beobachten (grün), ${CONFIG.ampelGruen}–${CONFIG.ampelGelb}% handeln (gelb), über ${CONFIG.ampelGelb}% Notstand (rot).`;
-  h += `<div class="st">🗓️ Verfügbare Kapazität pro KW <span class="sub">Termine à ${CONFIG.slotMin} min & Stunden · Ampel vs. Max-Kapazität</span> ${infoI(kapInfo)}</div>`;
+  h += `<div class="st">🗓️ Verfügbare Kapazität pro KW <span class="sub">in Stunden · Ampel vs. Max-Kapazität</span> ${infoI(kapInfo)}</div>`;
   h += `<div class="sg" style="margin-bottom:12px">
-    <div class="si"><div class="si-l">Max. Kapazität</div><div class="si-v">${kd.refMax}</div><div class="si-s">Termine · ${kd.refMaxH} h / Woche</div></div>
+    <div class="si"><div class="si-l">Max. Kapazität</div><div class="si-v">${kd.refMaxH} h</div><div class="si-s">pro Woche</div></div>
     <div class="si"><div class="si-l">🟢 beobachten</div><div class="si-v">${ampGruen}</div><div class="si-s">bis ${CONFIG.ampelGruen}% unter Max</div></div>
     <div class="si"><div class="si-l">🟡 handeln</div><div class="si-v">${ampGelb}</div><div class="si-s">${CONFIG.ampelGruen}–${CONFIG.ampelGelb}% unter Max</div></div>
     <div class="si"><div class="si-l">🔴 Notstand</div><div class="si-v">${ampRot}</div><div class="si-s">über ${CONFIG.ampelGelb}% unter Max</div></div>

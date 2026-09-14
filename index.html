@@ -3575,28 +3575,55 @@ function removePersonFromSlot(dateStr, timeBlock, name){
   const names = getSlotAssignment(dateStr, timeBlock).filter(n=>n!==name);
   setSlotAssignment(dateStr, timeBlock, names);
 }
-// ── Bereichs-Zuweisung pro Person pro Tag (Punkt 2) ──────────────────────────────
+// ── Bereichs-Zuweisung pro Person pro Tag (Punkt 2: TG/BO-Badge) ──────────────────────────────
 // Wer Tagesgeschäft hat → automatische Aufgaben-Blöcke TG
 // Wer Backoffice hat → automatische Aufgaben-Blöcke BO
-// Key: cki_area_YYYYMMDD_personName = 'tg' | 'bo' | ''
+// Key: cki_parea_YYYYMMDD_personName = 'tg' | 'bo' | '' (Personen-Bereich, nicht Task-Bereich)
+// HINWEIS: Alte Task-Bereich-Keys sind cki_area_YYYYMMDD_..., nicht zu verwechseln!
 function getTZAreaByDate(dateStr, personName){
   if(!personName) return '';
-  const key = 'cki_area_'+dateStr.replace(/-/g,'')+'_'+encodeURIComponent(personName);
+  const key = 'cki_parea_'+dateStr.replace(/-/g,'')+'_'+encodeURIComponent(personName);
   return localStorage.getItem(key) || '';
 }
 function setTZAreaByDate(dateStr, personName, area){
   if(!personName) return;
-  const key = 'cki_area_'+dateStr.replace(/-/g,'')+'_'+encodeURIComponent(personName);
+  const key = 'cki_parea_'+dateStr.replace(/-/g,'')+'_'+encodeURIComponent(personName);
   if(area==='tg'||area==='bo') localStorage.setItem(key, area);
   else localStorage.removeItem(key);
 }
+function cycleTZAreaByDate(dateStr, personName){
+  const cur = getTZAreaByDate(dateStr, personName);
+  const next = cur==='' ? 'tg' : (cur==='tg' ? 'bo' : '');
+  setTZAreaByDate(dateStr, personName, next);
+  renderAufgaben();
+}
+function tzAreaBadgeHtml(dateStr, personName){
+  const area = getTZAreaByDate(dateStr, personName);
+  const colors = {tg:'var(--primary)', bo:'#0891b2', '':'var(--muted)'};
+  const labels = {tg:'TG', bo:'BO', '':'?'};
+  const color = colors[area] || 'var(--muted)';
+  return '<span class="tz-badge" style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:4px;font-size:9.5px;font-weight:900;background:'+
+    color+'22;color:'+color+';border:1px solid '+color+';cursor:pointer;margin-left:4px" '+
+    'onclick="event.stopPropagation();cycleTZAreaByDate(\''+jsq(dateStr)+'\',\''+jsq(personName)+'\');return false" '+
+    'title="Bereich: '+(area==='tg'?'Tagesgeschäft':area==='bo'?'Backoffice':'nicht zugewiesen')+' · klicken zum ändern">'+
+    labels[area]+'</span>';
+}
 // Zähle unzugewiesene Aufgaben pro Block (TG/BO)
+// PUNKT 1: Wenn eine Person einen Bereich hat (TG/BO), zählen ihre Aufgaben als zugewiesen
 function countUnassignedTasksByArea(sections, area){
   let count = 0;
+  const team = getTeam();
+  const date = currentDate;
+  // Personen mit diesem Bereich für heute
+  const personsByArea = team.filter(m=>getTZAreaByDate(date,m.n)===area).map(m=>m.n);
+
   sections.forEach(s=>{
     if(s.key.startsWith('std_'+area) || (area==='tg'&&(s.key==='gapHeute'||s.key==='gapMorgen'||s.key==='ft'||s.key==='fvo')) || (area==='bo'&&s.key==='abr')){
       s.items.forEach(it=>{
-        if(!effectiveAssignee(it.id,s.key)) count++;
+        const assigned = effectiveAssignee(it.id,s.key);
+        // Zähle als zugewiesen, wenn: (1) jemand direkt zugeordnet ist ODER (2) die zugeordnete Person hat diesen Bereich heute
+        const isAssignedByPerson = assigned && personsByArea.includes(assigned);
+        if(!assigned && !isAssignedByPerson) count++;
       });
     }
   });
@@ -3838,10 +3865,11 @@ function renderSlotAssignment(){
   </div>`;
   return h;
 }
-// Team-Leiste (Namen verwalten, „ich bin", Filter)
+// Team-Leiste (Namen verwalten, „ich bin", Filter) + TG/BO-Bereichs-Badges
 function renderTeamBar(){
   const team=getTeam();
-  const chips=team.map(m=>'<span class="tm-chip"><span class="tm-dot" style="background:'+teamColor(m.n)+'"></span>'+esc(m.n)+'<span class="tm-x" title="Entfernen" onclick="removeTeamMember(\''+jsq(m.n)+'\')">×</span></span>').join('');
+  const date = currentDate;
+  const chips=team.map(m=>'<span class="tm-chip"><span class="tm-dot" style="background:'+teamColor(m.n)+'"></span>'+esc(m.n)+tzAreaBadgeHtml(date,m.n)+'<span class="tm-x" title="Entfernen" onclick="removeTeamMember(\''+jsq(m.n)+'\')">×</span></span>').join('');
   const meOpts=['<option value="">— ich bin …</option>'].concat(team.map(m=>'<option value="'+esc(m.n)+'"'+(getMe()===m.n?' selected':'')+'>'+esc(m.n)+'</option>')).join('');
   let h = `<div class="tm-bar">
     <span class="tm-label">👥 Team</span>
@@ -3896,6 +3924,18 @@ const TZ_BLOCKS = [
   {key:'nm', ico:'🌆', ttl:'Nachmittag',von:'16:30', bis:'20:30', h0:16.5, h1:20.5}
 ];
 function gapHourOf(g){ return g.start.getHours() + g.start.getMinutes()/60; }
+// PUNKT 2: Bestimme Zeitblock einer Rezept-Aufgabe basierend auf nächstem Termin
+// Wenn nächster Termin bekannt, ordne dem entsprechenden Block zu; sonst Standard
+function getRecipeTimeBlock(recipe, catkey){
+  // Wenn nächster Termin vorhanden (Date-Objekt), berechne Zeitblock
+  if(recipe && recipe.nextTermin && recipe.nextTermin instanceof Date){
+    const hr = recipe.nextTermin.getHours() + recipe.nextTermin.getMinutes()/60;
+    const blk = timeBlockOfHour(hr);
+    return blk; // vm, mi, oder nm
+  }
+  // Sonst: Standard-Zeitblock der Kategorie
+  return getCatTime(catkey) || 'vm';
+}
 
 // ── Standardaufgaben aus der Arbeitsaufteilung Physio CKI (Vorlage) ──────────
 // Täglich wiederkehrend; Abhak-Status ist über die Aufgaben-ID an das Datum
@@ -3954,16 +3994,19 @@ function renderAufgaben(){
       items: a.typA.map(r=>({
         id:'abr|'+r.rezeptNr,
         main:esc(r.name),
+        tdef: r.nextTermin ? timeBlockOfHour(r.nextTermin.getHours() + r.nextTermin.getMinutes()/60) : undefined,
         sub:`${r.erbracht}/${r.echteMenge} erbracht${r.heilmittel?' · '+esc(r.heilmittel):''}${r.tageSeitLetzterTermin!=null?' · seit '+r.tageSeitLetzterTermin+' Tagen':''}` })) },
     { key:'ft', ico:'📞', color:'var(--primary)', ttl:'Folgetermin vereinbaren', go:"gotoOffene('ohne')",
       items: a.typB.map(r=>({
         id:'ft|'+r.rezeptNr,
         main:esc(r.name),
+        tdef: r.nextTermin ? timeBlockOfHour(r.nextTermin.getHours() + r.nextTermin.getMinutes()/60) : undefined,
         sub:`${r.erbracht}/${r.echteMenge} · ${r.mobil?esc(r.mobil):'keine Nummer'}` })) },
     { key:'fvo', ico:'🔄', color:'var(--amber)', ttl:'Folge-VO anfordern', go:"gotoFolgeVO()",
       items: a.folgeVO.map(r=>({
         id:'fvo|'+r.rezeptNr,
         main:esc(r.name),
+        tdef: r.nextTermin ? timeBlockOfHour(r.nextTermin.getHours() + r.nextTermin.getMinutes()/60) : undefined,
         sub:`Serie fertig · Arzt: ${r.arzt?esc(r.arzt):'?'}` })) }
   ];
 
@@ -3989,6 +4032,96 @@ function renderAufgaben(){
   // ── Bereichsfilter anwenden (Alle / Backoffice / Tagesgeschäft) ──
   if(tzArea!=='alle'){
     allSections.forEach(s=>{ s.items = s.items.filter(it=>effectiveArea(it.id,s.key)===tzArea); });
+  }
+
+  // ── Spezialhandling für Bereichs-Ansichten (BO/TG) ──
+  // In BO/TG soll die Verwaltungs-UI nicht angezeigt werden
+  // Stattdessen: flache Aufgabenliste mit Personen-Header
+  if(tzArea!=='alle'){
+    h = '';  // Alles löschen, neu aufbauen
+    const date = currentDate;
+    const personsByArea = getTeam().filter(m=>getTZAreaByDate(date,m.n)===tzArea).map(m=>m.n);
+    const areaLabel = tzArea==='bo'?'Backoffice':'Tagesgeschäft';
+
+    h += `<div class="summary">
+      <h2>🎯 ${areaLabel} · ${dd}</h2>`;
+
+    if(personsByArea.length){
+      h += `<div style="margin-bottom:16px">
+        <div style="font-family:Montserrat;font-weight:700;font-size:12px;color:var(--muted);margin-bottom:8px">👥 Heute zugewiesen:</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">`;
+      personsByArea.forEach(name=>{
+        h += `<span class="tm-chip"><span class="tm-dot" style="background:${teamColor(name)}"></span>${esc(name)}</span>`;
+      });
+      h += `</div></div>`;
+    } else {
+      h += `<div style="background:var(--amber-bg);color:var(--amber);border-radius:8px;padding:12px;margin-bottom:16px;font-size:12px">
+        ⚠️ Noch niemand für heute zugewiesen — Zuweisung unter „Alle Aufgaben"
+      </div>`;
+    }
+
+    // Bereichsfortschritt anzeigen
+    if(tzArea==='bo'){
+      h += `<div style="margin-bottom:16px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <div style="font-family:Montserrat;font-weight:700;font-size:12px;color:var(--dark)">Fortschritt Backoffice</div>
+          <div style="font-family:Montserrat;font-weight:900;font-size:13px;color:#0891b2">${boDone} von ${boTotal} erledigt</div>
+        </div>
+        <div class="tz-bar"><div class="tz-fill" style="width:${Math.max(boPct,6)}%;background:#0891b2">${boPct}%</div></div>
+      </div>`;
+    } else {
+      h += `<div style="margin-bottom:16px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <div style="font-family:Montserrat;font-weight:700;font-size:12px;color:var(--dark)">Fortschritt Tagesgeschäft</div>
+          <div style="font-family:Montserrat;font-weight:900;font-size:13px;color:var(--primary)">${tgDone} von ${tgTotal} erledigt</div>
+        </div>
+        <div class="tz-bar"><div class="tz-fill" style="width:${Math.max(tgPct,6)}%;background:var(--primary)">${tgPct}%</div></div>
+      </div>`;
+    }
+
+    h += `</div>`;
+
+    // Bereichs-spezifische Modebar
+    h += tzAreaBar();
+
+    if(allSections.length && allSections.some(s=>s.items.length)){
+      const me = getMe();
+      const team = getTeam();
+      const renderSec = s=>{
+        let items = s.items;
+        if(tzOnlyMine && me) items = items.filter(it=>effectiveAssignee(it.id,s.key)===me);
+        if(!items.length) return;
+        const sDone = items.filter(it=>taskDone(it.id)).length;
+        const open = secOpen(s.key, s.defOpen);
+        h += `<div class="task-sec">
+          <div class="task-sec-head${open?' open':''}" style="border-left:4px solid ${s.color}" onclick="toggleSec('${s.key}',${s.defOpen?'true':'false'})">
+            <div class="task-sec-ttl"><span class="task-caret">▸</span> ${s.ico} ${s.ttl} <span class="task-sec-cnt">${sDone}/${items.length}</span></div>
+            <div style="display:flex;align-items:center;gap:8px;margin-left:auto">
+              ${team.length?`<span class="cat-asg">Standard: ${catAssignSelect(s.key)}</span>`:''}
+            </div>
+          </div>
+          <div class="task-list"${open?'':' style="display:none"'}>`;
+        items.forEach(it=>{
+          const d = taskDone(it.id);
+          h += `<div class="task${d?' done':''}" onclick="toggleTask('${jsq(it.id)}')">
+            <div class="task-cb">${d?'✓':''}</div>
+            <div class="task-body"><div class="task-main">${it.main}</div><div class="task-sub">${it.sub}</div></div>
+            ${it.tdef?'<span style="font-size:9px;color:var(--muted)">'+TZ_TIMES[it.tdef]+'</span>':''}
+            ${assigneeChip(it.id,s.key)}
+          </div>`;
+        });
+        h += `</div></div>`;
+      };
+      if(stdSections.some(s=>s.items.length)) h += `<div class="tz-grp">📌 Standardaufgaben · Arbeitsaufteilung ${areaLabel}</div>`;
+      stdSections.forEach(renderSec);
+      if(sections.some(s=>s.items.length)) h += `<div class="tz-grp">🗂️ Aufgaben aus dem Theorg-Export</div>`;
+      sections.forEach(renderSec);
+    } else {
+      h += `<div class="empty" style="background:var(--teal-bg);border:1px solid var(--teal);color:var(--teal)"><b>🎉 Keine Aufgaben im Bereich ${areaLabel}</b></div>`;
+    }
+
+    document.getElementById('content').innerHTML = h;
+    return;
   }
 
   // ── Punkt 4: Getrennte Fortschrittsbalken (Gesamt, TG, BO) ──
@@ -4073,22 +4206,24 @@ function renderAufgaben(){
     return;
   }
 
-  // ── Tagesablauf: offene Aufgaben automatisch nach Zeitblock gruppiert ──
-  const tb = {vm:[],mi:[],nm:[]};
-  allSections.forEach(s=>s.items.forEach(it=>{
-    if(!taskDone(it.id)) tb[effectiveTime(it.id,s.key,it.tdef)].push(it);
-  }));
-  h += `<div class="tz-blocks">`;
-  TZ_BLOCKS.forEach(b=>{
-    const list = tb[b.key]||[];
-    h += `<div class="tz-block">
-      <div class="tz-block-head">${b.ico} ${b.ttl} <span class="tz-block-time">${b.von}–${b.bis}</span></div>
-      <div class="tz-block-v">${list.length}<span class="tz-block-u"> offen</span></div>`;
-    list.slice(0,4).forEach(it=>{ h += `<div class="tz-slot">${it.main}</div>`; });
-    if(list.length>4) h += `<div class="tz-slot tz-more">+${list.length-4} weitere</div>`;
+  // ── Tagesablauf: offene Aufgaben automatisch nach Zeitblock gruppiert (nur in 'alle'-Ansicht) ──
+  if(tzArea==='alle'){
+    const tb = {vm:[],mi:[],nm:[]};
+    allSections.forEach(s=>s.items.forEach(it=>{
+      if(!taskDone(it.id)) tb[effectiveTime(it.id,s.key,it.tdef)].push(it);
+    }));
+    h += `<div class="tz-blocks">`;
+    TZ_BLOCKS.forEach(b=>{
+      const list = tb[b.key]||[];
+      h += `<div class="tz-block">
+        <div class="tz-block-head">${b.ico} ${b.ttl} <span class="tz-block-time">${b.von}–${b.bis}</span></div>
+        <div class="tz-block-v">${list.length}<span class="tz-block-u"> offen</span></div>`;
+      list.slice(0,4).forEach(it=>{ h += `<div class="tz-slot">${it.main}</div>`; });
+      if(list.length>4) h += `<div class="tz-slot tz-more">+${list.length-4} weitere</div>`;
+      h += `</div>`;
+    });
     h += `</div>`;
-  });
-  h += `</div>`;
+  }
 
   // ── Tagesabschluss (nach 20:30) ──
   const now = new Date();
@@ -4100,17 +4235,19 @@ function renderAufgaben(){
     </div>`;
   }
 
-  // ── Fortschrittsbalken (Tagesziel-Fortschritt) ──
-  h += `<div class="tz-wrap">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px">
-      <div style="font-family:Montserrat;font-weight:800;font-size:15px;color:var(--dark)">✅ Tagesziel-Fortschritt</div>
-      <div style="font-family:Montserrat;font-weight:900;font-size:16px;color:${barColor}">${done} von ${total} erledigt</div>
-    </div>
-    <div class="tz-bar"><div class="tz-fill" style="width:${Math.max(pct,6)}%;background:${barColor}">${pct}%</div></div>
-  </div>`;
+  // ── Fortschrittsbalken (Tagesziel-Fortschritt) – nur in 'alle'-Ansicht ──
+  if(tzArea==='alle'){
+    h += `<div class="tz-wrap">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px">
+        <div style="font-family:Montserrat;font-weight:800;font-size:15px;color:var(--dark)">✅ Tagesziel-Fortschritt</div>
+        <div style="font-family:Montserrat;font-weight:900;font-size:16px;color:${barColor}">${done} von ${total} erledigt</div>
+      </div>
+      <div class="tz-bar"><div class="tz-fill" style="width:${Math.max(pct,6)}%;background:${barColor}">${pct}%</div></div>
+    </div>`;
 
-  // ── Team-Leiste (Namen verwalten, „ich bin …", Filter „nur meine") ──
-  h += renderTeamBar();
+    // ── Team-Leiste (Namen verwalten, „ich bin …", Filter „nur meine") ──
+    h += renderTeamBar();
+  }
 
   if(total===0){
     h += (tzArea!=='alle')

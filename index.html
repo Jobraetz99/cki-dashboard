@@ -2670,8 +2670,21 @@ function renderControlling(){
   const auslInfo = `<b>Auslastung pro Therapeut</b><br>Auslastung = <b>belegte Zeit ÷ volle Arbeitszeit</b>.<br>• <b>Arbeitszeit</b> = alle bezahlten 10-Min-Slots (AZ=J), ohne Abzug.<br>• <b>Belegte Zeit</b> = Arbeitszeit minus wirklich leere Fenster. Termine, Blocker, Fahrtzeit und Doku zählen als belegt.<br>Nur echte Lücken (Slot, in dem gar nichts steht) senken den Wert.<br>⏱️ <b>Überstunden</b> = Patiententermine <b>außerhalb der geplanten Arbeitszeit</b> – also Termine in Slots, die laut Theorg nicht als Arbeitszeit (AZ) markiert sind. Pro 10-Min-Slot gezählt und über den Zeitraum summiert. Details beim Überfahren des Balkens.`;
   // Punkt 20: 87%-Auslastungsziel über 4 Wochen
   const TARGET_PCT = 87;
-  const kapData = ctrlKapazitaetChartData();
-  if(kapData.weeks && kapData.weeks.length){
+  // Kommende Wochen ab heutiger KW, Kapazität in h; Referenz = Max-KW-Kapazität (Randwochen ausgeklammert)
+  const kapData = (function(){
+    const kwSlots = {};
+    DATA.cells.forEach(c=>{ if(!c.azFlag || !c.therapist) return; const wk=isoWeekKey(c.start); (kwSlots[wk]=kwSlots[wk]||new Set()).add(c.therapist+'|'+c.start.getTime()); });
+    const allWeeks = Object.keys(kwSlots).sort();
+    const capAll = allWeeks.map(w=>kwSlots[w].size);          // 10-Min-Slots
+    let basis = capAll.slice(); if(allWeeks.length>4) basis = capAll.slice(1,-1);
+    const refMaxH = basis.length ? Math.max(...basis)*10/60 : 0;
+    const todayWk = isoWeekKey(new Date());
+    let idx0 = allWeeks.findIndex(w=> w>=todayWk);
+    const weeks=[], capH=[];
+    if(idx0>=0) for(let i=idx0; i<allWeeks.length && weeks.length<4; i++){ weeks.push(allWeeks[i]); capH.push(capAll[i]*10/60); }
+    return {weeks, capH, refMaxH};
+  })();
+  if(kapData.weeks && kapData.weeks.length && kapData.refMaxH>0){
     const forthcoming = [];
     const maxWeeks = Math.min(4, kapData.weeks.length);
     for(let i=0;i<maxWeeks;i++){
@@ -2895,6 +2908,7 @@ function collectRezepte(){
     r.istAbgerechnet = !!(r.quittungNr || r.rechnungNr || r.abrechnungsdatum) ||
       (r.bearbStatus && r.bearbStatus.toLowerCase().includes('abgerechn'));
     if(r.lastTerminDate) r.tageSeitLetzterTermin = Math.floor((today-r.lastTerminDate)/86400000);
+    r.nextTermin = r.nextTerminDate || null;
     return r;
   });
   // Folge-Verordnung vorhanden? = neueres Rezept für denselben Patienten existiert
@@ -4034,11 +4048,31 @@ function renderAufgaben(){
     allSections.forEach(s=>{ s.items = s.items.filter(it=>effectiveArea(it.id,s.key)===tzArea); });
   }
 
+  // ── Punkt 4: Getrennte Fortschrittsbalken (Gesamt, TG, BO) ──
+  let total=0, done=0, tgTotal=0, tgDone=0, boTotal=0, boDone=0;
+  allSections.forEach(s=>s.items.forEach(it=>{
+    const isDone = taskDone(it.id);
+    total++; if(isDone) done++;
+    // Tagesgeschäft: std_tg, gaps, ft, fvo
+    if(s.key==='std_tg'||s.key==='gapHeute'||s.key==='gapMorgen'||s.key==='ft'||s.key==='fvo'){
+      tgTotal++; if(isDone) tgDone++;
+    }
+    // Backoffice: std_bo, abr
+    if(s.key==='std_bo'||s.key==='abr'){
+      boTotal++; if(isDone) boDone++;
+    }
+  }));
+  const pct = total>0 ? Math.round(done/total*100) : 100;
+  const tgPct = tgTotal>0 ? Math.round(tgDone/tgTotal*100) : 100;
+  const boPct = boTotal>0 ? Math.round(boDone/boTotal*100) : 100;
+  const allDone = total>0 && done===total;
+  const barColor = allDone ? 'var(--teal)' : 'var(--primary)';
+
   // ── Spezialhandling für Bereichs-Ansichten (BO/TG) ──
   // In BO/TG soll die Verwaltungs-UI nicht angezeigt werden
   // Stattdessen: flache Aufgabenliste mit Personen-Header
   if(tzArea!=='alle'){
-    h = '';  // Alles löschen, neu aufbauen
+    let h = '';  // eigener Aufbau für die Bereichs-Ansicht
     const date = currentDate;
     const personsByArea = getTeam().filter(m=>getTZAreaByDate(date,m.n)===tzArea).map(m=>m.n);
     const areaLabel = tzArea==='bo'?'Backoffice':'Tagesgeschäft';
@@ -4123,26 +4157,6 @@ function renderAufgaben(){
     document.getElementById('content').innerHTML = h;
     return;
   }
-
-  // ── Punkt 4: Getrennte Fortschrittsbalken (Gesamt, TG, BO) ──
-  let total=0, done=0, tgTotal=0, tgDone=0, boTotal=0, boDone=0;
-  allSections.forEach(s=>s.items.forEach(it=>{
-    const isDone = taskDone(it.id);
-    total++; if(isDone) done++;
-    // Tagesgeschäft: std_tg, gaps, ft, fvo
-    if(s.key==='std_tg'||s.key==='gapHeute'||s.key==='gapMorgen'||s.key==='ft'||s.key==='fvo'){
-      tgTotal++; if(isDone) tgDone++;
-    }
-    // Backoffice: std_bo, abr
-    if(s.key==='std_bo'||s.key==='abr'){
-      boTotal++; if(isDone) boDone++;
-    }
-  }));
-  const pct = total>0 ? Math.round(done/total*100) : 100;
-  const tgPct = tgTotal>0 ? Math.round(tgDone/tgTotal*100) : 100;
-  const boPct = boTotal>0 ? Math.round(boDone/boTotal*100) : 100;
-  const allDone = total>0 && done===total;
-  const barColor = allDone ? 'var(--teal)' : 'var(--primary)';
 
   // ── Punkt 3: Nicht-zugewiesen-Hinweis ──
   const unassignedTg = countUnassignedTasksByArea(allSections, 'tg');

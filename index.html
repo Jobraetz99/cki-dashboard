@@ -236,6 +236,11 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--dark);min
 .nr-mini[data-lf-sel]:hover{background:rgba(21,96,177,.05)}
 .nr-mini.lf-on{background:var(--primary-bg);border-color:var(--primary)}
 .nr-mini.lf-on .nr-mini-n::after{content:' 📞 im Leitfaden';font-size:9px;font-weight:700;color:var(--primary)}
+/* Leitfaden-Auswahl überall (Call 15.09.): Rezept-Karten, Fälle, Karteileichen */
+.pr[data-lf-sel],.ac[data-lf-sel]{cursor:pointer;transition:background .15s,box-shadow .15s}
+.pr[data-lf-sel]:hover,.ac[data-lf-sel]:hover{background:rgba(21,96,177,.05)}
+.pr.lf-on,.ac.lf-on{background:var(--primary-bg);box-shadow:0 0 0 2px var(--primary) inset;border-radius:12px}
+.pr.lf-on .pr-n::after,.ac.lf-on .ac-t::after{content:' 📞 im Leitfaden';font-size:9px;font-weight:700;color:var(--primary)}
 
 /* Offene Rezepte - Subgroups */
 .subgroup{margin-bottom:18px}
@@ -546,10 +551,12 @@ let currentTherapist = 'all';
 let selectedTherapists = null;
 let currentRezeptCat = 'nr';
 let currentNRFilter = 'all';
+let currentBlStFilter = 'alle';   // Punkt 8 (Call 15.09.): Status-Filter bei Blanko-Listen im Rezepte-Reiter
+let verlaufTab = 'tg';            // Punkt 11 (Call 15.09.): Rubrik im Verlauf-Reiter (tg/bo/sp)
 let currentOffeneFilter = 'w4';
 let currentFvoFilter = 'offen';
 let currentPotFilter = 'alle';
-let cki_offene2MonatFilter = localStorage.getItem("cki_offene2MonatFilter") !== "false";  // Punkt 17: 2-Monats-Filter an/aus
+let cki_offene2MonatFilter = localStorage.getItem("cki_offene2MonatFilter") !== "false";  // Punkt 7 (Call 15.09.): 1-Monats-Filter an/aus
 // ── Controlling: Zeitraum-Selektor ──
 let ctrlMode = 'zeitraum';          // 'heute' | 'woche' | 'zeitraum'
 let ctrlWeek = null;                // KW-Key (z.B. '2026-KW32') im Woche-Modus
@@ -1749,7 +1756,7 @@ function renderRezepte(){
   h += '<div class="rkpis">';
   const kpis = [
     {k:'nr',l:'🔥 Nachrücker',v:r.nr.length,co:'var(--fire)',s:'einplanbar'},
-    {k:'blanko',l:'💊 Auf Blanko-VO',v:r.blanko.length,co:'var(--purple)',s:'Rezept umstellen'},
+    {k:'blanko',l:'Auf Blanko-VO',v:r.blanko.length,co:'var(--purple)',s:'Rezept umstellen'},
     {k:'blankopot',l:'💎 Blanko-VO',v:r.blankopot.length,co:'var(--accent)',s:'nicht zu Ende geplant'},
     {k:'bvbpot',l:'🔼 BVB-Pot.',v:r.bvbpot.length,co:'var(--primary)',s:'Freq. nicht ausgeschöpft'},
     {k:'untertaktet',l:'🐌 Zu selten',v:r.untertaktet.length,co:'var(--amber)',s:'könnten öfter kommen'},
@@ -1771,6 +1778,7 @@ function renderRezepte(){
 function setRezeptCat(k){
   currentRezeptCat = k;
   currentNRFilter = 'all';
+  currentBlStFilter = 'alle';
   document.querySelectorAll('.rkpi').forEach(x=>x.classList.remove('active'));
   const el = document.getElementById('rk-'+k);
   if(el)el.classList.add('active');
@@ -1789,6 +1797,10 @@ function setNRFilter(f){
   currentNRFilter = f;
   showRezeptDetail(currentRezeptCat);
 }
+function setBlStFilter(f){
+  currentBlStFilter = f;
+  showRezeptDetail(currentRezeptCat);
+}
 
 // ── Status pro Patienten-Karte: Offen → In Bearbeitung → Erledigt ──
 // Team-synchron via lsSet. "Abgeschlossen" passiert zusätzlich automatisch,
@@ -1803,7 +1815,7 @@ function prStatusChip(cat,p){
   const key = prStatusKey(cat,p);
   const st = lsGet(key,'offen');
   const c = PR_STATUS[st] || PR_STATUS.offen;
-  return `<span class="pr-status ${c.cls}" onclick="cyclePrStatus('${encodeURIComponent(key)}')" title="Klicken: Offen → In Bearbeitung → Erledigt">${c.l}</span>`;
+  return `<span class="pr-status ${c.cls}" onclick="event.stopPropagation();cyclePrStatus('${encodeURIComponent(key)}')" title="Klicken: Offen → In Bearbeitung → Erledigt">${c.l}</span>`;
 }
 function prCardClass(cat,p){ return lsGet(prStatusKey(cat,p),'offen')==='done' ? ' pr-done' : ''; }
 function cyclePrStatus(encKey){
@@ -1828,18 +1840,27 @@ function groupRezepteByPatient(rezepte){
   return Array.from(groups.values()).sort((a,b)=>String(a.name).localeCompare(String(b.name)));
 }
 
-function renderRezeptGroup(group){
+function renderRezeptGroup(group, cat){
   const key = encodeURIComponent((group.name||"?")+"_"+(group.geb||"?"));
   const expanded = localStorage.getItem("cki_rezept_group_"+key)==="1";
+  // Status im Kopf (Call 15.09.): gleicher Status wie in der Backoffice-Aufgabe
+  const blType = cat==='blanko' ? 'um' : (cat==='blankopot' ? 'pl' : null);
+  let headStatus = '';
+  if(blType && group.rezepte.length===1 && group.rezepte[0].rezeptNr){
+    headStatus = blStatusSelect(blType, group.rezepte[0].rezeptNr);
+  } else if(blType){
+    headStatus = '<span style="font-size:9px;color:var(--muted);font-weight:600">Status je Rezept ▶</span>';
+  }
   let h = '<div class="rezept-group" style="margin-bottom:8px;border:1px solid var(--border);border-radius:12px;overflow:hidden">';
-  h += '<div class="rezept-group-head" style="background:var(--primary-bg);padding:12px 14px;cursor:pointer;display:flex;align-items:center;justify-content:space-between;font-weight:700" onclick="toggleRezeptGroupExpand(\''+key+'\')">';
+  h += '<div class="rezept-group-head" style="background:var(--primary-bg);padding:12px 14px;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:8px;font-weight:700" onclick="toggleRezeptGroupExpand(\''+key+'\')">';
   h += '<span>'+(expanded?'▼':'▶')+' '+esc(group.name)+'</span>';
   h += '<span style="font-size:10px;color:var(--muted);font-weight:600">'+(group.geb||'–')+'</span>';
+  h += headStatus;
   h += '<span style="background:var(--primary);color:#fff;border-radius:100px;padding:2px 8px;font-size:10px;font-weight:800">' + group.rezepte.length + '</span>';
   h += '</div>';
   if(expanded){
     h += '<div style="padding:0">';
-    group.rezepte.forEach(r=>{ h += renderRezeptRow(r, 'detail'); });
+    group.rezepte.forEach(r=>{ h += renderRezeptRow(r, 'detail', cat); });
     h += '</div>';
   }
   h += '</div>';
@@ -1853,9 +1874,10 @@ function toggleRezeptGroupExpand(key){
 }
 
 function showRezeptDetail(k){
+  currentRezeptCat = k;
   const rez = analyzeRezepteFull(null, DATA.cells, {allActive:true});
 
-  const titles = {nr:'🔥 Top-Nachrücker',bvb:'🏥 BVB/LVB-Patienten',blanko:'💊 Rezept auf Blankoverordnung umstellen · Schulter-Patienten',blankopot:'💎 Blanko-VO nicht zu Ende geplant',bvbpot:'🔼 BVB-Potenzial · Frequenz nicht ausgeschöpft',untertaktet:'🐌 Zu selten · könnten öfter kommen',all:'📋 Alle Patienten mit Rezept'};
+  const titles = {nr:'🔥 Top-Nachrücker',bvb:'🏥 BVB/LVB-Patienten',blanko:'Rezept auf Blankoverordnung umstellen · Schulter-Patienten',blankopot:'💎 Blanko-VO nicht zu Ende geplant',bvbpot:'🔼 BVB-Potenzial · Frequenz nicht ausgeschöpft',untertaktet:'🐌 Zu selten · könnten öfter kommen',all:'📋 Alle Patienten mit Rezept'};
   let items = rez[k];
 
   // Punkt 18: Rezepte pro Patient gruppieren (Name + Geburtsdatum Matching)
@@ -1865,7 +1887,28 @@ function showRezeptDetail(k){
   }
   const isNR = k==='nr';
   const isBP = k==='blankopot';
-  
+
+  // ── Punkt 8 + Status im Rezepte-Reiter (Call 15.09.): Blanko-Status filtern ──
+  const blType = k==='blanko' ? 'um' : (k==='blankopot' ? 'pl' : null);
+  let blFilterBar = '';
+  if(blType){
+    const stOf = p => getBlStatus(blType, p.rezeptNr);
+    const cnt = {alle:items.length, offen:0, ib:0, fertig:0};
+    items.forEach(p=>{ const s=stOf(p); if(s==='ib') cnt.ib++; else if(BL_DONE[blType].includes(s)) cnt.fertig++; else cnt.offen++; });
+    if(currentBlStFilter!=='alle'){
+      items = items.filter(p=>{
+        const s = stOf(p);
+        if(currentBlStFilter==='offen') return s==='' ;
+        if(currentBlStFilter==='ib') return s==='ib';
+        return BL_DONE[blType].includes(s);
+      });
+    }
+    blFilterBar = `<div class="nr-filters" style="margin-bottom:12px">`
+      + [['alle','Alle'],['offen','○ Offen'],['ib','◐ In Bearbeitung'],['fertig','✓ Fertig']]
+        .map(([f,l])=>`<button class="nr-filter${currentBlStFilter===f?' a':''}" onclick="setBlStFilter('${f}')">${l} (${cnt[f]})</button>`).join('')
+      + `</div>`;
+  }
+
   // Nachrücker-Filter
   if(isNR && currentNRFilter!=='all'){
     items = items.filter(p=>{
@@ -1878,7 +1921,8 @@ function showRezeptDetail(k){
   }
   
   let h = `<div class="d-t">${titles[k]} <span style="color:var(--muted);font-weight:600;font-size:12px">(${items.length})</span></div>`;
-  
+  h += blFilterBar;
+
   if(isNR){
     const allNR = rez.nr;
     h += `<div class="nr-filters">`;
@@ -1903,7 +1947,7 @@ function showRezeptDetail(k){
   } else if(point18Grouped){
     // Rezepte gruppieren
     const groups = groupRezepteByPatient(items);
-    groups.forEach(g=> h += renderRezeptGroup(g));
+    groups.forEach(g=> h += renderRezeptGroup(g, k));
   } else if(isBP){
     // BLANKO-VO NICHT ZU ENDE GEPLANT: gültige Blanko-VOs, die nicht durchgehend
     // mit 2×/Woche über die 16-Wochen-Gültigkeit verplant sind.
@@ -2028,7 +2072,7 @@ function showRezeptDetail(k){
       let badgesHtml = '';
       p.badges.forEach(b=>{badgesHtml += `<span class="pr-b ${b.c}">${b.t}</span>`;});
       
-      h += `<div class="pr${prCardClass(k,p)}">`;
+      h += `<div class="pr${prCardClass(k,p)}" data-lf-sel="${esc(p.name)}" onclick="selectLeitfadenPatient('${jsq(p.name)}','${jsq(p.mobil||'')}','${jsq(p.therapist||'')}','')">`;
       if(isNR)h += `<div class="sc">${p.score}</div>`;
       h += `<div class="pr-i">
         <div class="pr-n">${isNR?'#'+(i+1)+' ':''}${p.name} ${ageStr ? `<span style="color:var(--muted);font-size:9px;font-weight:600;margin-left:6px">${ageStr}</span>` : ''}</div>
@@ -2039,7 +2083,7 @@ function showRezeptDetail(k){
       </div>
       <div class="pr-bs">${badgesHtml}</div>
       ${prStatusChip(k,p)}
-      ${p.mobil?`<a href="tel:${p.mobil}" class="pr-tel">📞</a>`:''}
+      ${p.mobil?`<a href="tel:${p.mobil}" class="pr-tel" onclick="event.stopPropagation()">📞</a>`:''}
       </div>`;
     });
   }
@@ -2220,7 +2264,7 @@ function renderOffene(){
   const cntFor = t => basePool.filter(r=>r.tageSeitLetzterTermin>=t).length;
 
   // 6) Kandidaten nach gewähltem Schwellwert + zwei Anzeige-Gruppen
-  // Punkt 17: 2-Monats-Filter optional anwenden
+  // Punkt 7 (Call 15.09.): 1-Monats-Filter optional anwenden
   let basePoolFiltered = basePool;
   if(cki_offene2MonatFilter){
     basePoolFiltered = basePool.filter(r=>hasActiveTerminInLast60Days(r.rezeptNr, DATA.cells));
@@ -2257,13 +2301,13 @@ function renderOffene(){
 
   h += `<div class="search-wrap"><input type="text" id="ofSearch" placeholder="🔍 Patient suchen..." oninput="filterOffeneSearch()"></div>`;
 
-  // Punkt 17: 2-Monats-Filter Toggle
+  // Punkt 7 (Call 15.09.): 1-Monats-Filter Toggle (vorher 2 Monate)
   h += `<div style="background:var(--primary-bg);border:1px solid var(--primary);border-radius:10px;padding:12px;margin-bottom:14px">
     <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;font-weight:700;color:var(--primary)">
-      <input type="checkbox" ${true===(localStorage.getItem('cki_offene2MonatFilter')||'true')?'checked':''} onchange="cki_offene2MonatFilter=this.checked;localStorage.setItem('cki_offene2MonatFilter',this.checked);renderOffene()">
-      🚫 2-Monats-Filter (Altlasten ausblenden)
+      <input type="checkbox" ${cki_offene2MonatFilter?'checked':''} onchange="cki_offene2MonatFilter=this.checked;localStorage.setItem('cki_offene2MonatFilter',this.checked);renderOffene()">
+      🚫 1-Monats-Filter (Altlasten ausblenden)
     </label>
-    <div style="font-size:10px;color:var(--dark);margin-top:6px;margin-left:26px">Patienten ohne aktiven Termin seit >2 Monaten ausgeblendet</div>
+    <div style="font-size:10px;color:var(--dark);margin-top:6px;margin-left:26px">Patienten ohne aktiven Termin seit >1 Monat ausgeblendet</div>
   </div>`;
 
   h += `<div class="nr-filters" style="margin-bottom:14px">`;
@@ -2330,7 +2374,7 @@ function renderKarteileiche(r, typ){
     action = `<b style="color:${tColor}">📞 Anrufen!</b> Letzte Behandlung: ${lastDateStr}${r.tageSeitLetzterTermin?' (vor '+r.tageSeitLetzterTermin+' Tagen)':''}`;
   }
   
-  return `<div class="pr" style="border-left:3px solid ${tColor}">
+  return `<div class="pr" style="border-left:3px solid ${tColor}" data-lf-sel="${esc(r.name)}" onclick="selectLeitfadenPatient('${jsq(r.name)}','${jsq(r.mobil||'')}','${jsq(r.therapist||'')}','')">
     <div class="pr-i">
       <div class="pr-n">${r.name} ${ageStr ? `<span style="font-size:9px;color:var(--muted);font-weight:600;margin-left:6px">${ageStr}</span>` : ''} <span style="font-size:9px;color:${tColor};font-weight:700;margin-left:6px">${r.icd||'—'}</span></div>
       <div class="pr-d">
@@ -2340,7 +2384,7 @@ function renderKarteileiche(r, typ){
       </div>
       <div class="progress-mini"><div class="progress-mini-f" style="width:${pct}%;background:${tColor}"></div></div>
     </div>
-    ${r.mobil?`<a href="tel:${r.mobil}" class="pr-tel">📞 ${r.mobil}</a>`:''}
+    ${r.mobil?`<a href="tel:${r.mobil}" class="pr-tel" onclick="event.stopPropagation()">📞 ${r.mobil}</a>`:''}
   </div>`;
 }
 
@@ -2357,11 +2401,11 @@ function filterOffeneSearch(){
   });
 }
 
-function renderRezeptRow(r, type){
+function renderRezeptRow(r, type, cat){
   const pct = r.total ? Math.round(r.erbracht/r.total*100) : 0;
   const colors = {crit:'var(--fire)',warn:'var(--amber)',norm:'var(--green)',miss:'var(--accent)'};
   const c = colors[type]||'var(--muted)';
-  
+
   let next = '';
   if(r.nextTerminDate){
     const d = r.nextTerminDate;
@@ -2369,8 +2413,13 @@ function renderRezeptRow(r, type){
   } else {
     next = `<div class="pr-dt" style="color:var(--accent)">Kein Termin!</div>`;
   }
-  
-  return `<div class="pr">
+
+  // Call 15.09.: Blanko-Status auch hier pflegbar + Klick setzt Patient in den Telefonleitfaden
+  const blType = cat==='blanko' ? 'um' : (cat==='blankopot' ? 'pl' : null);
+  const statusSel = (blType && r.rezeptNr) ? blStatusSelect(blType, r.rezeptNr) : '';
+  const lfAttrs = ` data-lf-sel="${esc(r.name)}" onclick="selectLeitfadenPatient('${jsq(r.name)}','${jsq(r.mobil||'')}','${jsq(r.therapist||'')}','')"`;
+
+  return `<div class="pr"${lfAttrs}>
     <div class="pr-i">
       <div class="pr-n">${r.name}</div>
       <div class="pr-d">
@@ -2379,8 +2428,9 @@ function renderRezeptRow(r, type){
       </div>
       <div class="progress-mini"><div class="progress-mini-f" style="width:${pct}%;background:${c}"></div></div>
     </div>
+    ${statusSel}
     <div class="pr-t">${next}</div>
-    ${r.mobil?`<a href="tel:${r.mobil}" class="pr-tel">📞</a>`:''}
+    ${r.mobil?`<a href="tel:${r.mobil}" class="pr-tel" onclick="event.stopPropagation()">📞</a>`:''}
   </div>`;
 }
 
@@ -2918,8 +2968,13 @@ function collectPatienten(){
         patKey:k, name:(c.patVor+' '+c.patNach).trim(),
         geb:c.patGeb, mobil:'', mail:'', kasse:'',
         heilmittel:new Set(), icds:new Set(), hausbesuch:false,
-        rezepte:{}, istDauer:isDauerPatKey(k), therapist:c.therapist||''
+        rezepte:{}, istDauer:isDauerPatKey(k), therapist:c.therapist||'',
+        lastBelegt:null, lastPlan:null
       };
+    }
+    if(c.start){
+      if(!p.lastPlan || c.start>p.lastPlan) p.lastPlan = c.start;
+      if(c.belegt && (!p.lastBelegt || c.start>p.lastBelegt)) p.lastBelegt = c.start;
     }
     if(!p.mobil && c.patMobil) p.mobil=c.patMobil;
     if(!p.mail && c.patMail) p.mail=c.patMail;
@@ -3091,11 +3146,22 @@ function setPotFilter(f){ currentPotFilter=f; renderPotential(); }
 function renderPotential(){
   // Patienten mit Dauer-geeigneter Behandlungsart/Diagnose, die NOCH KEINE Maske D haben.
   // Logik: geeignete Behandlungsart + noch keine D-Maske = Potenzial Dauer.
+  // Punkt 9 (Call 15.09.): Stichtag = spätester wahrgenommener Termin (Export läuft der Realzeit hinterher)
+  let potStich=null;
+  DATA.cells.forEach(c=>{ if(c.belegt && c.start && (!potStich||c.start>potStich)) potStich=c.start; });
+  if(!potStich) potStich=new Date();
+  const potStT=potStich.getTime();
+  const DREI_WOCHEN=21*86400000;
   const kandidaten = [];
+  let inaktivRaus = 0;
   collectPatienten().forEach(p=>{
     if(p.istDauer) return;              // hat schon einen Dauerplan → kein Potenzial mehr
     const cats = patDauerKategorien(p);
     if(!cats.length) return;
+    // Punkt 9 (Call 15.09.): nur aktive Patienten – letzter Termin ≤ 3 Wochen her ODER Zukunftstermin gebucht
+    const aktiv = (p.lastBelegt && (potStT - p.lastBelegt.getTime()) <= DREI_WOCHEN)
+               || (p.lastPlan && p.lastPlan.getTime() > potStT);
+    if(!aktiv){ inaktivRaus++; return; }
     p.dauerCats = cats;
     p.nRez = Object.keys(p.rezepte).length;
     kandidaten.push(p);
@@ -3119,7 +3185,9 @@ function renderPotential(){
 
   h += `<div style="background:var(--primary-bg,#eef2ff);border:1px solid var(--primary);border-radius:12px;padding:12px 14px;margin-bottom:14px;font-size:11px;color:var(--dark)">
     <b style="color:var(--primary);font-family:Montserrat;font-weight:800">ℹ️ Logik:</b>
-    Angezeigt werden Patienten mit einer für einen Dauerplan geeigneten Behandlungsart oder Diagnose (LHB, BVB, Blanko, Privat, MLD 45/60, KG ZNS, Hausbesuch), die <b>noch keine Maske D</b> besitzen. Sobald ein Patient die Maske D erhält, verschwindet er automatisch aus dieser Liste.</div>`;
+    Angezeigt werden Patienten mit einer für einen Dauerplan geeigneten Behandlungsart oder Diagnose (LHB, BVB, Blanko, Privat, MLD 45/60, KG ZNS, Hausbesuch), die <b>noch keine Maske D</b> besitzen. Sobald ein Patient die Maske D erhält, verschwindet er automatisch aus dieser Liste.
+    <br><b style="color:var(--primary)">Aktiv-Filter:</b> Es zählen nur Patienten, die <b>in den letzten 3 Wochen</b> einen Termin hatten oder einen gebuchten Zukunftstermin haben – wer länger raus ist, ist meist nicht mehr in Behandlung (${inaktivRaus} ausgeblendet).
+    <br><b>Tipp:</b> Patient anklicken → Name wird unten in den Telefonleitfaden eingesetzt.</div>`;
 
   h += leitfadenBox('potential', 'Dauerplan anbieten', 'z.B.: „Frau/Herr … , da Sie regelmäßig zu uns kommen, können wir einen Dauerplan einrichten – dann sind Ihre Termine langfristig gesichert …"');
 
@@ -3142,7 +3210,7 @@ function renderPotential(){
     const age = p.geb ? Math.floor((Date.now()-new Date(p.geb).getTime())/(365.25*86400000)) : null;
     const tel = p.mobil ? `<a class="pr-tel" href="tel:${p.mobil.replace(/[^+\d]/g,'')}">📞 ${p.mobil}</a>` : '';
     const chips = p.dauerCats.map(c=>`<span class="cat-chip" style="background:${catColor[c]||'var(--muted)'}">${c}</span>`).join('');
-    h += `<div class="ac" style="border-left-color:var(--primary);cursor:default" data-name="${esc(p.name).toLowerCase()}">
+    h += `<div class="ac" style="border-left-color:var(--primary);cursor:pointer" data-name="${esc(p.name).toLowerCase()}" data-lf-sel="${esc(p.name)}" onclick="selectLeitfadenPatient('${jsq(p.name)}','${jsq(p.mobil||'')}','${jsq(p.therapist||'')}','')">
       <span style="font-size:16px">🎯</span>
       <div class="ac-b">
         <div class="ac-t">${esc(p.name)}${age?' · '+age+'J':''}</div>
@@ -3246,7 +3314,13 @@ function computeVerordnungsfaelle(){
     const restBeh = orient!=null ? Math.max(0, orient-genutzt) : null;
     const nochRezepte = (orient!=null && hoechst) ? Math.ceil(restBeh/hoechst) : null;
     const ausschoepf = orient ? Math.min(100, Math.round(genutzt/orient*100)) : null;
+    // Punkt 10 (Call 15.09.): aktuelles (= letztes) Rezept des Falls für „erst X von Y verplant"
+    // Y = Menge des AKTUELLEN Rezepts (6, 10, 12 …) – nur wenn plausibel (Sentinelwerte 100/1000 raus)
+    const curRez = chain[chain.length-1];
+    const curMenge = (curRez.menge>0 && curRez.menge<=30) ? curRez.menge : null;
+    const curVerplant = (curRez.erbracht||0) + (curRez.geplant||0);
     faelle.push({
+      curMenge, curVerplant,
       key, patKey:chain[0].patKey, name:chain[0].name, geb:chain[0].geb, mobil:chain[0].mobil,
       icd, gruppe, anzRez:chain.length, erbracht, geplant, genutzt, mengeRaw, lastRez, erstesRezept, datumFehlt,
       bvb: bvb?bvb.t:'', bvbName: bvb?bvb.n:'',
@@ -3351,12 +3425,25 @@ function renderFolgeVO(){
         + (f.hasFuture ? ` <span class="cat-chip" style="background:var(--teal)">📅 ${fmtShort(f.nextTermin)}</span>` : '');
       const pct = f.ausschoepf||0;
       const barCol = pct>=90?'var(--teal)':pct>=50?'var(--amber)':'var(--accent)';
-      // konkreter Handlungssatz
+      // Punkt 10 (Call 15.09.): „erst X von Y verplant" – Y = Menge des AKTUELLEN Rezepts, nicht die Katalog-Gesamtmenge
       let step='';
-      if(f.handlung==='folgevo') step = `<b style="color:var(--primary)">→ erst ${f.genutzt} von ${f.orient} verplant · noch ${f.restBeh} möglich · ca. ${f.nochRezepte} Folge-VO${f.nochRezepte>1?'s':''} nötig</b>`;
+      if(f.handlung==='folgevo'){
+        const aktuellesRezept = f.curMenge!=null
+          ? `erst <b>${Math.min(f.curVerplant,f.curMenge)} von ${f.curMenge}</b> des aktuellen Rezepts verplant`
+          : `aktuelles Rezept: <b>${f.curVerplant}</b> Termine verplant`;
+        step = `<b style="color:var(--primary)">→ ${aktuellesRezept} · insgesamt noch ${f.restBeh} Behandlung${f.restBeh!==1?'en':''} lt. Diagnose möglich</b>`;
+      }
       else step = `<b style="color:var(--teal)">→ alle ${f.orient} verplant – nichts zu tun</b>`;
+      // Punkt 10: VO-Bild (KISS): gefüllte Kästchen = bisherige VOs, leere = noch mögliche Folge-VOs
+      let voBild='';
+      if(f.handlung==='folgevo' && f.nochRezepte!=null){
+        const kD='<span style="display:inline-block;width:11px;height:11px;border-radius:3px;background:var(--primary);margin-right:3px;vertical-align:-1px"></span>';
+        const kL='<span style="display:inline-block;width:11px;height:11px;border-radius:3px;background:transparent;border:1.5px solid var(--primary);margin-right:3px;vertical-align:-1px;opacity:.55"></span>';
+        voBild = `<div class="ac-s" style="margin-bottom:4px">${kD.repeat(Math.min(f.anzRez,8))}${kL.repeat(Math.min(Math.max(f.nochRezepte,0),8))} <b>${f.anzRez}. VO</b> · noch <b style="color:var(--primary)">${f.nochRezepte} Folge-VO${f.nochRezepte!==1?'s':''} möglich</b></div>`;
+      }
       mitte = `<div class="ac-s" style="margin-bottom:3px">${step}</div>
-        <div class="ac-s" style="margin-bottom:4px">${f.anzRez} VO · <b>${f.genutzt} von ${f.orient} verplant</b>${f.geplant>0?' (davon '+f.geplant+' zukünftig)':''} · ${fallSpan}</div>
+        ${voBild}
+        <div class="ac-s" style="margin-bottom:4px">${f.anzRez} VO · <b>${f.genutzt} von ${f.orient} verplant</b> (gesamt lt. Diagnose)${f.geplant>0?' · davon '+f.geplant+' zukünftig':''} · ${fallSpan}</div>
         <div style="display:flex;align-items:center;gap:8px">
           <div style="flex:1;height:7px;background:var(--border,#e5e7eb);border-radius:100px;overflow:hidden">
             <div style="width:${pct}%;height:100%;background:${barCol};border-radius:100px"></div>
@@ -3364,13 +3451,13 @@ function renderFolgeVO(){
           <span style="font-family:Montserrat;font-weight:800;font-size:10px;color:${barCol};min-width:34px;text-align:right">${pct}%</span>
         </div>`;
     }
-    return `<div class="ac" style="cursor:default;border-left-color:${borderCol};align-items:flex-start;flex-wrap:wrap">
+    return `<div class="ac" style="border-left-color:${borderCol};align-items:flex-start;flex-wrap:wrap" data-lf-sel="${esc(f.name)}" onclick="selectLeitfadenPatient('${jsq(f.name)}','${jsq(f.mobil||'')}','','')">
       <div class="ac-b" style="min-width:60%">
         <div class="ac-t">${esc(f.name)}${age?' · '+age+'J':''} ${grpChip} <span style="color:var(--muted,#94a3b8);font-weight:600;font-size:10px">${esc(f.icd)}</span> ${handlungBadge}</div>
         ${mitte}
       </div>
       ${tel}
-      <button class="pr-tel" style="background:${sm.bg};color:${sm.c};border:none;cursor:pointer" onclick="cycleFallStatus('${jsq(f.key)}')">${sm.l} ⟳</button>
+      <button class="pr-tel" style="background:${sm.bg};color:${sm.c};border:none;cursor:pointer" onclick="event.stopPropagation();cycleFallStatus('${jsq(f.key)}')">${sm.l} ⟳</button>
     </div>`;
   };
 
@@ -3408,7 +3495,20 @@ function computeKpiSnapshot(){
   const erst1 = potentialOffen.filter(f=>f.anzRez===1);
   const ausgeschoepft = bewertbar.filter(f=>f.restBeh<=0);
   let erledigt=0; faelle.forEach(f=>{ if(getFallStatus(f.key)==='erledigt') erledigt++; });
+  // Punkt 11 (Call 15.09.): Blanko-Rezeptänderungen mitschreiben (z.B. "10 von 16 umgestellt")
+  let blUmGesamt=0, blUmAng=0, blUmAbg=0, blUmIb=0, blPlGesamt=0, blPlFertig=0, blPlIb=0;
+  try{
+    const bc = analyzeRezepteFull(null, DATA.cells, {allActive:true});
+    const seenU=new Set(), seenP=new Set();
+    (bc.blanko||[]).forEach(p=>{ if(!p.rezeptNr||seenU.has(p.rezeptNr))return; seenU.add(p.rezeptNr);
+      blUmGesamt++; const s=getBlStatus('um',p.rezeptNr);
+      if(s==='ang')blUmAng++; else if(s==='abg')blUmAbg++; else if(s==='ib')blUmIb++; });
+    (bc.blankopot||[]).forEach(p=>{ if(!p.rezeptNr||seenP.has(p.rezeptNr))return; seenP.add(p.rezeptNr);
+      blPlGesamt++; const s=getBlStatus('pl',p.rezeptNr);
+      if(s==='fertig')blPlFertig++; else if(s==='ib')blPlIb++; });
+  }catch(e){}
   return {
+    blUmGesamt, blUmAng, blUmAbg, blUmIb, blPlGesamt, blPlFertig, blPlIb,
     date: localDateStrG(stichtag),
     offeneFaelle: bewertbar.length,
     potentialOffen: potentialOffen.length,
@@ -3450,6 +3550,15 @@ function importKpiHistorie(input){
   };
   r.readAsText(file);
 }
+// ── Punkt 11 (Call 15.09.): Tagesziel-Historie (erledigte Aufgaben je Tag) ──
+function getTagesHist(){ const h=lsGet('cki_tz_hist', {}); return (h && typeof h==='object')?h:{}; }
+function recordTagesHist(date, o){
+  if(!date || !o) return;
+  const h=getTagesHist();
+  h[date]={ done:o.done||0, total:o.total||0, tgDone:o.tgDone||0, tgTotal:o.tgTotal||0, boDone:o.boDone||0, boTotal:o.boTotal||0,
+    pct: o.total>0?Math.round(o.done/o.total*100):100, ts:new Date().toISOString() };
+  lsSet('cki_tz_hist', h);
+}
 function clearKpiHistorie(){
   if(confirm('Wirklich die komplette lokale Kennzahlen-Historie in diesem Browser löschen? Am besten vorher exportieren.')){
     saveKpiHistorie({}); renderVerlauf();
@@ -3483,12 +3592,17 @@ function verlaufChart(hist, metrics, opts){
   return `<div style="margin-bottom:6px">${legend}</div>
     <svg viewBox="0 0 ${W} ${H}" width="100%" style="max-width:100%;height:auto;display:block">${grid}${paths}${xlab}</svg>`;
 }
+function setVerlaufTab(t){ verlaufTab = (t==='bo'||t==='sp') ? t : 'tg'; renderVerlauf(); }
 function renderVerlauf(){
   const hist=getKpiHistorie();
   const dates=Object.keys(hist).sort();
   const n=dates.length;
   const latest = n ? hist[dates[n-1]] : null;
   const prev   = n>1 ? hist[dates[n-2]] : null;
+  const tzh=getTagesHist();
+  const tzDates=Object.keys(tzh).sort();
+  const tzN=tzDates.length;
+  const tzLatest = tzN ? tzh[tzDates[tzN-1]] : null;
   const fmtDE = s => s ? s.slice(8,10)+'.'+s.slice(5,7)+'.'+s.slice(0,4) : '–';
   const delta = (a,b)=>{ if(b==null||typeof b!=='number'||typeof a!=='number') return ''; const d=a-b; if(d===0) return ` <span style="color:var(--muted);font-size:11px">±0</span>`; return ` <span style="color:var(--muted);font-size:11px">${d>0?'▲':'▼'}${Math.abs(d)}</span>`; };
 
@@ -3496,9 +3610,9 @@ function renderVerlauf(){
     <h2>📈 Verlauf · Kennzahlen-Historie</h2>
     <div class="sg">
       <div class="si"><div class="si-l">Erfasste Tage</div><div class="si-v">${n}</div><div class="si-s">Snapshots</div></div>
+      <div class="si"><div class="si-l">🎯 Tagesziel zuletzt</div><div class="si-v">${tzLatest?tzLatest.pct+'%':'–'}</div><div class="si-s">${tzLatest?tzLatest.done+' von '+tzLatest.total+' · '+fmtDE(tzDates[tzN-1]):'–'}</div></div>
       <div class="si"><div class="si-l">🎫 Potential offen</div><div class="si-v">${latest?latest.potentialOffen:'–'}${latest?delta(latest.potentialOffen, prev&&prev.potentialOffen):''}</div><div class="si-s">${latest?'Stand '+fmtDE(latest.date):'–'}</div></div>
       <div class="si"><div class="si-l">📈 Ausschöpfungsquote</div><div class="si-v">${latest?latest.quote+'%':'–'}${latest?delta(latest.quote, prev&&prev.quote):''}</div><div class="si-s">verplant / möglich</div></div>
-      <div class="si"><div class="si-l">✅ Erledigt</div><div class="si-v">${latest?latest.erledigt:'–'}${latest?delta(latest.erledigt, prev&&prev.erledigt):''}</div><div class="si-s">Fälle markiert</div></div>
     </div>
   </div>`;
 
@@ -3513,46 +3627,108 @@ function renderVerlauf(){
     <button class="nr-filter" onclick="clearKpiHistorie()">🗑️ Lokale Historie löschen</button>
   </div>`;
 
-  if(n===0){
-    h += `<div class="empty">Noch keine Verlaufsdaten. Der heutige Stand wird beim Laden automatisch erfasst – lade den Export an weiteren Tagen erneut, dann entsteht die erste Kurve.</div>`;
-    document.getElementById('content').innerHTML=h; return;
-  }
+  // ── Punkt 11 (Call 15.09.): Rubriken Tagesgeschäft / Backoffice / Schwerpunkte ──
+  const tabBtn = (t,lbl)=>`<button class="nr-filter${verlaufTab===t?' a':''}" style="${verlaufTab===t?'background:var(--primary);color:#fff;border-color:var(--primary);':''}font-weight:700" onclick="setVerlaufTab('${t}')">${lbl}</button>`;
+  h += `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
+    ${tabBtn('tg','📋 Tagesgeschäft')}${tabBtn('bo','🖥️ Backoffice')}${tabBtn('sp','⭐ Schwerpunkte')}
+  </div>`;
 
   const card = (title, sub, chart)=>`<div class="ausl-card" style="padding:14px 16px;margin-bottom:12px">
     <div style="font-family:Montserrat;font-weight:800;font-size:13px;color:var(--dark);margin-bottom:2px">${title}</div>
     <div style="font-size:10px;color:var(--muted);margin-bottom:8px">${sub}</div>${chart}</div>`;
 
-  h += card('Offene Verordnungsfälle &amp; Potential', 'Wie viele Fälle noch Behandlungspotential haben – und wie viele davon erst 1 VO bzw. schon ausgeschöpft.',
-    verlaufChart(hist, [
-      {key:'potentialOffen', label:'Potential offen', color:'var(--primary)'},
-      {key:'erst1', label:'erst 1 VO', color:'var(--accent)'},
-      {key:'ausgeschoepft', label:'ausgeschöpft', color:'var(--teal)'}
-    ]));
-  h += card('Ausschöpfungsquote (%)', 'Verplante Behandlungen im Verhältnis zur orientierenden Menge – höher = mehr Potential genutzt.',
-    verlaufChart(hist, [{key:'quote', label:'Ausschöpfung %', color:'var(--primary)'}], {yMax:100, suffix:'%'}));
-  h += card('Verplant vs. möglich (Behandlungen gesamt)', 'Summe verplanter Termine gegen die maximal möglichen laut Katalog.',
-    verlaufChart(hist, [
-      {key:'moeglich', label:'möglich', color:'var(--amber)'},
-      {key:'verplant', label:'verplant', color:'var(--primary)'}
-    ]));
-  h += card('Erledigte Aufgaben', 'Als „erledigt" markierte Verordnungsfälle über die Zeit.',
-    verlaufChart(hist, [{key:'erledigt', label:'erledigt', color:'var(--teal)'}]));
+  if(verlaufTab==='tg'){
+    // ═══ Rubrik Tagesgeschäft: Tagesziel-Erfüllung über die Zeit ═══
+    if(tzN===0){
+      h += `<div class="empty">Noch keine Tagesziel-Daten. Sobald im Tagesziel-Reiter Aufgaben abgehakt werden, wird der Stand hier pro Tag automatisch festgehalten.</div>`;
+    } else {
+      h += card('Tagesziel-Erfüllung (%)', 'Wie viel Prozent der Tagesaufgaben (Tagesgeschäft + Backoffice) am jeweiligen Tag erledigt wurden.',
+        verlaufChart(tzh, [{key:'pct', label:'erledigt %', color:'var(--primary)'}], {yMax:100, suffix:'%'}));
+      h += card('Erledigte Aufgaben pro Tag', 'Erledigte gegen die insgesamt anstehenden Aufgaben – getrennt nach Tagesgeschäft und Backoffice.',
+        verlaufChart(tzh, [
+          {key:'total', label:'Aufgaben gesamt', color:'var(--amber)'},
+          {key:'done', label:'erledigt', color:'var(--primary)'},
+          {key:'tgDone', label:'davon Tagesgeschäft', color:'var(--teal)'},
+          {key:'boDone', label:'davon Backoffice', color:'var(--accent)'}
+        ]));
+      const tzRows = tzDates.slice().reverse().map(d=>{ const s=tzh[d];
+        return `<tr>
+          <td style="padding:6px 8px;font-weight:700">${fmtDE(d)}</td>
+          <td style="padding:6px 8px;text-align:right;color:var(--primary);font-weight:700">${s.done} / ${s.total}</td>
+          <td style="padding:6px 8px;text-align:right">${s.tgDone} / ${s.tgTotal}</td>
+          <td style="padding:6px 8px;text-align:right">${s.boDone} / ${s.boTotal}</td>
+          <td style="padding:6px 8px;text-align:right;font-weight:700">${s.pct}%</td>
+        </tr>`; }).join('');
+      h += `<div class="ausl-card" style="padding:8px 6px;overflow-x:auto">
+        <table style="width:100%;border-collapse:collapse;font-size:11px">
+          <thead><tr style="border-bottom:2px solid var(--border);color:var(--muted)">
+            <th style="padding:6px 8px;text-align:left">Tag</th><th style="padding:6px 8px;text-align:right">Erledigt</th><th style="padding:6px 8px;text-align:right">Tagesgeschäft</th><th style="padding:6px 8px;text-align:right">Backoffice</th><th style="padding:6px 8px;text-align:right">Quote</th>
+          </tr></thead><tbody>${tzRows}</tbody></table></div>`;
+    }
+  } else if(verlaufTab==='bo'){
+    // ═══ Rubrik Backoffice: Rezeptänderungen (Blanko) + Rezept-Kennzahlen ═══
+    const cur = computeKpiSnapshot() || {};
+    const umFertig = (cur.blUmAng||0)+(cur.blUmAbg||0);
+    h += `<div class="sg" style="margin-bottom:12px">
+      <div class="si"><div class="si-l">📄 Auf Blanko umgestellt</div><div class="si-v">${cur.blUmAng||0} von ${cur.blUmGesamt||0}</div><div class="si-s">${cur.blUmIb||0} in Bearbeitung · ${cur.blUmAbg||0} abgelehnt</div></div>
+      <div class="si"><div class="si-l">💎 Zu Ende geplant</div><div class="si-v">${cur.blPlFertig||0} von ${cur.blPlGesamt||0}</div><div class="si-s">${cur.blPlIb||0} in Bearbeitung</div></div>
+      <div class="si"><div class="si-l">📄 Blanko-Aufgaben offen</div><div class="si-v">${Math.max(0,(cur.blUmGesamt||0)-umFertig) + Math.max(0,(cur.blPlGesamt||0)-(cur.blPlFertig||0))}</div><div class="si-s">Umstellen + zu Ende planen</div></div>
+    </div>`;
+    if(n===0){
+      h += `<div class="empty">Noch keine Verlaufsdaten. Der heutige Stand wird beim Laden automatisch erfasst – lade den Export an weiteren Tagen erneut, dann entsteht die erste Kurve.</div>`;
+    } else {
+      h += card('Blanko-Umstellungen über die Zeit', 'Wie viele Rezepte auf Blanko-VO umgestellt bzw. Blanko-VOs zu Ende geplant wurden – gegen die jeweils anstehende Gesamtzahl.',
+        verlaufChart(hist, [
+          {key:'blUmGesamt', label:'Umstellen gesamt', color:'var(--amber)'},
+          {key:'blUmAng', label:'umgestellt ✓', color:'var(--primary)'},
+          {key:'blPlGesamt', label:'zu Ende planen gesamt', color:'var(--muted)'},
+          {key:'blPlFertig', label:'fertig geplant ✓', color:'var(--teal)'}
+        ]));
+      h += card('Offene Verordnungsfälle &amp; Potential', 'Wie viele Fälle noch Behandlungspotential haben – und wie viele davon erst 1 VO bzw. schon ausgeschöpft.',
+        verlaufChart(hist, [
+          {key:'potentialOffen', label:'Potential offen', color:'var(--primary)'},
+          {key:'erst1', label:'erst 1 VO', color:'var(--accent)'},
+          {key:'ausgeschoepft', label:'ausgeschöpft', color:'var(--teal)'}
+        ]));
+      h += card('Ausschöpfungsquote (%)', 'Verplante Behandlungen im Verhältnis zur orientierenden Menge – höher = mehr Potential genutzt.',
+        verlaufChart(hist, [{key:'quote', label:'Ausschöpfung %', color:'var(--primary)'}], {yMax:100, suffix:'%'}));
+      h += card('Verplant vs. möglich (Behandlungen gesamt)', 'Summe verplanter Termine gegen die maximal möglichen laut Katalog.',
+        verlaufChart(hist, [
+          {key:'moeglich', label:'möglich', color:'var(--amber)'},
+          {key:'verplant', label:'verplant', color:'var(--primary)'}
+        ]));
+      h += card('Erledigte Aufgaben', 'Als „erledigt" markierte Verordnungsfälle über die Zeit.',
+        verlaufChart(hist, [{key:'erledigt', label:'erledigt', color:'var(--teal)'}]));
 
-  const rows = dates.slice().reverse().map(d=>{ const s=hist[d];
-    return `<tr>
-      <td style="padding:6px 8px;font-weight:700">${fmtDE(d)}</td>
-      <td style="padding:6px 8px;text-align:right">${s.offeneFaelle}</td>
-      <td style="padding:6px 8px;text-align:right;color:var(--primary);font-weight:700">${s.potentialOffen}</td>
-      <td style="padding:6px 8px;text-align:right">${s.erst1}</td>
-      <td style="padding:6px 8px;text-align:right;color:var(--teal)">${s.ausgeschoepft}</td>
-      <td style="padding:6px 8px;text-align:right">${s.quote}%</td>
-      <td style="padding:6px 8px;text-align:right">${s.erledigt}</td>
-    </tr>`; }).join('');
-  h += `<div class="ausl-card" style="padding:8px 6px;overflow-x:auto">
-    <table style="width:100%;border-collapse:collapse;font-size:11px">
-      <thead><tr style="border-bottom:2px solid var(--border);color:var(--muted)">
-        <th style="padding:6px 8px;text-align:left">Stichtag</th><th style="padding:6px 8px;text-align:right">Fälle</th><th style="padding:6px 8px;text-align:right">Potential</th><th style="padding:6px 8px;text-align:right">erst 1 VO</th><th style="padding:6px 8px;text-align:right">ausgesch.</th><th style="padding:6px 8px;text-align:right">Quote</th><th style="padding:6px 8px;text-align:right">erledigt</th>
-      </tr></thead><tbody>${rows}</tbody></table></div>`;
+      const rows = dates.slice().reverse().map(d=>{ const s=hist[d];
+        return `<tr>
+          <td style="padding:6px 8px;font-weight:700">${fmtDE(d)}</td>
+          <td style="padding:6px 8px;text-align:right">${s.offeneFaelle}</td>
+          <td style="padding:6px 8px;text-align:right;color:var(--primary);font-weight:700">${s.potentialOffen}</td>
+          <td style="padding:6px 8px;text-align:right">${s.erst1}</td>
+          <td style="padding:6px 8px;text-align:right;color:var(--teal)">${s.ausgeschoepft}</td>
+          <td style="padding:6px 8px;text-align:right">${s.quote}%</td>
+          <td style="padding:6px 8px;text-align:right">${s.blUmAng!=null?s.blUmAng+' / '+s.blUmGesamt:'–'}</td>
+          <td style="padding:6px 8px;text-align:right">${s.blPlFertig!=null?s.blPlFertig+' / '+s.blPlGesamt:'–'}</td>
+          <td style="padding:6px 8px;text-align:right">${s.erledigt}</td>
+        </tr>`; }).join('');
+      h += `<div class="ausl-card" style="padding:8px 6px;overflow-x:auto">
+        <table style="width:100%;border-collapse:collapse;font-size:11px">
+          <thead><tr style="border-bottom:2px solid var(--border);color:var(--muted)">
+            <th style="padding:6px 8px;text-align:left">Stichtag</th><th style="padding:6px 8px;text-align:right">Fälle</th><th style="padding:6px 8px;text-align:right">Potential</th><th style="padding:6px 8px;text-align:right">erst 1 VO</th><th style="padding:6px 8px;text-align:right">ausgesch.</th><th style="padding:6px 8px;text-align:right">Quote</th><th style="padding:6px 8px;text-align:right">Blanko umg.</th><th style="padding:6px 8px;text-align:right">zu Ende gepl.</th><th style="padding:6px 8px;text-align:right">erledigt</th>
+          </tr></thead><tbody>${rows}</tbody></table></div>`;
+    }
+  } else {
+    // ═══ Rubrik Schwerpunkte: Platzhalter, bis die Schwerpunkt-Themen definiert sind ═══
+    h += `<div class="ausl-card" style="padding:18px 20px;margin-bottom:12px">
+      <div style="font-family:Montserrat;font-weight:800;font-size:13px;color:var(--dark);margin-bottom:6px">⭐ Schwerpunkte</div>
+      <div style="font-size:12px;color:var(--muted);line-height:1.7">
+        Hier entsteht der Verlauf für die Wochen-Schwerpunkte (z.&nbsp;B. Blanko-Woche, Recall-Woche).
+        Sobald die Schwerpunkt-Themen im Team festgelegt sind, werden hier die zugehörigen Kennzahlen pro Schwerpunkt über die Zeit angezeigt.
+        <br><br>Die erledigten Schwerpunkt-Aufgaben pro Tag fließen bereits in die Rubrik <b>📋 Tagesgeschäft</b> mit ein.
+      </div>
+    </div>`;
+  }
 
   document.getElementById('content').innerHTML = h;
 }
@@ -3598,7 +3774,9 @@ function setBlStatus(type,nr,v){
   lsSet('cki_blst_'+type+'_'+nr, v);
   // Fertig-Status mit der Abhak-Logik synchron halten (Fortschrittsbalken/Zähler)
   lsSet('cki_check_bl'+type+'|'+nr, BL_DONE[type].includes(v));
-  renderAufgaben();
+  if(currentView==='rezepte'){ showRezeptDetail(currentRezeptCat); }
+  else if(currentView==='verlauf'){ renderVerlauf(); }
+  else { renderAufgaben(); }
 }
 function blStatusLabel(type,nr){
   const v=getBlStatus(type,nr); const o=BL_STATUS[type].find(x=>x[0]===v);
@@ -3815,11 +3993,11 @@ function setRezepteTaxierenActive(dateStr, active){
   const key = 'cki_rezepte_taxieren_'+dateStr.replace(/-/g,'');
   lsSet(key, !!active);
 }
-// ── 2-Monats-Filter (Punkt 17): Patienten ohne aktiven Termin seit >2 Monaten ausblenden ──────
+// ── 1-Monats-Filter (Call 15.09., Punkt 7): Patienten ohne aktiven Termin seit >1 Monat ausblenden ──
 function hasActiveTerminInLast60Days(rezeptNr, cells){
   if(!rezeptNr || !cells) return true; // Im Zweifelsfall behalten
   const cutoff = new Date();
-  cutoff.setDate(cutoff.getDate()-60);
+  cutoff.setDate(cutoff.getDate()-30);
   const matchingCells = cells.filter(c=>c.rezeptNr===rezeptNr && c.belArt==='R');
   for(let c of matchingCells){
     if(c.belegt && c.start && c.start >= cutoff) return true;
@@ -4059,7 +4237,7 @@ function renderAssignmentMatrix(){
   return h;
 }
 // Team-Leiste (Namen verwalten, „ich bin", Filter) — alte TG/BO-Bereichs-Badges entfernt
-function renderTeamBar(){
+function renderTeamBar(withMatrix){
   const team=getTeam();
   const date = currentDate;
   const chips=team.map(m=>'<span class="tm-chip"><span class="tm-dot" style="background:'+teamColor(m.n)+'"></span>'+esc(m.n)+'<span class="tm-x" title="Entfernen" onclick="removeTeamMember(\''+jsq(m.n)+'\')">×</span></span>').join('');
@@ -4071,7 +4249,8 @@ function renderTeamBar(){
     ${team.length?`<select class="asg-sel tm-me" onchange="setMe(this.value)">${meOpts}</select>
     <label class="tm-mine"><input type="checkbox" ${tzOnlyMine?'checked':''} onchange="toggleOnlyMine(this.checked)"> nur meine</label>`:''}
   </div>`;
-  h += renderAssignmentMatrix();
+  // Zuweisungs-Matrix nur in der „Alle Aufgaben"-Ansicht (Call 15.09.)
+  if(withMatrix) h += renderAssignmentMatrix();
   return h;
 }
 
@@ -4225,7 +4404,7 @@ function renderAufgaben(){
         main:esc(r.name),
         tdef: r.nextTermin ? timeBlockOfHour(r.nextTermin.getHours() + r.nextTermin.getMinutes()/60) : undefined,
         sub:`Serie fertig · Arzt: ${r.arzt?esc(r.arzt):'?'}` })) },
-    { key:'blum', ico:'💊', color:'var(--purple)', ttl:'Auf Blanko-VO umstellen', go:"switchView('rezepte')",
+    { key:'blum', ico:'📄', color:'var(--purple)', ttl:'Auf Blanko-VO umstellen', go:"switchView('rezepte')",
       items: blUm.map(p=>({
         id:'blum|'+p.rezeptNr,
         main:esc(p.name),
@@ -4279,6 +4458,8 @@ function renderAufgaben(){
     }
   }));
   const pct = total>0 ? Math.round(done/total*100) : 100;
+  // Punkt 11: Tagesziel-Stand historisieren (nur in der "Alle"-Ansicht, sonst sind die Zähler gefiltert)
+  if(tzArea==='alle') recordTagesHist(currentDate, {done,total,tgDone,tgTotal,boDone,boTotal});
   const tgPct = tgTotal>0 ? Math.round(tgDone/tgTotal*100) : 100;
   const boPct = boTotal>0 ? Math.round(boDone/boTotal*100) : 100;
   const allDone = total>0 && done===total;
@@ -4480,7 +4661,7 @@ function renderAufgaben(){
     </div>`;
 
     // ── Team-Leiste (Namen verwalten, „ich bin …", Filter „nur meine") ──
-    h += renderTeamBar();
+    h += renderTeamBar(true);
   }
 
   if(total===0){

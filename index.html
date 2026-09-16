@@ -1626,7 +1626,7 @@ function analyzeRezepteFull(cellsForDay, allCells, opts){
     if(isShoulder(p.icd) && !isBlankoHM(p.heilmittel)){
       isBlanko = true;
       tags.blanko = true;
-      cats.blanko.push(p);
+      // (Push in cats.blanko passiert unten zentral – vorher doppelt = Dopplungen in der Liste)
       reasons.push('🎯 Schulter → Rezept auf Blankoverordnung umstellen!');
       badges.push({t:'Blanko mögl.',c:'c-purple'});
       score += 2;
@@ -2665,20 +2665,7 @@ function renderControlling(){
   const auslInfo = `<b>Auslastung pro Therapeut</b><br>Auslastung = <b>belegte Zeit ÷ volle Arbeitszeit</b>.<br>• <b>Arbeitszeit</b> = alle bezahlten 10-Min-Slots (AZ=J), ohne Abzug.<br>• <b>Belegte Zeit</b> = Arbeitszeit minus wirklich leere Fenster. Termine, Blocker, Fahrtzeit und Doku zählen als belegt.<br>Nur echte Lücken (Slot, in dem gar nichts steht) senken den Wert.<br>⏱️ <b>Überstunden</b> = Patiententermine <b>außerhalb der geplanten Arbeitszeit</b> – also Termine in Slots, die laut Theorg nicht als Arbeitszeit (AZ) markiert sind. Pro 10-Min-Slot gezählt und über den Zeitraum summiert. Details beim Überfahren des Balkens.`;
   // Punkt 20: 87%-Auslastungsziel über 4 Wochen
   const TARGET_PCT = 87;
-  // Kommende Wochen ab heutiger KW, Kapazität in h; Referenz = Max-KW-Kapazität (Randwochen ausgeklammert)
-  const kapData = (function(){
-    const kwSlots = {};
-    DATA.cells.forEach(c=>{ if(!c.azFlag || !c.therapist) return; const wk=isoWeekKey(c.start); (kwSlots[wk]=kwSlots[wk]||new Set()).add(c.therapist+'|'+c.start.getTime()); });
-    const allWeeks = Object.keys(kwSlots).sort();
-    const capAll = allWeeks.map(w=>kwSlots[w].size);          // 10-Min-Slots
-    let basis = capAll.slice(); if(allWeeks.length>4) basis = capAll.slice(1,-1);
-    const refMaxH = basis.length ? Math.max(...basis)*10/60 : 0;
-    const todayWk = isoWeekKey(new Date());
-    let idx0 = allWeeks.findIndex(w=> w>=todayWk);
-    const weeks=[], capH=[];
-    if(idx0>=0) for(let i=idx0; i<allWeeks.length && weeks.length<4; i++){ weeks.push(allWeeks[i]); capH.push(capAll[i]*10/60); }
-    return {weeks, capH, refMaxH};
-  })();
+  const kapData = calcKap4Wochen();
   if(kapData.weeks && kapData.weeks.length && kapData.refMaxH>0){
     const forthcoming = [];
     const maxWeeks = Math.min(4, kapData.weeks.length);
@@ -3573,6 +3560,23 @@ function renderVerlauf(){
 // ═══════════════════════════════════════════════════════════
 // VIEW: AUFGABEN (Tages-Cockpit für Praxismanager)
 // ═══════════════════════════════════════════════════════════
+// Kapazität der kommenden 4 Wochen (Referenz = Max-KW-Kapazität ohne Randwochen).
+// Genutzt vom Controlling (87%-Block) UND von der Backoffice-Aufgabe "Kapazität bereinigen".
+function calcKap4Wochen(){
+  const kwSlots = {};
+  DATA.cells.forEach(c=>{ if(!c.azFlag || !c.therapist) return; const wk=isoWeekKey(c.start); (kwSlots[wk]=kwSlots[wk]||new Set()).add(c.therapist+'|'+c.start.getTime()); });
+  const allWeeks = Object.keys(kwSlots).sort();
+  const capAll = allWeeks.map(w=>kwSlots[w].size);          // 10-Min-Slots
+  let basis = capAll.slice(); if(allWeeks.length>4) basis = capAll.slice(1,-1);
+  const refMaxH = basis.length ? Math.max(...basis)*10/60 : 0;
+  const todayWk = isoWeekKey(new Date());
+  let idx0 = allWeeks.findIndex(w=> w>=todayWk);
+  const weeks=[], capH=[];
+  if(idx0>=0) for(let i=idx0; i<allWeeks.length && weeks.length<4; i++){ weeks.push(allWeeks[i]); capH.push(capAll[i]*10/60); }
+  return {weeks, capH, refMaxH};
+}
+
+// ═══════════════════════════════════════════════════════════
 // Navigation aus den Aufgaben-Kacheln in die jeweiligen Tabs
 function gotoOffene(f){ currentOffeneFilter=(f==='w2'||f==='w4'||f==='w6')?f:'w4'; switchView('offene'); }
 function gotoFolgeVO(){ currentFvoFilter='offen'; switchView('folgevo'); }
@@ -3580,6 +3584,34 @@ function gotoFolgeVO(){ currentFvoFilter='offen'; switchView('folgevo'); }
 // ── Abhak-Status (localStorage) ──
 function taskDone(id){ return lsGet('cki_check_'+id, false); }
 function toggleTask(id){ lsSet('cki_check_'+id, !taskDone(id)); renderAufgaben(); }
+
+// ── Punkt 6a (Call 15.09.): Blanko-Aufgaben mit eigenem Status statt einfachem Haken ──
+//   'um' = Auf Blanko-VO umstellen:  offen → in Bearbeitung → angepasst ✓ | abgelehnt ✓
+//   'pl' = Blanko-VO zu Ende planen: offen → in Bearbeitung → fertig ✓
+const BL_STATUS = {
+  um: [['','offen'],['ib','in Bearbeitung'],['ang','angepasst ✓'],['abg','abgelehnt ✕']],
+  pl: [['','offen'],['ib','in Bearbeitung'],['fertig','fertig ✓']]
+};
+const BL_DONE = { um:['ang','abg'], pl:['fertig'] };
+function getBlStatus(type,nr){ const v=lsGet('cki_blst_'+type+'_'+nr,''); return BL_STATUS[type].some(o=>o[0]===v)?v:''; }
+function setBlStatus(type,nr,v){
+  lsSet('cki_blst_'+type+'_'+nr, v);
+  // Fertig-Status mit der Abhak-Logik synchron halten (Fortschrittsbalken/Zähler)
+  lsSet('cki_check_bl'+type+'|'+nr, BL_DONE[type].includes(v));
+  renderAufgaben();
+}
+function blStatusLabel(type,nr){
+  const v=getBlStatus(type,nr); const o=BL_STATUS[type].find(x=>x[0]===v);
+  return o?o[1]:'offen';
+}
+function blStatusSelect(type,nr){
+  const cur=getBlStatus(type,nr);
+  const col = BL_DONE[type].includes(cur) ? (cur==='abg'?'var(--muted)':'var(--teal)') : (cur==='ib'?'var(--amber)':'var(--accent)');
+  let o='';
+  BL_STATUS[type].forEach(([v,l])=>{ o += '<option value="'+v+'"'+(v===cur?' selected':'')+'>'+l+'</option>'; });
+  return '<select class="asg-sel" style="border-color:'+col+';color:'+col+';font-weight:700" '+
+    'onclick="event.stopPropagation()" onchange="setBlStatus(\''+type+'\',\''+jsq(String(nr))+'\',this.value)">'+o+'</select>';
+}
 // ── Kategorie auf-/zuklappen (Standard: zu) ──
 function secOpen(key,def){ return lsGet('cki_secopen_'+key, def===undefined?false:!!def); }
 function toggleSec(key,def){ lsSet('cki_secopen_'+key, !secOpen(key,def)); renderAufgaben(); }
@@ -3602,21 +3634,26 @@ let tzArea = lsGet('cki_tzarea','alle');                  // 'alle' | 'tg' | 'bo
 function setTzArea(a){ tzArea=(a==='tg'||a==='bo')?a:'alle'; lsSet('cki_tzarea',tzArea); renderAufgaben(); }
 // Voreinstellung je Kategorie (per Dropdown jederzeit änderbar)
 const TZ_AREA_DEFAULTS = { std_tg:'tg', std_bo:'bo', std_sp:'tg', std_fs:'tg', std_ss:'tg',
-  gapHeute:'tg', gapMorgen:'tg', abr:'bo', ft:'tg', fvo:'bo', dauer:'tg' };
-function getCatArea(k){ const v=lsGet('cki_catarea_'+k, TZ_AREA_DEFAULTS[k]||'tg'); return (v==='bo')?'bo':'tg'; }
+  gapHeute:'tg', gapMorgen:'tg', abr:'bo', ft:'tg', fvo:'bo', dauer:'tg',
+  blum:'bo', blpl:'bo', kap:'bo' };
+// Punkt 5 (Call 15.09.): Lücken-Kategorien sind IMMER Tagesgeschäft (nicht umstellbar)
+const TZ_AREA_LOCKED = { gapHeute:'tg', gapMorgen:'tg' };
+function getCatArea(k){ if(TZ_AREA_LOCKED[k]) return TZ_AREA_LOCKED[k]; const v=lsGet('cki_catarea_'+k, TZ_AREA_DEFAULTS[k]||'tg'); return (v==='bo')?'bo':'tg'; }
 function setCatArea(k,v){ lsSet('cki_catarea_'+k, v==='bo'?'bo':'tg'); renderAufgaben(); }
 function getTaskArea(id){ return lsGet('cki_area_'+id,''); }
 function cycleTaskArea(id){ const cur=getTaskArea(id); lsSet('cki_area_'+id, cur===''?'tg':(cur==='tg'?'bo':'')); renderAufgaben(); }
-function effectiveArea(id,catkey){ return getTaskArea(id) || getCatArea(catkey); }
+function effectiveArea(id,catkey){ if(TZ_AREA_LOCKED[catkey]) return TZ_AREA_LOCKED[catkey]; return getTaskArea(id) || getCatArea(catkey); }
 // Dropdown für den Kategorie-Kopf
 function catAreaSelect(k){
   const cur=getCatArea(k);
+  if(TZ_AREA_LOCKED[k]) return '<span class="area-chip area-tg" style="cursor:default" title="Immer Tagesgeschäft">TG · fest</span>';
   return '<select class="asg-sel" onclick="event.stopPropagation()" onchange="setCatArea(\''+jsq(k)+'\',this.value)">'+
     '<option value="tg"'+(cur==='tg'?' selected':'')+'>Tagesgeschäft</option>'+
     '<option value="bo"'+(cur==='bo'?' selected':'')+'>Backoffice</option></select>';
 }
 // Klickbarer Bereichs-Chip je Aufgabe (Klick: erben → TG → BO → erben)
 function areaChip(id,catkey){
+  if(TZ_AREA_LOCKED[catkey]) return '<span class="area-chip area-tg area-inh" style="cursor:default" title="Immer Tagesgeschäft">TG</span>';
   const ov=getTaskArea(id); const eff=ov||getCatArea(catkey); const inh=!ov;
   return '<span class="area-chip area-'+eff+(inh?' area-inh':'')+'" onclick="event.stopPropagation();cycleTaskArea(\''+jsq(id)+'\')" title="Bereich: '+TZ_AREAS[eff]+(inh?' · von Kategorie geerbt':'')+' · klicken zum Ändern">'+(eff==='bo'?'BO':'TG')+'</span>';
 }
@@ -4116,8 +4153,11 @@ const TZ_SCHWERPUNKT = {
   4:['Heimkontrollen'],
   5:['Ausgefallene Termine','Stornoliste']
 };
-const TZ_FRUEHSCHICHT = [{t:'Alle Privat Patienten für den heutigen Tag eintragen', s:''}];
-const TZ_SPAETSCHICHT = [{t:'Alle HB Akten für den nächsten Tag eintragen', s:''}];
+// Punkt 1 (Call 15.09.): Spätschicht entfällt – alles unter Frühschicht, jeweils "für den nächsten Tag"
+const TZ_FRUEHSCHICHT = [
+  {t:'Alle Privatpatienten für den nächsten Tag eintragen', s:''},
+  {t:'Alle HB Akten für den nächsten Tag eintragen', s:''}
+];
 
 function renderAufgaben(){
   const a = computeActionItems();
@@ -4131,6 +4171,27 @@ function renderAufgaben(){
   const morgenLabel = morgenStr ? new Date(morgenStr+'T12:00:00').toLocaleDateString('de-DE',{weekday:'short',day:'2-digit',month:'2-digit'}) : '–';
 
   const rez = collectRezepte(); // bereits Maske-D-gefiltert wenn ausgeblendet
+
+  // ── Punkt 6a (Call 15.09.): Blanko-Aufgaben fürs Backoffice (aus der Rezepte-Analyse) ──
+  const blCats = analyzeRezepteFull(null, DATA.cells, {allActive:true});
+  const _seenUm = new Set(), _seenPl = new Set();
+  const blUm = (blCats.blanko||[]).filter(p=>{ if(!p.rezeptNr||_seenUm.has(p.rezeptNr)) return false; _seenUm.add(p.rezeptNr); return true; });
+  const blPl = (blCats.blankopot||[]).filter(p=>{ if(!p.rezeptNr||_seenPl.has(p.rezeptNr)) return false; _seenPl.add(p.rezeptNr); return true; });
+
+  // ── Punkt 6b (Call 15.09.): Kapazität 4 Wochen im Voraus bereinigen (Ziel 87 %) ──
+  const kap = calcKap4Wochen();
+  const kapItems = [];
+  if(kap.refMaxH > 0){
+    const kapTarget = kap.refMaxH * 0.87;
+    kap.weeks.forEach((w,i)=>{
+      const fehlt = kapTarget - kap.capH[i];
+      if(fehlt > 0.05) kapItems.push({
+        id:'kap|'+w,
+        main:esc(isoWeekLabel(w))+' bereinigen · es fehlen <b style="color:var(--fire)">'+fehlt.toFixed(1)+' h</b>',
+        sub:esc(kap.capH[i].toFixed(1)+' h verfügbar · Ziel '+kapTarget.toFixed(1)+' h (87 % von '+kap.refMaxH.toFixed(1)+' h)')
+      });
+    });
+  }
 
   // Kategorien → einzelne abhakbare Einträge
   const sections = [
@@ -4163,7 +4224,21 @@ function renderAufgaben(){
         id:'fvo|'+r.rezeptNr,
         main:esc(r.name),
         tdef: r.nextTermin ? timeBlockOfHour(r.nextTermin.getHours() + r.nextTermin.getMinutes()/60) : undefined,
-        sub:`Serie fertig · Arzt: ${r.arzt?esc(r.arzt):'?'}` })) }
+        sub:`Serie fertig · Arzt: ${r.arzt?esc(r.arzt):'?'}` })) },
+    { key:'blum', ico:'💊', color:'var(--purple)', ttl:'Auf Blanko-VO umstellen', go:"switchView('rezepte')",
+      items: blUm.map(p=>({
+        id:'blum|'+p.rezeptNr,
+        main:esc(p.name),
+        sub:`${p.heilmittel?esc(p.heilmittel):''}${p.icd?' · '+esc(p.icd):''} · beim Arzt Umstellung anstoßen`,
+        statusSel: blStatusSelect('um',p.rezeptNr) })) },
+    { key:'blpl', ico:'💎', color:'var(--accent)', ttl:'Blanko-VO zu Ende planen', go:"switchView('rezepte')",
+      items: blPl.map(p=>({
+        id:'blpl|'+p.rezeptNr,
+        main:esc(p.name),
+        sub:`${p.blankoVerplant!=null?p.blankoVerplant+' von '+p.blankoZiel+' verplant':''}${p.tageUebrig!=null?' · noch '+p.tageUebrig+' Tage gültig':''}`,
+        statusSel: blStatusSelect('pl',p.rezeptNr) })) },
+    { key:'kap', ico:'📊', color:'var(--primary)', ttl:'Kapazität 4 Wochen im Voraus bereinigen · Ziel 87 %', go:"switchView('controlling')",
+      items: kapItems }
   ];
 
   // ── Standardaufgaben aus der Arbeitsaufteilung (Vorlage) ──
@@ -4180,8 +4255,7 @@ function renderAufgaben(){
     { key:'std_tg', ico:'📋', color:'var(--primary)', ttl:'Tagesgeschäft', defOpen:true, items:mkStd('tg',TZ_TAGESGESCHAEFT) },
     { key:'std_bo', ico:'🖥️', color:'#0891b2', ttl:'Backoffice', defOpen:true, items:boItems },
     { key:'std_sp', ico:'⭐', color:'var(--amber)', ttl:'Schwerpunkt '+wdName, defOpen:true, items:mkStd('sp',spTasks) },
-    { key:'std_fs', ico:'🌅', color:'var(--accent)', ttl:'Frühschicht', defOpen:true, items:mkStd('fs',TZ_FRUEHSCHICHT) },
-    { key:'std_ss', ico:'🌙', color:'#7c3aed', ttl:'Spätschicht', defOpen:true, items:mkStd('ss',TZ_SPAETSCHICHT) }
+    { key:'std_fs', ico:'🌅', color:'var(--accent)', ttl:'Frühschicht', defOpen:true, items:mkStd('fs',TZ_FRUEHSCHICHT) }
   ].filter(s=>s.items.length);
   const allSections = stdSections.concat(sections);
 
@@ -4199,8 +4273,8 @@ function renderAufgaben(){
     if(s.key==='std_tg'||s.key==='gapHeute'||s.key==='gapMorgen'||s.key==='ft'||s.key==='fvo'){
       tgTotal++; if(isDone) tgDone++;
     }
-    // Backoffice: std_bo, abr
-    if(s.key==='std_bo'||s.key==='abr'){
+    // Backoffice: std_bo, abr, Blanko-Aufgaben, Kapazität
+    if(s.key==='std_bo'||s.key==='abr'||s.key==='blum'||s.key==='blpl'||s.key==='kap'){
       boTotal++; if(isDone) boDone++;
     }
   }));
@@ -4301,9 +4375,10 @@ function renderAufgaben(){
           <div class="task-list"${open?'':' style="display:none"'}>`;
         items.forEach(it=>{
           const d = taskDone(it.id);
-          h += `<div class="task${d?' done':''}" onclick="toggleTask('${jsq(it.id)}')">
+          h += `<div class="task${d?' done':''}"${it.statusSel?'':` onclick="toggleTask('${jsq(it.id)}')"`}>
             <div class="task-cb">${d?'✓':''}</div>
             <div class="task-body"><div class="task-main">${it.main}</div><div class="task-sub">${it.sub}</div></div>
+            ${it.statusSel||''}
             ${it.tdef?'<span style="font-size:9px;color:var(--muted)">'+TZ_TIMES[it.tdef]+'</span>':''}
             ${assigneeChip(it.id,s.key)}
           </div>`;
@@ -4454,9 +4529,10 @@ function renderAufgaben(){
       <div class="task-list"${open?'':' style="display:none"'}>`;
     items.forEach(it=>{
       const d = taskDone(it.id);
-      h += `<div class="task${d?' done':''}" onclick="toggleTask('${jsq(it.id)}')">
+      h += `<div class="task${d?' done':''}"${it.statusSel?'':` onclick="toggleTask('${jsq(it.id)}')"`}>
         <div class="task-cb">${d?'✓':''}</div>
         <div class="task-body"><div class="task-main">${it.main}</div><div class="task-sub">${it.sub}</div></div>
+        ${it.statusSel||''}
         ${timeChip(it.id,s.key,it.tdef)}
         ${areaChip(it.id,s.key)}
         ${assigneeChip(it.id,s.key)}

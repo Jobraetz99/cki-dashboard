@@ -1103,6 +1103,7 @@ function renderMainTabs(){
 
 function switchView(v){
   currentView = v;
+  leitfadenSel = null;  // Reset Leitfaden-Auswahl beim Tab-Wechsel
   renderMainTabs();
   renderViewContent();
 }
@@ -2045,20 +2046,6 @@ function showRezeptDetail(k){
 // ═══════════════════════════════════════════════════════════
 // LÜCKEN-KLICK: Nachrücker
 // ═══════════════════════════════════════════════════════════
-// Punkt 12: Leitfaden-Text mit Patientenname und Uhrzeit generieren
-function generateLeitfadenText(patName){
-  const now = new Date();
-  const hh = String(now.getHours()).padStart(2,'0');
-  const mm = String(now.getMinutes()).padStart(2,'0');
-  // Versuche Anrede aus dem Namen ableiten (einfaches Heuristik)
-  // Wenn Name mit Frau/Herr beginnt, verwende das; sonst "Lieber/Liebe" mit vollem Namen
-  const parts = patName.split(/\s+/);
-  let anrede = 'Lieber/Liebe ' + patName;
-  if(parts[0].toLowerCase().startsWith('frau') || parts[0].toLowerCase().startsWith('herr')){
-    anrede = 'Liebe/r ' + patName.split(/\s+/).slice(1).join(' ');
-  }
-  return anrede + ', ich rufe im Auftrag von [Name des Therapeuten] an — bei uns ist heute um ' + hh + ':' + mm + ' noch ein Termin frei geworden …';
-}
 function showGapNR(gapId, gapMin, thName, gapStartISO){
   const el = document.getElementById(gapId);
   if(!el)return;
@@ -2109,9 +2096,13 @@ function showGapNR(gapId, gapMin, thName, gapStartISO){
     p.badges.forEach(b=>{badgesHtml += `<span class="pr-b ${b.c}">${b.t}</span>`;});
     const age = p.geb ? Math.floor((Date.now()-new Date(p.geb).getTime())/(365.25*86400000)) : null;
     const ageStr = age ? ` (${age}J)` : '';
-    // Punkt 12: Klick setzt Patientenname in Telefonleitfaden
-    const leitfadenText = generateLeitfadenText(p.name);
-    h += `<div class="nr-mini" onclick="leitfadenSave('luecken','${jsq(leitfadenText)}');" style="cursor:pointer;border:2px solid transparent;transition:all 0.2s" onmouseover="this.style.borderColor='var(--primary);this.style.backgroundColor='rgba(21,96,177,0.05)'" onmouseout="this.style.borderColor='transparent';this.style.backgroundColor='transparent'">
+    // Klick wählt Patienten für Leitfaden aus
+    const pName = jsq(p.name);
+    const pTel = p.mobil || '';
+    // Zeit der Lücke aus gapStartISO ableiten
+    let gapStart = '';
+    if(gapStartISO){ const gd = new Date(gapStartISO); if(!isNaN(gd)) gapStart = gd.toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'}); }
+    h += `<div class="nr-mini" data-lf-sel="${esc(p.name)}" onclick="selectLeitfadenPatient('${pName}','${pTel}','${jsq(thName)}','${gapStart}');" style="cursor:pointer;border:2px solid transparent;transition:all 0.2s;border-radius:8px" onmouseover="this.style.backgroundColor='rgba(21,96,177,0.05)'" onmouseout="this.style.backgroundColor='transparent'">
       <div class="nr-mini-rank">${i+1}</div>
       <div class="nr-mini-body">
         <div class="nr-mini-n">${p.name}${ageStr}</div>
@@ -2119,7 +2110,7 @@ function showGapNR(gapId, gapMin, thName, gapStartISO){
         <div class="nr-mini-hint">${p.hints.join(' · ')}</div>
       </div>
       <div class="nr-mini-bs">${badgesHtml}</div>
-      ${p.mobil ? `<a href="tel:${p.mobil}" class="nr-mini-tel" onclick="event.stopPropagation()">📞</a>` : ''}
+      ${p.mobil ? `<a href="tel:${p.mobil}" class="nr-mini-tel" onclick="event.stopPropagation();selectLeitfadenPatient('${pName}','${pTel}','${jsq(thName)}','${gapStart}')">📞</a>` : ''}
       <div class="nr-mini-score">${p.finalScore}pt</div>
     </div>`;
   });
@@ -2998,11 +2989,106 @@ Super — dann machen wir den nächsten Termin aus und die restlichen lasse ich 
 };
 function leitfadenGet(key){ const v=lsGet('cki_leitfaden_'+key, null); return (v===null||v==='') ? (LF_DEFAULTS[key]||'') : v; }
 function leitfadenSave(key, el){ lsSet('cki_leitfaden_'+key, el.value); }
+// ══════════════════════════════════════════════════════════════════════════════
+// UMBAU 3: LEITFADEN-AUSWAHL MIT VORSCHAU ─────────────────────────────────────
+// Globaler State für die aktuelle Auswahl
+// ══════════════════════════════════════════════════════════════════════════════
+let leitfadenSel = null;  // {patName, patTel, therapist, time, geschlecht?}
+
+function selectLeitfadenPatient(patName, patTel, therapist, time, geschlecht){
+  if(leitfadenSel && leitfadenSel.patName === patName){
+    // Erneuter Klick: Auswahl aufheben
+    leitfadenSel = null;
+  } else {
+    leitfadenSel = {patName, patTel, therapist, time, geschlecht};
+  }
+  // DOM aktualisieren (Markierung + Vorschau)
+  updateLeitfadenDisplay();
+}
+
+function updateLeitfadenDisplay(){
+  // Alle Markierungen entfernen
+  document.querySelectorAll('[data-lf-sel]').forEach(el=>el.style.border='');
+  // Neue Markierung setzen
+  if(leitfadenSel){
+    const sel = document.querySelector(`[data-lf-sel="${esc(leitfadenSel.patName)}"]`);
+    if(sel) sel.style.border='2px solid var(--primary)';
+  }
+  // Vorschau-Box aktualisieren
+  const prevBox = document.getElementById('lf-prev-wrap');
+  if(!prevBox) return;
+  if(!leitfadenSel){
+    prevBox.style.display='none';
+    return;
+  }
+  // Vorschau bauen (mit Platzhalter-Ersetzung)
+  const ta = document.querySelector('[data-lf-key]');
+  if(!ta) return;
+  const text = lfFilledText(ta.value);
+  prevBox.style.display='block';
+  prevBox.innerHTML = `<div style="background:var(--primary-bg);border:1px solid var(--primary);border-radius:12px;padding:12px;margin-bottom:12px">
+    <div style="font-family:Montserrat;font-weight:700;font-size:11px;color:var(--primary);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">📋 Bereit zum Vorlesen</div>
+    <div style="font-size:12px;line-height:1.6;color:var(--dark);white-space:pre-wrap;font-family:Poppins;margin-bottom:10px">${esc(text)}</div>
+    <div style="display:flex;gap:8px">
+      <button style="flex:1;padding:6px 12px;background:var(--primary);color:#fff;border:none;border-radius:8px;font-weight:700;font-size:11px;cursor:pointer" onclick="copyLeitfadenToClipboard()">📋 Kopieren</button>
+    </div>
+  </div>`;
+}
+
+// Gemeinsamer Text-Builder: setzt Patient, Therapeut und Uhrzeit in die Vorlage ein
+// (Vorlage in der Textarea bleibt unverändert — Ersetzung nur im Ergebnis)
+function lfFilledText(template){
+  if(!leitfadenSel) return template;
+  const therapistName = leitfadenSel.therapist || '(Name des Therapeuten)';
+  const patName = leitfadenSel.patName || 'Patient';
+  // Anrede: „Lieber Herr <Nachname>" / „Liebe Frau <Nachname>" wenn Geschlecht bekannt, sonst neutral mit vollem Namen
+  let anrede;
+  if(leitfadenSel.geschlecht==='m' || leitfadenSel.geschlecht==='w'){
+    const nameParts = patName.split(' ');
+    const nachname = nameParts.length>1 ? nameParts[nameParts.length-1] : patName;
+    anrede = leitfadenSel.geschlecht==='m' ? ('Lieber Herr '+nachname) : ('Liebe Frau '+nachname);
+  } else {
+    anrede = 'Liebe/r '+patName;
+  }
+  return template
+    .replace(/\(Name des Therapeuten\)/g, therapistName)
+    .replace(/\(Uhrzeit des Termins\)/g, leitfadenSel.time || '(Uhrzeit)')
+    .replace(/\(Uhrzeit\)/g, leitfadenSel.time || '(Uhrzeit)')
+    .replace(/\(Name des Patienten\)/g, anrede)
+    .replace(/Liebe\/r Patient(?:in)?/g, anrede)
+    .replace(/Lieber Patient/g, anrede)
+    .replace(/Liebe Patientin/g, anrede);
+}
+
+function copyLeitfadenToClipboard(){
+  const ta = document.querySelector('[data-lf-key]');
+  if(!ta || !leitfadenSel) return;
+  const text = lfFilledText(ta.value);
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(text).then(()=>{
+      alert('✓ In die Zwischenablage kopiert!');
+    }).catch(()=>fallbackCopy(text));
+  } else {
+    fallbackCopy(text);
+  }
+}
+
+function fallbackCopy(text){
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  document.body.appendChild(ta);
+  ta.select();
+  document.execCommand('copy');
+  document.body.removeChild(ta);
+  alert('✓ In die Zwischenablage kopiert!');
+}
+
 function leitfadenBox(key, titel, platzhalter){
   const val = leitfadenGet(key);
   return `<div class="lf-box">
     <div class="lf-head">💬 Telefonleitfaden – ${titel}</div>
-    <textarea class="lf-ta" placeholder="${platzhalter}" oninput="leitfadenSave('${key}',this)">${esc(val)}</textarea>
+    <textarea class="lf-ta" data-lf-key="${key}" placeholder="${platzhalter}" oninput="leitfadenSave('${key}',this)">${esc(val)}</textarea>
+    <div id="lf-prev-wrap" style="display:none"></div>
     <div class="lf-hint">Wording „Hilfestellung Tagesgeschäft" · Änderungen werden lokal im Browser gespeichert.</div>
   </div>`;
 }
@@ -3568,7 +3654,41 @@ function addTeamMember(){
   team.push({n:name}); saveTeam(team); renderAufgaben();
 }
 function removeTeamMember(name){ saveTeam(getTeam().filter(m=>m.n!==name)); renderAufgaben(); }
-// ── Personen-Zuweisung pro Zeitslot (Punkt 1: Tagesziel-Zuweisung) ──────────────
+
+// ══════════════════════════════════════════════════════════════════════════════
+// UMBAU 1: ZUWEISUNG MATRIX (TG/BO · VM/MI/NM) ────────────────────────────────
+// Neue Keys: cki_asg_YYYYMMDD_{tg|bo}_{vm|mi|nm} = JSON-Array von Namen
+// ══════════════════════════════════════════════════════════════════════════════
+function getAssignmentMatrixByArea(dateStr, area, timeBlock){
+  if(!area || !timeBlock) return [];
+  const key = 'cki_asg_'+dateStr.replace(/-/g,'')+'_'+area+'_'+timeBlock;
+  const val = lsGet(key, []);
+  return Array.isArray(val) ? val : [];
+}
+function setAssignmentMatrix(dateStr, area, timeBlock, names){
+  if(!area || !timeBlock) return;
+  const key = 'cki_asg_'+dateStr.replace(/-/g,'')+'_'+area+'_'+timeBlock;
+  lsSet(key, Array.isArray(names) ? names : []);
+}
+function addPersonToArea(dateStr, area, timeBlock, name){
+  const names = getAssignmentMatrixByArea(dateStr, area, timeBlock);
+  if(!names.includes(name)) names.push(name);
+  setAssignmentMatrix(dateStr, area, timeBlock, names);
+}
+function removePersonFromArea(dateStr, area, timeBlock, name){
+  const names = getAssignmentMatrixByArea(dateStr, area, timeBlock).filter(n=>n!==name);
+  setAssignmentMatrix(dateStr, area, timeBlock, names);
+}
+// Vereinigungsmenge: alle Personen eines Bereichs (über alle Zeitblöcke)
+function getAreaPersons(dateStr, area){
+  const persons = new Set();
+  ['vm','mi','nm'].forEach(tb=>{
+    getAssignmentMatrixByArea(dateStr, area, tb).forEach(name=>persons.add(name));
+  });
+  return Array.from(persons);
+}
+
+// ── Personen-Zuweisung pro Zeitslot (Alt: cki_slot_* — wird nicht mehr geschrieben) ──────────────
 // Zeitblöcke: 'vm' (Vormittag), 'mi' (Mittag), 'nm' (Nachmittag)
 // Key: cki_slot_YYYYMMDD_vm = JSON-Array von Namen
 function getSlotAssignment(dateStr, timeBlock){
@@ -3622,22 +3742,23 @@ function tzAreaBadgeHtml(dateStr, personName){
     'title="Bereich: '+(area==='tg'?'Tagesgeschäft':area==='bo'?'Backoffice':'nicht zugewiesen')+' · klicken zum ändern">'+
     labels[area]+'</span>';
 }
-// Zähle unzugewiesene Aufgaben pro Block (TG/BO)
-// PUNKT 1: Wenn eine Person einen Bereich hat (TG/BO), zählen ihre Aufgaben als zugewiesen
+// Zähle unzugewiesene Aufgaben pro Bereich (TG/BO) — Nutzung der neuen Matrix
+// Eine Aufgabe gilt als zugewiesen, wenn im zugehörigen Zeitblock der Spalte jemand steht
 function countUnassignedTasksByArea(sections, area){
   let count = 0;
-  const team = getTeam();
   const date = currentDate;
-  // Personen mit diesem Bereich für heute
-  const personsByArea = team.filter(m=>getTZAreaByDate(date,m.n)===area).map(m=>m.n);
+  // Personen des Bereichs in allen Zeitblöcken
+  const personsByArea = getAreaPersons(date, area);
 
   sections.forEach(s=>{
+    // Standard-Aufgaben + Bereichs-spezifische Aufgaben
     if(s.key.startsWith('std_'+area) || (area==='tg'&&(s.key==='gapHeute'||s.key==='gapMorgen'||s.key==='ft'||s.key==='fvo')) || (area==='bo'&&s.key==='abr')){
       s.items.forEach(it=>{
-        const assigned = effectiveAssignee(it.id,s.key);
-        // Zähle als zugewiesen, wenn: (1) jemand direkt zugeordnet ist ODER (2) die zugeordnete Person hat diesen Bereich heute
-        const isAssignedByPerson = assigned && personsByArea.includes(assigned);
-        if(!assigned && !isAssignedByPerson) count++;
+        // Zeitblock dieser Aufgabe ableiten
+        const tdef = effectiveTime(it.id, s.key, it.tdef);
+        // Prüfe ob im Zeitblock jemand aus dem Bereich zugewiesen ist
+        const hasPersonInSlot = personsByArea.some(name=>getAssignmentMatrixByArea(date, area, tdef).includes(name));
+        if(!hasPersonInSlot) count++;
       });
     }
   });
@@ -3837,53 +3958,70 @@ function tzModeToggle(){
   </div>`;
 }
 // Zeitslot-Verwaltung UI (Punkt 1: Personen pro Zeitslot)
-function renderSlotAssignment(){
+function renderAssignmentMatrix(){
   const team = getTeam();
   const date = currentDate;
   let h = '';
   if(team.length){
-    const slots = ['vm', 'mi', 'nm'];
-    const blockNames = {vm:'Vormittag', mi:'Mittag', nm:'Nachmittag'};
-    h += `<div class="tm-slots" style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border)">
-      <div style="font-family:Montserrat;font-weight:800;font-size:12px;color:var(--dark);margin-bottom:10px">📅 Zuweisung pro Zeitslot · ${new Date(date+'T12:00:00').toLocaleDateString('de-DE',{weekday:'short',day:'2-digit',month:'2-digit'})}</div>`;
-    slots.forEach(slot=>{
-      const assigned = getSlotAssignment(date, slot);
-      const remaining = team.filter(m=>!assigned.includes(m.n));
-      h += `<div class="slot-row" style="margin-bottom:12px;padding:10px;background:var(--primary-bg);border-radius:8px">
-        <div style="font-size:11px;font-weight:700;color:var(--primary);margin-bottom:6px">${blockNames[slot]}</div>
-        <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:6px">`;
-      if(assigned.length){
-        assigned.forEach(name=>{
-          h += `<span class="tm-chip" style="font-size:10px"><span class="tm-dot" style="background:${teamColor(name)}"></span>${esc(name)}<span class="tm-x" onclick="removePersonFromSlot('${date}','${slot}','${jsq(name)}');renderAufgaben()">×</span></span>`;
+    const blockNames = {vm:'Vormittag (07:30–11:30)', mi:'Mittag (11:30–16:30)', nm:'Nachmittag (16:30–20:30)'};
+    const blockOrder = ['vm', 'mi', 'nm'];
+    const areas = [{key:'tg', emoji:'🏃', label:'Tagesgeschäft', color:'var(--primary)'}, {key:'bo', emoji:'💼', label:'Backoffice', color:'#0891b2'}];
+
+    h += `<div class="tm-matrix" style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border)">
+      <div style="font-family:Montserrat;font-weight:800;font-size:12px;color:var(--dark);margin-bottom:14px">📋 Zuweisung · ${new Date(date+'T12:00:00').toLocaleDateString('de-DE',{weekday:'long',day:'numeric',month:'long'})}</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">`;
+
+    // Zwei Spalten: TG und BO
+    areas.forEach(area=>{
+      h += `<div style="border:1px solid var(--border);border-radius:12px;padding:14px;background:var(--card)">
+        <div style="font-family:Montserrat;font-weight:700;font-size:13px;color:${area.color};margin-bottom:12px">${area.emoji} ${area.label}</div>`;
+
+      // Drei Zeilen pro Spalte: vm, mi, nm
+      blockOrder.forEach(slot=>{
+        const assigned = getAssignmentMatrixByArea(date, area.key, slot);
+        const remaining = team.filter(m=>!assigned.find(n=>n===m.n));
+        h += `<div style="margin-bottom:12px;padding:10px;background:${area.color}11;border-radius:8px">
+          <div style="font-size:10px;font-weight:700;color:${area.color};margin-bottom:6px;opacity:.8">${blockNames[slot]}</div>
+          <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:6px;min-height:24px">`;
+
+        if(assigned.length){
+          assigned.forEach(name=>{
+            h += `<span class="tm-chip" style="font-size:9px"><span class="tm-dot" style="background:${teamColor(name)}"></span>${esc(name)}<span class="tm-x" onclick="removePersonFromArea('${date}','${area.key}','${slot}','${jsq(name)}');renderAufgaben()">×</span></span>`;
+          });
+        } else {
+          h += `<span style="font-size:9px;color:var(--muted);align-self:center">leer</span>`;
+        }
+
+        h += `</div><select class="asg-sel" style="font-size:9px;padding:3px 6px;width:100%" onchange="if(this.value){addPersonToArea('${date}','${area.key}','${slot}',this.value);renderAufgaben();this.value='';}">
+          <option value="">+ Person</option>`;
+        remaining.forEach(m=>{
+          h += `<option value="${esc(m.n)}">${esc(m.n)}</option>`;
         });
-      } else {
-        h += `<span style="font-size:10px;color:var(--muted)">leer</span>`;
-      }
-      h += `</div><select class="asg-sel" style="font-size:10px;padding:4px 8px" onchange="if(this.value){addPersonToSlot('${date}','${slot}',this.value);renderAufgaben();this.value='';}">
-        <option value="">+ Person</option>`;
-      remaining.forEach(m=>{
-        h += `<option value="${esc(m.n)}">${esc(m.n)}</option>`;
+        h += `</select></div>`;
       });
-      h += `</select></div>`;
+
+      h += `</div>`;
     });
-    h += `</div>`;
+
+    h += `</div></div>`;
   }
-  // Rezepte taxieren Toggle (Punkt 6)
+
+  // Rezepte taxieren Toggle (Punkt 6) — im normalen Task-/Hinweis-Stil
   const rezepteTaxierenActive = getRezepteTaxierenActive(date);
-  h += `<div class="tm-slots" style="margin-top:12px;padding:12px;background:var(--accent-bg);border-radius:8px;border:1px solid var(--accent)">
-    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;font-weight:700;color:var(--accent)">
+  h += `<div style="margin-top:12px;padding:12px;background:var(--amber-bg);border:1px solid var(--amber);border-radius:8px;font-size:12px">
+    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:700;color:var(--amber)">
       <input type="checkbox" ${rezepteTaxierenActive?'checked':''} onchange="setRezepteTaxierenActive('${date}',this.checked);renderAufgaben()">
-      💼 Rezepte taxieren (Punkt 6)
+      📋 Rezepte taxieren
     </label>
-    <div style="font-size:10px;color:var(--dark);margin-top:6px;margin-left:26px">1 Woche vor Abrechnung aktivierbar (manuell)</div>
+    <div style="font-size:10px;color:var(--dark);margin-top:6px;margin-left:26px">Manuell aktivierbar · wird 1 Woche vor Abrechnung fällig</div>
   </div>`;
   return h;
 }
-// Team-Leiste (Namen verwalten, „ich bin", Filter) + TG/BO-Bereichs-Badges
+// Team-Leiste (Namen verwalten, „ich bin", Filter) — alte TG/BO-Bereichs-Badges entfernt
 function renderTeamBar(){
   const team=getTeam();
   const date = currentDate;
-  const chips=team.map(m=>'<span class="tm-chip"><span class="tm-dot" style="background:'+teamColor(m.n)+'"></span>'+esc(m.n)+tzAreaBadgeHtml(date,m.n)+'<span class="tm-x" title="Entfernen" onclick="removeTeamMember(\''+jsq(m.n)+'\')">×</span></span>').join('');
+  const chips=team.map(m=>'<span class="tm-chip"><span class="tm-dot" style="background:'+teamColor(m.n)+'"></span>'+esc(m.n)+'<span class="tm-x" title="Entfernen" onclick="removeTeamMember(\''+jsq(m.n)+'\')">×</span></span>').join('');
   const meOpts=['<option value="">— ich bin …</option>'].concat(team.map(m=>'<option value="'+esc(m.n)+'"'+(getMe()===m.n?' selected':'')+'>'+esc(m.n)+'</option>')).join('');
   let h = `<div class="tm-bar">
     <span class="tm-label">👥 Team</span>
@@ -3892,7 +4030,7 @@ function renderTeamBar(){
     ${team.length?`<select class="asg-sel tm-me" onchange="setMe(this.value)">${meOpts}</select>
     <label class="tm-mine"><input type="checkbox" ${tzOnlyMine?'checked':''} onchange="toggleOnlyMine(this.checked)"> nur meine</label>`:''}
   </div>`;
-  h += renderSlotAssignment();
+  h += renderAssignmentMatrix();
   return h;
 }
 
@@ -4070,11 +4208,11 @@ function renderAufgaben(){
 
   // ── Spezialhandling für Bereichs-Ansichten (BO/TG) ──
   // In BO/TG soll die Verwaltungs-UI nicht angezeigt werden
-  // Stattdessen: flache Aufgabenliste mit Personen-Header
+  // Stattdessen: flache Aufgabenliste mit Personen-Header (aus der Zuweisungs-Matrix)
   if(tzArea!=='alle'){
     let h = '';  // eigener Aufbau für die Bereichs-Ansicht
     const date = currentDate;
-    const personsByArea = getTeam().filter(m=>getTZAreaByDate(date,m.n)===tzArea).map(m=>m.n);
+    const personsByArea = getAreaPersons(date, tzArea);
     const areaLabel = tzArea==='bo'?'Backoffice':'Tagesgeschäft';
 
     h += `<div class="summary">
@@ -4085,7 +4223,14 @@ function renderAufgaben(){
         <div style="font-family:Montserrat;font-weight:700;font-size:12px;color:var(--muted);margin-bottom:8px">👥 Heute zugewiesen:</div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">`;
       personsByArea.forEach(name=>{
-        h += `<span class="tm-chip"><span class="tm-dot" style="background:${teamColor(name)}"></span>${esc(name)}</span>`;
+        // Zeige pro Person ihre Zeitblöcke
+        const blocks = [];
+        ['vm','mi','nm'].forEach(tb=>{
+          if(getAssignmentMatrixByArea(date, tzArea, tb).includes(name)){
+            blocks.push(TZ_TIMES[tb]);
+          }
+        });
+        h += `<span class="tm-chip"><span class="tm-dot" style="background:${teamColor(name)}"></span>${esc(name)}${blocks.length?` · ${blocks.join(', ')}`:''}</span>`;
       });
       h += `</div></div>`;
     } else {
@@ -4118,6 +4263,21 @@ function renderAufgaben(){
     // Bereichs-spezifische Modebar
     h += tzAreaBar();
 
+    // ── Sub-Tabs: Aufgabenliste | Tagesplan (nur für Tagesgeschäft) ──
+    const effMode = (tzArea==='bo') ? 'liste' : tzMode;
+    if(tzArea!=='bo'){
+      h += tzModeToggle();
+    }
+
+    // Tagesplan-Ansicht (nur TG)
+    if(effMode==='kalender' && tzArea==='tg'){
+      h += renderTeamBar();
+      h += buildTagesplan(a, rez);
+      document.getElementById('content').innerHTML = h;
+      return;
+    }
+
+    // Standard-Aufgabenlisten-Ansicht
     if(allSections.length && allSections.some(s=>s.items.length)){
       const me = getMe();
       const team = getTeam();

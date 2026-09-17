@@ -310,16 +310,21 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--dark);min
 .aufg-card.done{border-left-color:var(--teal);opacity:.85}
 .aufg-card.done .aufg-num,.aufg-card.done .aufg-go{color:var(--teal)}
 /* ── Punkt 1+2 (Call 17.09.): Tagesziel-Übersichtskarten + Weiterplan-Status ── */
-.tzu{display:grid;grid-template-columns:2fr 1fr;gap:12px;margin-bottom:16px}
-@media(max-width:760px){.tzu{grid-template-columns:1fr}}
-.tzu-card{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:16px 18px;box-shadow:var(--shadow)}
-.tzu-h{font-family:'Montserrat',sans-serif;font-weight:800;font-size:13px;color:var(--dark);margin-bottom:8px}
-.tzu-big{font-family:'Montserrat',sans-serif;font-weight:900;font-size:22px;color:var(--primary);letter-spacing:-.02em;margin-bottom:10px}
-.tzu-row{display:flex;align-items:center;gap:6px;font-size:12px;margin:5px 0;flex-wrap:wrap;color:var(--dark)}
-.tzu-cnt{font-family:'Montserrat',sans-serif;font-weight:900;color:var(--primary)}
-.tzu-nwp{font-size:10px;color:var(--fire);font-weight:700}
-.tzu-blocks{font-size:10px;color:var(--muted);margin-left:4px}
-.tzu-note{font-size:10px;color:var(--muted);margin-top:8px;line-height:1.4}
+/* Tagesziel kompakt im blauen Kopf (Punkt 1, Call 17.09. – Feedback: 3 Zahlen nebeneinander) */
+.tzh{display:flex;gap:10px;margin:4px 0 10px}
+@media(max-width:560px){.tzh{flex-direction:column}}
+.tzh-cell{flex:1;background:rgba(255,255,255,.13);border-radius:14px;padding:10px 12px;text-align:center}
+.tzh-num{font-family:'Montserrat',sans-serif;font-weight:900;font-size:24px;color:#fff;letter-spacing:-.02em;line-height:1.1}
+.tzh-lbl{font-family:'Montserrat',sans-serif;font-weight:700;font-size:10px;color:rgba(255,255,255,.85);margin-top:3px}
+.tzh-sub{font-size:9px;color:rgba(255,255,255,.65);margin-top:2px}
+.tzh-blk{display:flex;align-items:center;gap:8px;font-size:11px;color:rgba(255,255,255,.85);margin:3px 0}
+.tzh-blk b{font-family:'Montserrat',sans-serif;font-weight:800;color:#fff}
+.tzh-blk-l{width:104px;font-weight:700;font-size:10px;color:rgba(255,255,255,.7)}
+.tzh-arzt{font-size:10px;color:rgba(255,255,255,.7);margin-top:6px;font-weight:600}
+/* Ablehnungs-Review (Punkt 6, Call 17.09.) */
+.tz-sec{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:4px 14px;box-shadow:var(--shadow)}
+.tz-item{display:flex;gap:10px;padding:10px 0;border-bottom:1px solid var(--border)}
+.tz-item:last-child{border-bottom:none}
 .tp-status{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:8px}
 .tps-btn{border:1px solid var(--border);background:var(--card);border-radius:100px;padding:4px 10px;font-size:10px;font-weight:700;font-family:'Montserrat',sans-serif;cursor:pointer;color:var(--muted);transition:all .15s}
 .tps-btn.wp.a{background:var(--teal);border-color:var(--teal);color:#fff}
@@ -819,8 +824,17 @@ function icd3Steller(icd){ return String(icd||'').replace(/[^A-Za-z0-9].*/,'').s
 function getFallStatus(key){ return lsGet('cki_fall_'+key, 'offen'); }
 function cycleFallStatus(key){
   const order=['offen','doing','erledigt'];
+  // 'abgelehnt' ist nicht Teil des Zyklus → indexOf -1 → nächster Klick startet wieder bei 'offen'
   const next=order[(order.indexOf(getFallStatus(key))+1)%order.length];
   lsSet('cki_fall_'+key, next);
+  if(currentView==='folgevo') renderFolgeVO();
+}
+// Punkt 4/5 (Call 17.09.): Folge-VO abgelehnt → Pflicht-Begründung + Ablehnungs-Register
+function rejectFallStatus(key,name){
+  const reason = pflichtBegruendung('Warum wurde die Folge-Verordnung ABGELEHNT?');
+  if(reason===null) return;
+  ablehnungLog('folgevo', key, name, reason);
+  lsSet('cki_fall_'+key, 'abgelehnt');
   if(currentView==='folgevo') renderFolgeVO();
 }
 
@@ -2150,7 +2164,7 @@ function renderRezeptGroup(group, cat){
   const blType = cat==='blanko' ? 'um' : (cat==='blankopot' ? 'pl' : null);
   let headStatus = '';
   if(blType && group.rezepte.length===1 && group.rezepte[0].rezeptNr){
-    headStatus = blStatusSelect(blType, group.rezepte[0].rezeptNr);
+    headStatus = blStatusSelect(blType, group.rezepte[0].rezeptNr, group.name);
   } else if(blType){
     headStatus = '<span style="font-size:9px;color:var(--muted);font-weight:600">Status je Rezept ▶</span>';
   }
@@ -2748,7 +2762,7 @@ function renderRezeptRow(r, type, cat){
 
   // Call 15.09.: Blanko-Status auch hier pflegbar + Klick setzt Patient in den Telefonleitfaden
   const blType = cat==='blanko' ? 'um' : (cat==='blankopot' ? 'pl' : null);
-  const statusSel = (blType && r.rezeptNr) ? blStatusSelect(blType, r.rezeptNr) : '';
+  const statusSel = (blType && r.rezeptNr) ? blStatusSelect(blType, r.rezeptNr, r.name) : '';
   const lfAttrs = ` data-lf-sel="${esc(r.name)}" onclick="selectLeitfadenPatient('${jsq(r.name)}','${jsq(r.mobil||'')}','${jsq(r.therapist||'')}','')"`;
 
   return `<div class="pr"${lfAttrs}>
@@ -3579,7 +3593,11 @@ function renderPotential(){
   CATS.forEach(c=>{ if(catCount[c]) h += `<button class="nr-filter${currentPotFilter===c?' a':''}" onclick="setPotFilter('${c}')">${c} (${catCount[c]})</button>`; });
   h += `</div>`;
 
-  const gefiltert = currentPotFilter==='alle' ? kandidaten : kandidaten.filter(p=>p.dauerCats.includes(currentPotFilter));
+  let gefiltert = currentPotFilter==='alle' ? kandidaten : kandidaten.filter(p=>p.dauerCats.includes(currentPotFilter));
+  // Punkt A3 (Call 17.09.): abgeschlossene Fälle (im Dauerplan / möchte nicht) ausblenden
+  const dpAbgeschlossen = gefiltert.filter(p=>['ja','nein'].includes(dpStatusSt(p.patKey))).length;
+  gefiltert = gefiltert.filter(p=>!['ja','nein'].includes(dpStatusSt(p.patKey)));
+  if(dpAbgeschlossen) h += `<div style="font-size:11px;color:var(--muted);margin-bottom:10px">✔️ ${dpAbgeschlossen} abgeschlossene(r) Fall/Fälle ausgeblendet (im Dauerplan / möchte nicht) – Ablehnungen mit Begründung erscheinen im Backoffice-Review.</div>`;
   if(!gefiltert.length){
     h += `<div class="empty" style="background:var(--teal-bg);border:1px solid var(--teal);color:var(--teal)"><b>🎉 Kein Dauerpotenzial in dieser Kategorie</b></div>`;
     document.getElementById('content').innerHTML = h; return;
@@ -3598,6 +3616,7 @@ function renderPotential(){
         <div class="ac-s">${chips} · ${p.nRez} Rezept${p.nRez!==1?'e':''}${p.kasse?' · '+esc(p.kasse):''}</div>
       </div>
       ${tel}
+      ${dpStatusSelect(p.patKey, p.name)}
     </div>`;
   });
   h += `</div>`;
@@ -3778,7 +3797,7 @@ function renderFolgeVO(){
   });
   h += `</div>`;
 
-  const statusMeta = {offen:{l:'🔴 Offen',c:'var(--accent)',bg:'var(--accent-bg)'}, doing:{l:'🟡 In Arbeit',c:'var(--amber)',bg:'var(--amber-bg)'}, erledigt:{l:'🟢 Erledigt',c:'var(--teal)',bg:'var(--teal-bg)'}};
+  const statusMeta = {offen:{l:'🔴 Offen',c:'var(--accent)',bg:'var(--accent-bg)'}, doing:{l:'🟡 In Arbeit',c:'var(--amber)',bg:'var(--amber-bg)'}, erledigt:{l:'🟢 Erledigt',c:'var(--teal)',bg:'var(--teal-bg)'}, abgelehnt:{l:'🚫 Abgelehnt',c:'var(--fire)',bg:'var(--fire-bg)'}};
   // Handlungs-Badge (nächster Schritt) je Fall
   const handlungMeta = {
     folgevo:{l:'🎫 Folge-VO holen', c:'var(--primary)'},
@@ -3839,6 +3858,7 @@ function renderFolgeVO(){
       </div>
       ${tel}
       <button class="pr-tel" style="background:${sm.bg};color:${sm.c};border:none;cursor:pointer" onclick="event.stopPropagation();cycleFallStatus('${jsq(f.key)}')">${sm.l} ⟳</button>
+      ${f.status!=='abgelehnt'?`<button class="pr-tel" title="Folge-VO abgelehnt (Pflicht-Begründung)" style="background:var(--fire-bg);color:var(--fire);border:none;cursor:pointer" onclick="event.stopPropagation();rejectFallStatus('${jsq(f.key)}','${jsq(f.name)}')">🚫</button>`:''}
     </div>`;
   };
 
@@ -4149,23 +4169,97 @@ function toggleTask(id){ lsSet('cki_check_'+id, !taskDone(id)); renderAufgaben()
 //    Backoffice-Ablehnungs-Review (nur Leitung setzt "endgültig geprüft").
 function tpStatusAll(){ return lsGet('cki_tpstatus', {}); }
 function getTpStatus(date, patKey){ return tpStatusAll()[date+'|'+patKey] || null; }
-function setTpStatus(date, patKey, st){
+
+// Pflicht-Begründung einholen: leer und „Sonstiges" werden abgewiesen, Abbruch → null.
+function pflichtBegruendung(frage){
+  for(;;){
+    let r = prompt('❗ Pflicht-Begründung: '+frage+'\n(Konkret bitte – „Sonstiges" gilt nicht.)');
+    if(r===null) return null;
+    r = r.trim();
+    if(r.length>=3 && !/^sonstige/i.test(r)) return r;
+    alert('Ohne konkrete Begründung geht es nicht weiter.');
+  }
+}
+// Punkt A6 (Call 17.09.): zentrales Ablehnungs-Register → Review im Backoffice.
+// „Endgültig geprüft" (nur Leitung) folgt mit den Microsoft-Konten.
+function ablehnungen(){ return lsGet('cki_ablehnungen', []); }
+function ablehnungLog(typ, ref, name, reason){
+  const all = ablehnungen();
+  all.push({ typ:typ, ref:String(ref||''), name:name||'', reason:reason, ts:Date.now(), by:getMe()||'' });
+  lsSet('cki_ablehnungen', all);
+}
+function ablehnungDel(ts){
+  lsSet('cki_ablehnungen', ablehnungen().filter(e=>e.ts!==ts));
+  renderAufgaben();
+}
+// Punkt 6 (Call 17.09.): Backoffice-Review aller Ablehnungen mit Begründung.
+// „Endgültig geprüft" durch die Leitung kommt erst mit Microsoft-Konten (echte Rechte-Trennung).
+function renderAblehnungsReview(){
+  const typLabel = { weiterplan:'📞 nicht weiter geplant', dauerplan:'🎯 Dauerplan abgelehnt',
+    blanko_um:'📄 Blanko-Umstellung abgelehnt', blanko_pl:'💎 Blanko-Planung abgelehnt', folgevo:'🔄 Folge-VO abgelehnt' };
+  const all = ablehnungen().slice().sort((x,y)=>y.ts-x.ts);
+  let h = `<div class="tz-grp">🚫 Ablehnungen zur Prüfung (${all.length})</div>`;
+  if(!all.length){
+    h += `<div class="empty" style="font-size:12px">Keine offenen Ablehnungen – sobald irgendwo „nicht / abgelehnt" mit Begründung gesetzt wird, erscheint der Fall hier.</div>`;
+  } else {
+    h += `<div class="tz-sec" style="display:block">`;
+    all.forEach(e=>{
+      const d = new Date(e.ts);
+      h += `<div class="tz-item" style="align-items:flex-start">
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:700;font-size:12px">${esc(e.name||e.ref)} <span style="font-size:10px;color:var(--fire);font-weight:700">${typLabel[e.typ]||esc(e.typ)}</span></div>
+          <div style="font-size:11px;color:var(--dark);margin-top:2px">📝 ${esc(e.reason)}</div>
+          <div style="font-size:9px;color:var(--muted);margin-top:2px">${d.toLocaleDateString('de-DE')} ${hhmm(d)}${e.by?' · erfasst von '+esc(e.by):''}</div>
+        </div>
+        <button class="pr-tel" title="Eintrag entfernen" style="border:none;cursor:pointer;background:var(--border);color:var(--muted)" onclick="if(confirm('Eintrag aus der Prüfliste entfernen?'))ablehnungDel(${e.ts})">✕</button>
+      </div>`;
+    });
+    h += `</div>`;
+  }
+  h += `<div style="font-size:10px;color:var(--muted);margin:6px 0 14px">„Endgültig geprüft" nur durch die Leitung kommt mit den Microsoft-Konten · Einträge werden pro Gerät gespeichert.</div>`;
+  return h;
+}
+
+function setTpStatus(date, patKey, st, name){
   const all = tpStatusAll();
   const k = date+'|'+patKey;
   if(!st){ delete all[k]; lsSet('cki_tpstatus', all); renderAufgaben(); return; }
   let reason = '';
   if(st==='nwp'){
-    for(;;){
-      reason = prompt('❗ Pflicht-Begründung: Warum wird dieser Patient NICHT weiter geplant?\n(Konkret bitte – „Sonstiges" gilt nicht.)');
-      if(reason===null) return;                       // abgebrochen → kein Status setzen
-      reason = reason.trim();
-      if(reason.length>=3 && !/^sonstige/i.test(reason)) break;
-      alert('Ohne konkrete Begründung kann „nicht weiter geplant" nicht gesetzt werden.');
-    }
+    reason = pflichtBegruendung('Warum wird dieser Patient NICHT weiter geplant?');
+    if(reason===null) return;                       // abgebrochen → kein Status setzen
+    ablehnungLog('weiterplan', date+'|'+patKey, name, reason);
   }
-  all[k] = { st:st, reason:reason, ts:Date.now(), by:getMe()||'' };
+  all[k] = { st:st, reason:reason, name:name||'', ts:Date.now(), by:getMe()||'' };
   lsSet('cki_tpstatus', all);
   renderAufgaben();
+}
+
+// ── Punkt A3 (Call 17.09.): Dauerplan-Status je Patient ──────────────────────
+//    offen → angesprochen → in Bearbeitung → im Dauerplan ✓ | möchte nicht ✕ (Pflicht-Begründung).
+//    'ja'/'nein' blendet den Patienten aus der Potenzial-Liste und dem Tagesplan aus.
+const DP_STATUS = [['','offen'],['ang','angesprochen'],['ib','in Bearbeitung'],['ja','im Dauerplan ✓'],['nein','möchte nicht ✕']];
+function getDpStatus(patKey){ return lsGet('cki_dpst',{})[patKey] || null; }
+function dpStatusSt(patKey){ const s=getDpStatus(patKey); return s?s.st:''; }
+function dpRerender(){ if(currentView==='potential') renderPotential(); else renderAufgaben(); }
+function setDpStatus(patKey, st, name){
+  const all = lsGet('cki_dpst',{});
+  if(st==='nein'){
+    const reason = pflichtBegruendung('Warum möchte der Patient keinen Dauerplan?');
+    if(reason===null){ dpRerender(); return; }        // Auswahl zurücksetzen
+    all[patKey] = { st:st, reason:reason, name:name||'', ts:Date.now(), by:getMe()||'' };
+    ablehnungLog('dauerplan', patKey, name, reason);
+  } else if(!st){ delete all[patKey]; }
+  else { all[patKey] = { st:st, name:name||'', ts:Date.now(), by:getMe()||'' }; }
+  lsSet('cki_dpst', all);
+  dpRerender();
+}
+function dpStatusSelect(patKey, name){
+  const cur = dpStatusSt(patKey);
+  const col = cur==='ja'?'var(--teal)':cur==='nein'?'var(--fire)':cur?'var(--amber)':'var(--muted)';
+  let o=''; DP_STATUS.forEach(([v,l])=>{ o += '<option value="'+v+'"'+(v===cur?' selected':'')+'>'+l+'</option>'; });
+  return '<select class="asg-sel" style="border-color:'+col+';color:'+col+';font-weight:700" '+
+    'onclick="event.stopPropagation()" onchange="setDpStatus(\''+jsq(patKey)+'\',this.value,\''+jsq(name||'')+'\')">'+o+'</select>';
 }
 
 // ── Punkt 6a (Call 15.09.): Blanko-Aufgaben mit eigenem Status statt einfachem Haken ──
@@ -4177,7 +4271,18 @@ const BL_STATUS = {
 };
 const BL_DONE = { um:['ang','abg'], pl:['fertig'] };
 function getBlStatus(type,nr){ const v=lsGet('cki_blst_'+type+'_'+nr,''); return BL_STATUS[type].some(o=>o[0]===v)?v:''; }
-function setBlStatus(type,nr,v){
+function setBlStatus(type,nr,v,name){
+  // Punkt 4/5 (Call 17.09.): Ablehnung nie ohne Begründung
+  if(v==='abg'){
+    const reason = pflichtBegruendung('Warum wurde die Rezeptänderung ABGELEHNT?');
+    if(reason===null){ // Abbruch → Auswahl zurücksetzen (Neu-Render stellt alten Wert wieder her)
+      if(currentView==='rezepte'){ showRezeptDetail(currentRezeptCat); }
+      else if(currentView==='verlauf'){ renderVerlauf(); }
+      else { renderAufgaben(); }
+      return;
+    }
+    ablehnungLog('blanko_'+type, nr, name, reason);
+  }
   lsSet('cki_blst_'+type+'_'+nr, v);
   // Fertig-Status mit der Abhak-Logik synchron halten (Fortschrittsbalken/Zähler)
   lsSet('cki_check_bl'+type+'|'+nr, BL_DONE[type].includes(v));
@@ -4189,13 +4294,13 @@ function blStatusLabel(type,nr){
   const v=getBlStatus(type,nr); const o=BL_STATUS[type].find(x=>x[0]===v);
   return o?o[1]:'offen';
 }
-function blStatusSelect(type,nr){
+function blStatusSelect(type,nr,name){
   const cur=getBlStatus(type,nr);
   const col = BL_DONE[type].includes(cur) ? (cur==='abg'?'var(--muted)':'var(--teal)') : (cur==='ib'?'var(--amber)':'var(--accent)');
   let o='';
   BL_STATUS[type].forEach(([v,l])=>{ o += '<option value="'+v+'"'+(v===cur?' selected':'')+'>'+l+'</option>'; });
   return '<select class="asg-sel" style="border-color:'+col+';color:'+col+';font-weight:700" '+
-    'onclick="event.stopPropagation()" onchange="setBlStatus(\''+type+'\',\''+jsq(String(nr))+'\',this.value)">'+o+'</select>';
+    'onclick="event.stopPropagation()" onchange="setBlStatus(\''+type+'\',\''+jsq(String(nr))+'\',this.value,\''+jsq(name||'')+'\')">'+o+'</select>';
 }
 // ── Kategorie auf-/zuklappen (Standard: zu) ──
 function secOpen(key,def){ return lsGet('cki_secopen_'+key, def===undefined?false:!!def); }
@@ -4538,37 +4643,34 @@ function tageszielHeuteStats(a){
       if(st && st.st==='nwp'){ vl.tot++; vl.blk[blkKey][1]++; vl.abgelehnt++; }
       else add(vl, blkKey, (st && st.st==='wp') || tasks.every(t=>taskDone(t.id)));
     }
-    if(dauerKeys.has(p.key))                                    // DP: Dauerplan-Kandidat heute im Haus
-      add(dp, blkKey, taskDone('dauer|'+p.key));
+    if(dauerKeys.has(p.key)){                                   // DP: Dauerplan-Kandidat heute im Haus
+      const ds = dpStatusSt(p.key);                             // Punkt 3 (Call 17.09.): DP-Status zählt mit
+      if(ds==='nein'){ dp.tot++; dp.blk[blkKey][1]++; dp.abgelehnt++; }
+      else add(dp, blkKey, ds==='ja' || taskDone('dauer|'+p.key));
+    }
     if(fvoTasks.length)                                         // Ärzte: Folge-VO beim Arzt anfordern
       add(arzt, blkKey, fvoTasks.every(t=>taskDone(t.id)));
   });
   return {vl:vl, dp:dp, arzt:arzt};
 }
-// Übersichtskarten oben im Tagesziel: eine Karte Patienten (€ · V/L · DP), eine Karte Ärzte.
+// Tagesziel kompakt im blauen Kopf: 3 Zahlen nebeneinander (💶 Zuzahlung · 📞 weitergeplant · 🎯 Dauerplan),
+// darunter die drei Schichten (Vormittag/Mittag/Nachmittag), jeweils wieder in die drei Zahlen unterteilt.
 function tageszielUebersichtHTML(a){
   const s = tageszielHeuteStats(a);
-  const BLK = [['vm','🌅'],['mi','☀️'],['nm','🌆']];
-  const blocks = o => BLK.filter(b=>o.blk[b[0]][1]>0).map(b=>b[1]+' '+o.blk[b[0]][0]+'/'+o.blk[b[0]][1]).join(' · ');
-  const row = (ico, label, o, extra)=>`<div class="tzu-row">${ico} ${label}:
-      <span class="tzu-cnt">${o.done}/${o.tot}</span>${o.abgelehnt?` <span class="tzu-nwp">· ${o.abgelehnt}× nicht (begründet)</span>`:''}
-      ${o.tot?`<span class="tzu-blocks">${blocks(o)}</span>`:''}${extra||''}</div>`;
-  return `<div class="tzu">
-    <div class="tzu-card">
-      <div class="tzu-h">🎯 Tagesziel heute · Patienten im Haus</div>
-      <div class="tzu-big">💶 – € · 📞 ${s.vl.tot} V/L · 🎯 ${s.dp.tot} DP</div>
-      <div class="tzu-row">💶 Rezeptgebühren einsammeln: <span class="tzu-cnt" style="color:var(--amber)">wartet auf Export (Luis)</span></div>
-      ${row('📞','V/L weitergeplant', s.vl)}
-      ${row('🎯','Dauerplan angesprochen', s.dp)}
-      <div class="tzu-note">Am Tagesende zählt: eingesammelt · weitergeplant · in Dauerplan überführt. Status direkt im 📅 Tagesplan setzen.</div>
-    </div>
-    <div class="tzu-card">
-      <div class="tzu-h">👨‍⚕️ Ärzte</div>
-      <div class="tzu-big" style="color:var(--amber)">🔄 ${s.arzt.tot}</div>
-      ${row('🔄','Folge-VO angefordert', s.arzt)}
-      <div class="tzu-note">Folge-Verordnungen heutiger Patienten beim Arzt anstoßen.</div>
-    </div>
+  const cnt = o => o.done+'/'+o.tot;
+  let h = `<div class="tzh">
+    <div class="tzh-cell"><div class="tzh-num">–</div><div class="tzh-lbl">💶 Zuzahlung</div><div class="tzh-sub">wartet auf Export (Luis)</div></div>
+    <div class="tzh-cell"><div class="tzh-num">${cnt(s.vl)}</div><div class="tzh-lbl">📞 weitergeplant</div>${s.vl.abgelehnt?`<div class="tzh-sub">${s.vl.abgelehnt}× nicht (begründet)</div>`:''}</div>
+    <div class="tzh-cell"><div class="tzh-num">${cnt(s.dp)}</div><div class="tzh-lbl">🎯 Dauerplan angesprochen</div>${s.dp.abgelehnt?`<div class="tzh-sub">${s.dp.abgelehnt}× nicht (begründet)</div>`:''}</div>
   </div>`;
+  const BLK = [['vm','🌅 Vormittag'],['mi','☀️ Mittag'],['nm','🌆 Nachmittag']];
+  const rows = BLK.filter(b=>s.vl.blk[b[0]][1]+s.dp.blk[b[0]][1]>0).map(b=>{
+    const v=s.vl.blk[b[0]], d=s.dp.blk[b[0]];
+    return `<div class="tzh-blk"><span class="tzh-blk-l">${b[1]}</span> 💶 – · 📞 <b>${v[0]}/${v[1]}</b> · 🎯 <b>${d[0]}/${d[1]}</b></div>`;
+  }).join('');
+  if(rows) h += `<div style="margin-bottom:6px">${rows}</div>`;
+  if(s.arzt.tot) h += `<div class="tzh-arzt">👨‍⚕️ Ärzte: 🔄 ${cnt(s.arzt)} Folge-VO angefordert</div>`;
+  return h;
 }
 
 // Baut die Kalender-/Tagesplan-Ansicht: alle Patienten mit Termin am gewählten Tag,
@@ -4608,7 +4710,7 @@ function buildTagesplan(a, rez){
   const me = getMe();
   let liste = Object.values(patAppt).map(p=>{
     let tasks = (byKey[p.key]||[]).slice();
-    if(dauerKeys.has(p.key)){
+    if(dauerKeys.has(p.key) && !['ja','nein'].includes(dpStatusSt(p.key))){   // Punkt 3: abgeschlossene DP-Fälle ausblenden
       const cats = dauerKeys.get(p.key)||[];
       const catStr = cats.length ? esc(cats.join(', '))+' dauerplanfähig' : 'dauerplanfähig';
       tasks.push({id:'dauer|'+p.key, cat:'dauer', ico:'🎯', txt:'Dauerplan ansprechen', sub:catStr+' · noch keine Dauer-Maske'});
@@ -4665,8 +4767,8 @@ function buildTagesplan(a, rez){
     if(p.tasks.some(t=>t.cat==='ft'||t.cat==='fvo')){
       const isWp = tpst && tpst.st==='wp', isNwp = tpst && tpst.st==='nwp';
       h += `<div class="tp-status">
-        <button class="tps-btn wp${isWp?' a':''}" onclick="setTpStatus('${day}','${jsq(p.key)}',${isWp?'null':"'wp'"})">✅ weiter geplant</button>
-        <button class="tps-btn nwp${isNwp?' a':''}" onclick="setTpStatus('${day}','${jsq(p.key)}',${isNwp?'null':"'nwp'"})">🚫 nicht weiter geplant</button>
+        <button class="tps-btn wp${isWp?' a':''}" onclick="setTpStatus('${day}','${jsq(p.key)}',${isWp?'null':"'wp'"},'${jsq(p.name)}')">✅ weiter geplant</button>
+        <button class="tps-btn nwp${isNwp?' a':''}" onclick="setTpStatus('${day}','${jsq(p.key)}',${isNwp?'null':"'nwp'"},'${jsq(p.name)}')">🚫 nicht weiter geplant</button>
         ${isNwp&&tpst.reason?`<span class="tps-reason">📝 ${esc(tpst.reason)}${tpst.by?' · '+esc(tpst.by):''}</span>`:''}
       </div>`;
     }
@@ -4915,13 +5017,13 @@ function buildAufgabenSections(a){
         id:'blum|'+p.rezeptNr,
         main:esc(p.name),
         sub:`${p.heilmittel?esc(p.heilmittel):''}${p.icd?' · '+esc(p.icd):''} · beim Arzt Umstellung anstoßen`,
-        statusSel: blStatusSelect('um',p.rezeptNr) })) },
+        statusSel: blStatusSelect('um',p.rezeptNr,p.name) })) },
     { key:'blpl', ico:'💎', color:'var(--accent)', ttl:'Blanko-VO zu Ende planen', go:"switchView('rezepte')",
       items: blPl.map(p=>({
         id:'blpl|'+p.rezeptNr,
         main:esc(p.name),
         sub:`${p.blankoVerplant!=null?p.blankoVerplant+' von '+p.blankoZiel+' verplant':''}${p.tageUebrig!=null?' · noch '+p.tageUebrig+' Tage gültig':''}`,
-        statusSel: blStatusSelect('pl',p.rezeptNr) })) },
+        statusSel: blStatusSelect('pl',p.rezeptNr,p.name) })) },
     { key:'kap', ico:'📊', color:'var(--primary)', ttl:'Kapazität 4 Wochen im Voraus bereinigen · Ziel 87 %', go:"switchView('controlling')",
       items: kapItems }
   ];
@@ -5021,19 +5123,14 @@ function renderAufgaben(){
         <div class="tz-bar" style="background:rgba(255,255,255,.25)"><div class="tz-fill" style="width:${Math.max(boPct,6)}%;background:#0891b2">${boPct}%</div></div>
       </div>`;
     } else {
-      h += `<div style="margin-bottom:16px">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-          <div style="font-family:Montserrat;font-weight:700;font-size:12px;color:#fff">Fortschritt Tagesgeschäft</div>
-          <div style="font-family:Montserrat;font-weight:900;font-size:13px;color:var(--on-primary-tg)">${tgDone} von ${tgTotal} erledigt</div>
-        </div>
-        <div class="tz-bar" style="background:rgba(255,255,255,.25)"><div class="tz-fill" style="width:${Math.max(tgPct,6)}%;background:#003a5e">${tgPct}%</div></div>
-      </div>`;
+      // Punkt 1 (Call 17.09.): statt Fortschrittsbalken die drei Tagesziel-Zahlen + Schichten
+      h += tageszielUebersichtHTML(a);
     }
 
     h += `</div>`;
 
-    // ── Punkt 1 (Call 17.09.): Übersichtskarten auch in der Tagesgeschäft-Ansicht ──
-    if(tzArea==='tg') h += tageszielUebersichtHTML(a);
+    // ── Punkt 6 (Call 17.09.): Ablehnungs-Review nur im Backoffice ──
+    if(tzArea==='bo') h += renderAblehnungsReview();
 
     // Bereichs-spezifische Modebar
     h += tzAreaBar();
@@ -5117,10 +5214,8 @@ function renderAufgaben(){
       ${boTotal>0?`<div class="si"><div class="si-l">💼 Backoffice</div><div class="si-v" style="color:var(--on-primary-bo)">${boPct}%</div><div class="si-s">${boDone}/${boTotal} Aufgaben</div></div>`:''}
       <div class="si"><div class="si-l">Fortschritt</div><div class="si-v"><div style="width:100%;background:var(--border);border-radius:6px;height:20px;overflow:hidden"><div style="width:${pct}%;background:${barColor};height:100%;transition:width .3s"></div></div></div></div>
     </div>
+    ${tageszielUebersichtHTML(a)}
   </div>`;
-
-  // ── Punkt 1 (Call 17.09.): Tagesziel-Übersicht – heutige Patienten (€ · V/L · DP) + Ärzte ──
-  h += tageszielUebersichtHTML(a);
 
   if(totalUnassigned>0){
     h += '<div style="background:var(--amber);color:#fff;border-radius:12px;padding:12px 16px;margin-bottom:14px;font-family:Montserrat;font-weight:700;font-size:13px">⚠️ '+totalUnassigned+' Aufgaben nicht zugewiesen</div>';

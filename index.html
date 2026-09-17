@@ -309,6 +309,24 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--dark);min
 .aufg-card .aufg-go{margin-top:8px;font-size:11px;font-weight:800;color:var(--primary);font-family:'Montserrat',sans-serif}
 .aufg-card.done{border-left-color:var(--teal);opacity:.85}
 .aufg-card.done .aufg-num,.aufg-card.done .aufg-go{color:var(--teal)}
+/* ── Punkt 1+2 (Call 17.09.): Tagesziel-Übersichtskarten + Weiterplan-Status ── */
+.tzu{display:grid;grid-template-columns:2fr 1fr;gap:12px;margin-bottom:16px}
+@media(max-width:760px){.tzu{grid-template-columns:1fr}}
+.tzu-card{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:16px 18px;box-shadow:var(--shadow)}
+.tzu-h{font-family:'Montserrat',sans-serif;font-weight:800;font-size:13px;color:var(--dark);margin-bottom:8px}
+.tzu-big{font-family:'Montserrat',sans-serif;font-weight:900;font-size:22px;color:var(--primary);letter-spacing:-.02em;margin-bottom:10px}
+.tzu-row{display:flex;align-items:center;gap:6px;font-size:12px;margin:5px 0;flex-wrap:wrap;color:var(--dark)}
+.tzu-cnt{font-family:'Montserrat',sans-serif;font-weight:900;color:var(--primary)}
+.tzu-nwp{font-size:10px;color:var(--fire);font-weight:700}
+.tzu-blocks{font-size:10px;color:var(--muted);margin-left:4px}
+.tzu-note{font-size:10px;color:var(--muted);margin-top:8px;line-height:1.4}
+.tp-status{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:8px}
+.tps-btn{border:1px solid var(--border);background:var(--card);border-radius:100px;padding:4px 10px;font-size:10px;font-weight:700;font-family:'Montserrat',sans-serif;cursor:pointer;color:var(--muted);transition:all .15s}
+.tps-btn.wp.a{background:var(--teal);border-color:var(--teal);color:#fff}
+.tps-btn.nwp.a{background:var(--fire);border-color:var(--fire);color:#fff}
+.tps-reason{font-size:10px;color:var(--fire);font-weight:600}
+.tp-card.tps-wp{border-left:4px solid var(--teal)}
+.tp-card.tps-nwp{border-left:4px solid var(--fire)}
 .tz-wrap{background:var(--card);border-radius:16px;padding:18px 20px;border:1px solid var(--border);box-shadow:var(--shadow);margin-bottom:18px}
 .tz-bar{height:24px;background:var(--border);border-radius:100px;overflow:hidden}
 .tz-fill{height:24px;line-height:24px;text-align:right;padding-right:10px;color:#fff;font-family:'Montserrat',sans-serif;font-weight:800;font-size:12px;border-radius:100px;transition:width .4s}
@@ -2497,9 +2515,13 @@ function renderOffene(){
   //    + spätester Termin überhaupt (belegt ODER geplant) → daran erkennt man, ob der
   //      Export Zukunftstermine enthält (dann kann "hat Folgetermin?" geprüft werden).
   let stichtag = null, maxAll = null;
+  // Bug-Fix (Call 17.09.): Exporte mit Zukunftsterminen markieren auch GEBUCHTE künftige
+  // Termine als "belegt". Ein Termin in der Zukunft ist aber keine wahrgenommene Behandlung –
+  // sonst rutscht der Stichtag nach vorn und "Letzte Behandlung" zeigt ein Zukunftsdatum.
+  const heuteEnde = new Date(); heuteEnde.setHours(23,59,59,999);
   DATA.cells.forEach(c=>{
     if(!c.start) return;
-    if(c.belegt && (!stichtag || c.start>stichtag)) stichtag = c.start;
+    if(c.belegt && c.start<=heuteEnde && (!stichtag || c.start>stichtag)) stichtag = c.start;
     if(!maxAll || c.start>maxAll) maxAll = c.start;
   });
   if(!stichtag) stichtag = new Date();
@@ -2532,8 +2554,8 @@ function renderOffene(){
         patKey: c.patKey||patKeyFor(c)
       };
     }
-    // Wahrgenommener Termin
-    if(c.termIdent && c.belegt){
+    // Wahrgenommener Termin – nur bis zum Stichtag (Zukunftstermine sind keine Behandlung, Bug-Fix 17.09.)
+    if(c.termIdent && c.belegt && c.start && c.start.getTime()<=stT){
       rezMap[k].belegteTermine.add(c.termIdent);
       if(!rezMap[k].lastTerminDate || c.start>rezMap[k].lastTerminDate) rezMap[k].lastTerminDate = c.start;
     }
@@ -3251,6 +3273,9 @@ function renderDpToggle(){
 
 function collectRezepte(){
   const today = new Date(); today.setHours(0,0,0,0);
+  // Bug-Fix (Call 17.09.): gebuchte Zukunftstermine sind im Export auch "belegt" –
+  // sie zählen NICHT als erbracht/letzte Behandlung, sondern nur als Zukunftstermin.
+  const todayEnd = new Date(); todayEnd.setHours(23,59,59,999);
   const rezMap = {};
   const excl = new Set();
   DATA.cells.forEach(c=>{
@@ -3275,7 +3300,7 @@ function collectRezepte(){
     }
     if(!rezMap[k].bearbStatus && c.bearbStatus) rezMap[k].bearbStatus = c.bearbStatus;  // ersten nicht-leeren Status übernehmen
     if(c.dauertermin) rezMap[k].dauerJ++; else rezMap[k].dauerN++;
-    if(c.termIdent && c.belegt){
+    if(c.termIdent && c.belegt && c.start && c.start<=todayEnd){
       rezMap[k].belegteTermine.add(c.termIdent);
       if(!rezMap[k].lastTerminDate || c.start>rezMap[k].lastTerminDate) rezMap[k].lastTerminDate=c.start;
     }
@@ -4117,6 +4142,32 @@ function gotoFolgeVO(){ currentFvoFilter='offen'; switchView('folgevo'); }
 function taskDone(id){ return lsGet('cki_check_'+id, false); }
 function toggleTask(id){ lsSet('cki_check_'+id, !taskDone(id)); renderAufgaben(); }
 
+// ── Punkt 1+2 (Call 17.09.): Weiterplan-Status pro Patient & Tag ──────────────
+//    'wp'  = weiter geplant ✓
+//    'nwp' = nicht weiter geplant → PFLICHT-Begründung ("Sonstiges" ist verboten).
+//    Alle nwp-Fälle bleiben mit Begründung gespeichert → Basis für das
+//    Backoffice-Ablehnungs-Review (nur Leitung setzt "endgültig geprüft").
+function tpStatusAll(){ return lsGet('cki_tpstatus', {}); }
+function getTpStatus(date, patKey){ return tpStatusAll()[date+'|'+patKey] || null; }
+function setTpStatus(date, patKey, st){
+  const all = tpStatusAll();
+  const k = date+'|'+patKey;
+  if(!st){ delete all[k]; lsSet('cki_tpstatus', all); renderAufgaben(); return; }
+  let reason = '';
+  if(st==='nwp'){
+    for(;;){
+      reason = prompt('❗ Pflicht-Begründung: Warum wird dieser Patient NICHT weiter geplant?\n(Konkret bitte – „Sonstiges" gilt nicht.)');
+      if(reason===null) return;                       // abgebrochen → kein Status setzen
+      reason = reason.trim();
+      if(reason.length>=3 && !/^sonstige/i.test(reason)) break;
+      alert('Ohne konkrete Begründung kann „nicht weiter geplant" nicht gesetzt werden.');
+    }
+  }
+  all[k] = { st:st, reason:reason, ts:Date.now(), by:getMe()||'' };
+  lsSet('cki_tpstatus', all);
+  renderAufgaben();
+}
+
 // ── Punkt 6a (Call 15.09.): Blanko-Aufgaben mit eigenem Status statt einfachem Haken ──
 //   'um' = Auf Blanko-VO umstellen:  offen → in Bearbeitung → angepasst ✓ | abgelehnt ✓
 //   'pl' = Blanko-VO zu Ende planen: offen → in Bearbeitung → fertig ✓
@@ -4455,6 +4506,71 @@ function dauerKandidatKeys(){
   }catch(e){}
   return map;
 }
+// ── Punkt 1 (Call 17.09.): Tagesziel-Übersicht "heutige Patienten" ────────────
+// Soll = heutige Patienten mit €-/V·L-/DP-Bedarf, Ist = Status/Haken.
+// Zählt pro Zeitblock (Vormittag/Mittag/Nachmittag) und gesamt.
+function tageszielHeuteStats(a){
+  const day = currentDate;
+  // Aufgaben je Patient (nur die drei Tagesziel-Kategorien)
+  const byKey = {};
+  const push = (key,cat,id)=>{ if(key) (byKey[key]=byKey[key]||[]).push({cat:cat,id:id}); };
+  a.typB.forEach(r=>push(r.patKey,'ft','ft|'+r.rezeptNr));
+  a.folgeVO.forEach(r=>push(r.patKey,'fvo','fvo|'+r.rezeptNr));
+  const dauerKeys = dauerKandidatKeys();
+  // heutige Patienten (früheste Termin-Uhrzeit → Zeitblock)
+  const pat = {};
+  DATA.cells.forEach(c=>{
+    if(c.dateStr!==day || c.belArt!=='R' || !c.patNach || !c.termIdent || !c.belegt) return;
+    const k = c.patKey; if(!k) return;
+    if(!pat[k]) pat[k] = {key:k, start:c.start};
+    else if(c.start<pat[k].start) pat[k].start = c.start;
+  });
+  const mk = ()=>({tot:0, done:0, abgelehnt:0, blk:{vm:[0,0], mi:[0,0], nm:[0,0]}});
+  const vl = mk(), dp = mk(), arzt = mk();
+  const add = (o,blkKey,isDone)=>{ o.tot++; o.blk[blkKey][1]++; if(isDone){ o.done++; o.blk[blkKey][0]++; } };
+  Object.values(pat).forEach(p=>{
+    const tasks = byKey[p.key]||[];
+    const blkKey = timeBlockOfHour(p.start.getHours()+p.start.getMinutes()/60);
+    const st = getTpStatus(day, p.key);
+    const ftTasks = tasks.filter(t=>t.cat==='ft');
+    const fvoTasks = tasks.filter(t=>t.cat==='fvo');
+    if(ftTasks.length || fvoTasks.length){                     // V/L: letzter/vorletzter Termin → weiterplanen
+      if(st && st.st==='nwp'){ vl.tot++; vl.blk[blkKey][1]++; vl.abgelehnt++; }
+      else add(vl, blkKey, (st && st.st==='wp') || tasks.every(t=>taskDone(t.id)));
+    }
+    if(dauerKeys.has(p.key))                                    // DP: Dauerplan-Kandidat heute im Haus
+      add(dp, blkKey, taskDone('dauer|'+p.key));
+    if(fvoTasks.length)                                         // Ärzte: Folge-VO beim Arzt anfordern
+      add(arzt, blkKey, fvoTasks.every(t=>taskDone(t.id)));
+  });
+  return {vl:vl, dp:dp, arzt:arzt};
+}
+// Übersichtskarten oben im Tagesziel: eine Karte Patienten (€ · V/L · DP), eine Karte Ärzte.
+function tageszielUebersichtHTML(a){
+  const s = tageszielHeuteStats(a);
+  const BLK = [['vm','🌅'],['mi','☀️'],['nm','🌆']];
+  const blocks = o => BLK.filter(b=>o.blk[b[0]][1]>0).map(b=>b[1]+' '+o.blk[b[0]][0]+'/'+o.blk[b[0]][1]).join(' · ');
+  const row = (ico, label, o, extra)=>`<div class="tzu-row">${ico} ${label}:
+      <span class="tzu-cnt">${o.done}/${o.tot}</span>${o.abgelehnt?` <span class="tzu-nwp">· ${o.abgelehnt}× nicht (begründet)</span>`:''}
+      ${o.tot?`<span class="tzu-blocks">${blocks(o)}</span>`:''}${extra||''}</div>`;
+  return `<div class="tzu">
+    <div class="tzu-card">
+      <div class="tzu-h">🎯 Tagesziel heute · Patienten im Haus</div>
+      <div class="tzu-big">💶 – € · 📞 ${s.vl.tot} V/L · 🎯 ${s.dp.tot} DP</div>
+      <div class="tzu-row">💶 Rezeptgebühren einsammeln: <span class="tzu-cnt" style="color:var(--amber)">wartet auf Export (Luis)</span></div>
+      ${row('📞','V/L weitergeplant', s.vl)}
+      ${row('🎯','Dauerplan angesprochen', s.dp)}
+      <div class="tzu-note">Am Tagesende zählt: eingesammelt · weitergeplant · in Dauerplan überführt. Status direkt im 📅 Tagesplan setzen.</div>
+    </div>
+    <div class="tzu-card">
+      <div class="tzu-h">👨‍⚕️ Ärzte</div>
+      <div class="tzu-big" style="color:var(--amber)">🔄 ${s.arzt.tot}</div>
+      ${row('🔄','Folge-VO angefordert', s.arzt)}
+      <div class="tzu-note">Folge-Verordnungen heutiger Patienten beim Arzt anstoßen.</div>
+    </div>
+  </div>`;
+}
+
 // Baut die Kalender-/Tagesplan-Ansicht: alle Patienten mit Termin am gewählten Tag,
 // bei denen wirklich etwas zu tun ist (Abrechnen / Folgetermin / Folge-VO / Dauer-Potenzial).
 // Nutzt dieselben Aufgaben-IDs wie die Listenansicht → Abhaken & Zuweisen sind synchron.
@@ -4527,7 +4643,8 @@ function buildTagesplan(a, rez){
   // 5) Patienten-Karten (chronologisch)
   liste.forEach(p=>{
     const leist = [...p.leist][0] || '';
-    h += `<div class="tp-card">
+    const tpst = getTpStatus(day, p.key);   // Punkt 2 (Call 17.09.)
+    h += `<div class="tp-card${tpst?(tpst.st==='wp'?' tps-wp':' tps-nwp'):''}">
       <div class="tp-time">${hhmm(p.start)}</div>
       <div class="tp-main">
         <div class="tp-pat">${esc(p.name)}${p.therapist?`<span class="tp-th"> · ${esc(p.therapist)}</span>`:''}</div>
@@ -4543,7 +4660,17 @@ function buildTagesplan(a, rez){
         ${assigneeChip(t.id,t.cat,pTdef)}
       </div>`;
     });
-    h += `</div></div>`;
+    h += `</div>`;
+    // ── Punkt 2 (Call 17.09.): Weiterplan-Status für Patienten mit V/L-Aufgabe ──
+    if(p.tasks.some(t=>t.cat==='ft'||t.cat==='fvo')){
+      const isWp = tpst && tpst.st==='wp', isNwp = tpst && tpst.st==='nwp';
+      h += `<div class="tp-status">
+        <button class="tps-btn wp${isWp?' a':''}" onclick="setTpStatus('${day}','${jsq(p.key)}',${isWp?'null':"'wp'"})">✅ weiter geplant</button>
+        <button class="tps-btn nwp${isNwp?' a':''}" onclick="setTpStatus('${day}','${jsq(p.key)}',${isNwp?'null':"'nwp'"})">🚫 nicht weiter geplant</button>
+        ${isNwp&&tpst.reason?`<span class="tps-reason">📝 ${esc(tpst.reason)}${tpst.by?' · '+esc(tpst.by):''}</span>`:''}
+      </div>`;
+    }
+    h += `</div>`;
     if(p.mobil) h += `<a class="tp-tel" href="tel:${esc(String(p.mobil).replace(/\s+/g,''))}" title="anrufen">📞 ${esc(p.mobil)}</a>`;
     h += `</div>`;
   });
@@ -4905,6 +5032,9 @@ function renderAufgaben(){
 
     h += `</div>`;
 
+    // ── Punkt 1 (Call 17.09.): Übersichtskarten auch in der Tagesgeschäft-Ansicht ──
+    if(tzArea==='tg') h += tageszielUebersichtHTML(a);
+
     // Bereichs-spezifische Modebar
     h += tzAreaBar();
 
@@ -4988,6 +5118,9 @@ function renderAufgaben(){
       <div class="si"><div class="si-l">Fortschritt</div><div class="si-v"><div style="width:100%;background:var(--border);border-radius:6px;height:20px;overflow:hidden"><div style="width:${pct}%;background:${barColor};height:100%;transition:width .3s"></div></div></div></div>
     </div>
   </div>`;
+
+  // ── Punkt 1 (Call 17.09.): Tagesziel-Übersicht – heutige Patienten (€ · V/L · DP) + Ärzte ──
+  h += tageszielUebersichtHTML(a);
 
   if(totalUnassigned>0){
     h += '<div style="background:var(--amber);color:#fff;border-radius:12px;padding:12px 16px;margin-bottom:14px;font-family:Montserrat;font-weight:700;font-size:13px">⚠️ '+totalUnassigned+' Aufgaben nicht zugewiesen</div>';

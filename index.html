@@ -3119,34 +3119,50 @@ function renderControlling(){
     {key:'krank',       label:'Krank',       color:'var(--accent)'}
   ];
   const abwByTh = {};   // th -> {urlaub:Set,fortbildung:Set,krank:Set}
+  const workByTh2 = {}; // th -> Set(dateStr) mit Arbeitszeit (AZ=J) → gearbeitete Tage
   const catTotal = {urlaub:0, fortbildung:0, krank:0};
   DATA.cells.forEach(c=>{
     if(!c.therapist || !dset.has(c.dateStr)) return;
+    if(c.azFlag) (workByTh2[c.therapist] = workByTh2[c.therapist] || new Set()).add(c.dateStr);
     const k = abwKategorie(c.bezeichnung); if(!k) return;
     const rec = abwByTh[c.therapist] = abwByTh[c.therapist] || {urlaub:new Set(),fortbildung:new Set(),krank:new Set()};
     rec[k].add(c.dateStr);
   });
   const abwRows = Object.entries(abwByTh).map(([name,r])=>{
     const u=r.urlaub.size, f=r.fortbildung.size, k=r.krank.size;
-    return {name, urlaub:u, fortbildung:f, krank:k, total:u+f+k};
+    // Gearbeitete Tage = Tage mit Arbeitszeit, die kein reiner Abwesenheitstag sind
+    // (Tag mit Arbeitszeit UND Abwesenheit zählt als gearbeitet – Teil-Abwesenheit)
+    const abwDays = new Set([...r.urlaub, ...r.fortbildung, ...r.krank]);
+    let gearb = 0; (workByTh2[name]||new Set()).forEach(d=>{ if(!abwDays.has(d)) gearb++; });
+    return {name, urlaub:u, fortbildung:f, krank:k, total:u+f+k, gearb};
   }).filter(r=>r.total>0).sort((a,b)=>b.total-a.total);
   abwRows.forEach(r=>{ catTotal.urlaub+=r.urlaub; catTotal.fortbildung+=r.fortbildung; catTotal.krank+=r.krank; });
   const abwTotal = catTotal.urlaub + catTotal.fortbildung + catTotal.krank;
+  // Gearbeitete Tage über ALLE Mitarbeiter mit Arbeitszeit im Zeitraum (auch ohne Abwesenheit)
+  let workTotal = 0, workMA = 0;
+  Object.entries(workByTh2).forEach(([name,s])=>{
+    const r = abwByTh[name];
+    const abwDays = r ? new Set([...r.urlaub, ...r.fortbildung, ...r.krank]) : null;
+    let g = 0; s.forEach(d=>{ if(!abwDays || !abwDays.has(d)) g++; });
+    if(g>0){ workTotal += g; workMA++; }
+  });
 
   const hPerDay = CONFIG.tagesSollStd;                 // Stunden je Abwesenheitstag
   const toH = tage => (tage*hPerDay).toFixed(0);       // Tage → Stunden
-  const abwInfo = `<b>Abwesenheiten pro Mitarbeiter</b><br>Gezählt werden Tage mit einer Abwesenheits-Bezeichnung in THEORG, aufgeschlüsselt nach <b>Urlaub</b>, <b>Fortbildung</b> und <b>Krank</b>. Der Balken zeigt je Mitarbeiter die Zusammensetzung.<br>Stunden = Tage × ${hPerDay} h (Tages-Sollzeit).`;
-  h += `<div class="st">🏖️ Abwesenheiten <span class="sub">Urlaub · Fortbildung · Krank · in Tagen & Stunden</span> ${infoI(abwInfo)}</div>`;
+  const abwInfo = `<b>Abwesenheiten & gearbeitete Tage pro Mitarbeiter</b><br>Gezählt werden Tage mit einer Abwesenheits-Bezeichnung in THEORG, aufgeschlüsselt nach <b>Urlaub</b>, <b>Fortbildung</b> und <b>Krank</b>. Der Balken zeigt je Mitarbeiter die Zusammensetzung.<br><b>💼 Gearbeitet</b> = Tage mit erfasster Arbeitszeit (AZ=J), die kein reiner Abwesenheitstag sind. Tage mit Arbeitszeit <u>und</u> Abwesenheit (Teil-Abwesenheit) zählen als gearbeitet.<br><b>Fehlquote</b> = Fehltage ÷ (Fehltage + gearbeitete Tage).<br>⚠️ Stunden = Tage × ${hPerDay} h — <b>pauschale ${hPerDay}h-Annahme</b> für alle Mitarbeiter. Die tatsächlichen Stunden je Tag sind individuell verschieden; exakt wird das erst mit Mitarbeiterstammdaten aus dem Export.`;
+  h += `<div class="st">🏖️ Abwesenheiten & gearbeitete Tage <span class="sub">Urlaub · Fortbildung · Krank · 💼 Gearbeitet · Stunden = ${hPerDay}h-Annahme</span> ${infoI(abwInfo)}</div>`;
   h += `<div class="sg" style="margin-bottom:14px">
-    <div class="si"><div class="si-l">🏖️ Urlaub</div><div class="si-v">${catTotal.urlaub} T</div><div class="si-s">${toH(catTotal.urlaub)} h gesamt</div></div>
-    <div class="si"><div class="si-l">🎓 Fortbildung</div><div class="si-v">${catTotal.fortbildung} T</div><div class="si-s">${toH(catTotal.fortbildung)} h gesamt</div></div>
-    <div class="si"><div class="si-l">🤒 Krank</div><div class="si-v">${catTotal.krank} T</div><div class="si-s">${toH(catTotal.krank)} h gesamt</div></div>
-    <div class="si"><div class="si-l">Gesamt</div><div class="si-v">${abwTotal} T</div><div class="si-s">${toH(abwTotal)} h · ${abwRows.length} MA</div></div>
-  </div>`;
+    <div class="si"><div class="si-l">🏖️ Urlaub</div><div class="si-v">${catTotal.urlaub} T</div><div class="si-s">${toH(catTotal.urlaub)} h gesamt*</div></div>
+    <div class="si"><div class="si-l">🎓 Fortbildung</div><div class="si-v">${catTotal.fortbildung} T</div><div class="si-s">${toH(catTotal.fortbildung)} h gesamt*</div></div>
+    <div class="si"><div class="si-l">🤒 Krank</div><div class="si-v">${catTotal.krank} T</div><div class="si-s">${toH(catTotal.krank)} h gesamt*</div></div>
+    <div class="si"><div class="si-l">Fehltage gesamt</div><div class="si-v">${abwTotal} T</div><div class="si-s">${toH(abwTotal)} h* · ${abwRows.length} MA</div></div>
+    <div class="si"><div class="si-l">💼 Gearbeitet</div><div class="si-v">${workTotal} T</div><div class="si-s">${toH(workTotal)} h* · ${workMA} MA · Quote ${(workTotal+abwTotal)>0?Math.round(abwTotal/(workTotal+abwTotal)*100):0}% Fehl</div></div>
+  </div>
+  <div style="font-size:11px;color:var(--muted);margin:-8px 0 14px">*Stunden = Tage × ${hPerDay} h (pauschale Annahme, individuelle Arbeitszeiten folgen mit Stammdaten)</div>`;
   if(abwRows.length){
     const maxA = abwRows[0].total || 1;
-    h += `<div class="ausl-card" style="margin-bottom:16px"><h4>Abwesenheit pro Mitarbeiter · Tage & Stunden</h4>`;
-    h += `<div class="abw-legend">${CATS.map(c=>`<span><i style="background:${c.color}"></i>${c.label}</span>`).join('')}</div>`;
+    h += `<div class="ausl-card" style="margin-bottom:16px"><h4>Abwesenheit & gearbeitete Tage pro Mitarbeiter <span style="font-weight:400;font-size:11px;color:var(--muted)">· Stunden = ${hPerDay}h-Annahme</span></h4>`;
+    h += `<div class="abw-legend">${CATS.map(c=>`<span><i style="background:${c.color}"></i>${c.label}</span>`).join('')}<span><i style="background:var(--border)"></i>💼 Gearbeitet</span></div>`;
     abwRows.forEach(r=>{
       const segs = CATS.map(c=>{
         const v=r[c.key]; if(!v) return '';
@@ -3154,9 +3170,10 @@ function renderControlling(){
         return `<div class="abw-seg" style="width:${w}%;background:${c.color}" title="${c.label}: ${v} Tag${v===1?'':'e'} · ${toH(v)} h">${v>=2?v:''}</div>`;
       }).join('');
       const parts=CATS.filter(c=>r[c.key]).map(c=>`${r[c.key]} ${c.label} (${toH(r[c.key])} h)`).join(' · ');
+      const quote = (r.total+r.gearb)>0 ? Math.round(r.total/(r.total+r.gearb)*100) : 0;
       h += `<div class="abw-row"><div class="abw-name" title="${esc(r.name)}">${esc(r.name)}</div>
         <div class="abw-track">${segs}</div>
-        <div class="abw-val" title="${parts}">${r.total} T · ${toH(r.total)} h</div></div>`;
+        <div class="abw-val" title="${parts} · 💼 ${r.gearb} Tage gearbeitet · Fehlquote ${quote}%">${r.total} T Fehl · ${toH(r.total)} h <span style="color:var(--dark)">· 💼 ${r.gearb} T</span> <span style="font-weight:600">· ${quote}%</span></div></div>`;
     });
     h += `</div>`;
   } else {
@@ -5105,7 +5122,31 @@ let spLoadedFileInfo = null;                 // zuletzt geladene Datei {name, mo
 // Luis lädt täglich eine neue Datei mit hochgezählter Nummer hoch (Historie bleibt erhalten).
 function spSeqNum(name){ const m=String(name).match(/_(\d+)\.csv$/i); return m?parseInt(m[1],10):0; }
 
-function msStatus(t){ const e=document.getElementById('msStatus'); if(e) e.textContent = t||''; }
+// ── Lade-Overlay + Race-Guard ─────────────────────────────────────────────
+// Während ein SharePoint-Load läuft (30–60 s bei 200+ MB), zeigt das Dashboard
+// sonst kommentarlos den ALTEN Datenstand an → sichtbares Banner oben.
+// spLoadSeq: jeder Ladevorgang bekommt eine Nummer; nur der neueste darf rendern
+// (verhindert, dass ein langsamer alter Load einen neueren überschreibt).
+let spLoadSeq = 0;
+function spLoadOverlay(name){
+  let ov = document.getElementById('spLoadOv');
+  if(!name){ if(ov) ov.remove(); return; }
+  if(!ov){
+    ov = document.createElement('div');
+    ov.id = 'spLoadOv';
+    ov.style.cssText = 'position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:99999;'
+      + 'background:linear-gradient(135deg,#0076BF,#005a94);color:#fff;padding:10px 22px;'
+      + 'border-radius:999px;font-size:13px;font-weight:600;box-shadow:0 6px 24px rgba(2,32,58,.35);'
+      + 'max-width:92vw;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+    document.body.appendChild(ov);
+  }
+  ov.textContent = '⏳ Lade '+name+' … angezeigte Zahlen sind noch der alte Stand';
+}
+
+function msStatus(t){
+  const e=document.getElementById('msStatus'); if(e) e.textContent = t||'';
+  const ov=document.getElementById('spLoadOv'); if(ov && t) ov.textContent = '⏳ '+t;
+}
 // Fortschrittsbalken unter der Statuszeile (frac 0–1, null = ausblenden)
 function msProgress(frac){
   const w=document.getElementById('msProgWrap'), f=document.getElementById('msProgFill');
@@ -5264,10 +5305,12 @@ async function loadSpLocation(loc){
 }
 
 async function loadSpFile(f){
+  const mySeq = ++spLoadSeq;                    // Race-Guard: nur der neueste Load darf rendern
   try{
     const token = await getToken();
     const mb = (f.size/1e6).toFixed(1);
     spLoadedFileInfo = { name:f.name, mod:f.lastModifiedDateTime||null };   // → Header-Anzeige
+    spLoadOverlay(f.name);
     msStatus('Lade '+f.name+' ('+mb+' MB) …');
     msProgress(0);
     // Vorautorisierte Download-URL holen – umgeht das CORS/Redirect-Problem des /content-Endpunkts
@@ -5292,7 +5335,7 @@ async function loadSpFile(f){
           if(done) break;
           received += value.byteLength;
           const now = Date.now();
-          if(now - lastUi > 200){   // UI max. 5×/s aktualisieren
+          if(now - lastUi > 200 && mySeq===spLoadSeq){   // UI max. 5×/s aktualisieren (nur neuester Load)
             lastUi = now;
             const secs = (now - t0)/1000;
             const speed = received/1e6/Math.max(secs, .1);            // MB/s
@@ -5310,17 +5353,20 @@ async function loadSpFile(f){
       } else {
         // Fallback ohne Streaming-Unterstützung
         const buf = await r.arrayBuffer();
+        if(mySeq!==spLoadSeq) return;           // inzwischen neuerer Load gestartet → abbrechen
         msStatus('✅ Heruntergeladen ('+mb+' MB) · verarbeite '+f.name+' …');
         await new Promise(r=>setTimeout(r,50));
         ingestCSVBytes(new Uint8Array(buf), f.name);
       }
     } else {
       const buf = await graphGet('/sites/'+spSiteId+'/drive/items/'+f.id+'/content', token, true);
+      if(mySeq!==spLoadSeq) return;             // inzwischen neuerer Load gestartet → abbrechen
       msStatus('✅ Heruntergeladen ('+mb+' MB) · verarbeite '+f.name+' …');
       await new Promise(r=>setTimeout(r,50));
       ingestCSVBytes(new Uint8Array(buf), f.name);
     }
     if(rows){
+      if(mySeq!==spLoadSeq) return;             // veralteter Load: nicht rendern, Timer nicht anfassen
       msProgress(1);
       msStatus('✅ Heruntergeladen ('+mb+' MB) · baue Dashboard auf …');
       await new Promise(r=>setTimeout(r,50));  // UI-Paint zulassen, bevor parseData den Thread nutzt
@@ -5330,6 +5376,8 @@ async function loadSpFile(f){
       renderDashboard();
     }
     msProgress(null);
+    if(mySeq!==spLoadSeq) return;               // veralteter Load: Timer des neueren nicht überschreiben
+    spLoadOverlay(null);
     if(spRefreshTimer) clearTimeout(spRefreshTimer);
     spRefreshTimer = setTimeout(()=>{
       if(spCurrentLoc){ loadSpLocation(spCurrentLoc); }   // aktuellen Standort neu laden
@@ -5338,7 +5386,7 @@ async function loadSpFile(f){
   }catch(e){
     console.error(e);
     msProgress(null);
-    msStatus('⚠️ Fehler beim Laden: '+e.message);
+    if(mySeq===spLoadSeq){ spLoadOverlay(null); msStatus('⚠️ Fehler beim Laden: '+e.message); }
   }
 }
 

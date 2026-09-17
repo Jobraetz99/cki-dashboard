@@ -4772,6 +4772,16 @@ function buildTagesplan(a, rez){
         ${isNwp&&tpst.reason?`<span class="tps-reason">📝 ${esc(tpst.reason)}${tpst.by?' · '+esc(tpst.by):''}</span>`:''}
       </div>`;
     }
+    // ── Dauerplan-Status direkt im Tagesplan: eingetragen / kein Dauerplan (mit Pflicht-Begründung) ──
+    if(p.tasks.some(t=>t.cat==='dauer')){
+      const ds = dpStatusSt(p.key);
+      h += `<div class="tp-status">
+        <span style="font-size:10px;font-weight:700;color:var(--muted)">🎯 Dauerplan:</span>
+        <button class="tps-btn wp${ds==='ja'?' a':''}" onclick="setDpStatus('${jsq(p.key)}',${ds==='ja'?"''":"'ja'"},'${jsq(p.name)}')">✅ eingetragen</button>
+        <button class="tps-btn nwp${ds==='nein'?' a':''}" onclick="setDpStatus('${jsq(p.key)}',${ds==='nein'?"''":"'nein'"},'${jsq(p.name)}')">🚫 kein Dauerplan</button>
+        ${ds==='ang'||ds==='ib'?`<span class="tps-reason">${ds==='ang'?'💬 angesprochen':'🟡 in Bearbeitung'}</span>`:''}
+      </div>`;
+    }
     h += `</div>`;
     if(p.mobil) h += `<a class="tp-tel" href="tel:${esc(String(p.mobil).replace(/\s+/g,''))}" title="anrufen">📞 ${esc(p.mobil)}</a>`;
     h += `</div>`;

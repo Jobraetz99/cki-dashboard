@@ -558,8 +558,9 @@ let currentFvoFilter = 'offen';
 let currentPotFilter = 'alle';
 let cki_offene2MonatFilter = localStorage.getItem("cki_offene2MonatFilter") !== "false";  // Punkt 7 (Call 15.09.): 1-Monats-Filter an/aus
 // ── Controlling: Zeitraum-Selektor ──
-let ctrlMode = 'zeitraum';          // 'heute' | 'woche' | 'zeitraum'
+let ctrlMode = 'zeitraum';          // 'heute' | 'woche' | 'monat' | 'zeitraum'
 let ctrlWeek = null;                // KW-Key (z.B. '2026-KW32') im Woche-Modus
+let ctrlMonth = null;               // Monats-Key 'YYYY-MM' im Monat-Modus (Punkt 13, Call 15.09.)
 let ctrlFrom = null, ctrlTo = null; // dateStr im Zeitraum-Modus
 
 // ── Konfiguration (anpassbar) ──────────────────────────────
@@ -1051,6 +1052,7 @@ function renderDashboard(){
   recordKpiSnapshot();
   renderViewContent();
   checkNewGaps();
+  notifInit();   // Punkt 19: Benachrichtigungs-Prüfschleife starten
 }
 
 // ── Notification: neu entstandene Lücken ───────────────────
@@ -1099,6 +1101,116 @@ function checkNewGaps(){
   </div>`;
 }
 
+// ═══ Punkt 19 (Call 15.09.): Browser-Benachrichtigungen ═══════════════════
+// Drei Auslöser: 1) Lücken heute  2) Schichtende: Aufgaben offen
+// 3) Schichtbeginn: niemand zugewiesen. Jede Meldung kommt pro Tag/Schicht
+// nur einmal (Merkliste im localStorage). Funktioniert, solange das Dashboard
+// in einem Tab offen ist (statische Seite ohne Push-Server).
+let notifTimerId = null;
+function notifSupported(){ return typeof Notification !== 'undefined'; }
+function notifActive(){ return notifSupported() && Notification.permission==='granted' && lsGet('cki_notif_on', false); }
+function notifSend(title, body){
+  try{ new Notification(title, {body: body||'', tag: 'cki_'+title, icon: undefined}); }catch(e){}
+}
+function notifSentLog(){ const s=lsGet('cki_notif_sent',{}); return (s&&typeof s==='object')?s:{}; }
+function notifOnce(key, fn){
+  const s = notifSentLog();
+  if(s[key]) return false;
+  fn();
+  s[key] = Date.now();
+  // Alte Einträge (> 4 Tage) aufräumen
+  const cutoff = Date.now() - 4*86400000;
+  Object.keys(s).forEach(k=>{ if(s[k] < cutoff) delete s[k]; });
+  lsSet('cki_notif_sent', s);
+  return true;
+}
+function toggleNotifications(){
+  if(!notifSupported()){ alert('Dieser Browser unterstützt keine Benachrichtigungen.'); return; }
+  if(lsGet('cki_notif_on', false)){
+    lsSet('cki_notif_on', false);
+    renderMainTabs();
+    return;
+  }
+  const activate = ()=>{
+    lsSet('cki_notif_on', true);
+    renderMainTabs();
+    notifSend('🔔 Benachrichtigungen aktiv', 'Du bekommst Meldungen zu Lücken heute, Schichtbeginn (keine Verteilung) und Schichtende (offene Aufgaben) – solange das Dashboard in einem Tab offen ist.');
+    notifCheck();
+  };
+  if(Notification.permission==='granted'){ activate(); return; }
+  if(Notification.permission==='denied'){
+    alert('Benachrichtigungen sind für diese Seite blockiert. Bitte in den Browser-Einstellungen (Schloss-Symbol neben der Adresse) erlauben und erneut versuchen.');
+    return;
+  }
+  try{
+    const p = Notification.requestPermission(res=>{ if(res==='granted') activate(); else renderMainTabs(); });
+    if(p && typeof p.then==='function') p.then(res=>{ if(res==='granted') activate(); else renderMainTabs(); });
+  }catch(e){}
+}
+// Offene/gesamte Aufgaben je Zeitblock (VM/MI/NM) für einen Tag – headless,
+// zählt exakt dieselben Aufgaben wie der Tagesziel-Reiter.
+function notifBlockStats(dateStr){
+  const keep = currentDate; currentDate = dateStr;
+  try{
+    const B = buildAufgabenSections(computeActionItems());
+    const res = {vm:{open:0,total:0}, mi:{open:0,total:0}, nm:{open:0,total:0}};
+    B.allSections.forEach(s=>s.items.forEach(it=>{
+      const tb = effectiveTime(it.id, s.key, it.tdef);
+      const r = res[tb] || res.vm;
+      r.total++; if(!taskDone(it.id)) r.open++;
+    }));
+    return res;
+  } finally { currentDate = keep; }
+}
+function notifCheck(nowOpt){
+  if(!DATA || !DATA.dates || !DATA.dates.length) return;
+  if(!notifActive()) return;
+  const now = nowOpt || new Date();
+  const today = localDateStrG(now);
+  if(!DATA.dates.includes(today)) return;   // kein Export für heute → nichts zu melden
+  const hr = now.getHours() + now.getMinutes()/60;
+
+  // ── 1) Lücken des aktuellen Tages (ab 07:30, einmal täglich) ──
+  if(hr >= 7.5){
+    const gaps = gapsForDate(today);
+    if(gaps.length){
+      notifOnce('gaps|'+today, ()=>{
+        const det = gaps.slice(0,3).map(g=>g.therapist+' '+hhmm(g.start)+'–'+hhmm(g.end)).join(' · ');
+        notifSend('⚡ '+gaps.length+' Lücke'+(gaps.length!==1?'n':'')+' heute offen', det + (gaps.length>3?' · …':'') + ' — Nachrücker anrufen!');
+      });
+    }
+  }
+
+  // ── 2) + 3) je Zeitblock (Frühschicht/Mittag/Spätschicht) ──
+  let blockStats = null;   // erst berechnen, wenn wirklich gebraucht (teuer)
+  TZ_BLOCKS.forEach(b=>{
+    // 3) Schichtbeginn (15 min nach Blockstart): niemand zugewiesen?
+    if(hr >= b.h0 + 0.25 && hr < b.h1){
+      const wer = getAssignmentMatrixByArea(today,'tg',b.key).concat(getAssignmentMatrixByArea(today,'bo',b.key));
+      if(!wer.length){
+        notifOnce('start|'+today+'|'+b.key, ()=>{
+          notifSend(b.ico+' '+b.ttl+' läuft – Aufgaben nicht verteilt', 'Für den Block '+b.ttl+' ('+b.von+'–'+b.bis+') ist niemand zugewiesen. Zuweisungs-Matrix im Tagesziel-Reiter ausfüllen.');
+        });
+      }
+    }
+    // 2) Schichtende: Aufgaben des Blocks nicht erledigt?
+    if(hr >= b.h1){
+      if(!blockStats) blockStats = notifBlockStats(today);
+      const st = blockStats[b.key];
+      if(st && st.open > 0){
+        notifOnce('end|'+today+'|'+b.key, ()=>{
+          notifSend(b.ico+' '+b.ttl+' zu Ende – '+st.open+' Aufgabe'+(st.open!==1?'n':'')+' offen', st.open+' von '+st.total+' Aufgaben im Block '+b.ttl+' sind nicht abgehakt. Bitte erledigen oder Feedback im Tagesziel-Reiter geben.');
+        });
+      }
+    }
+  });
+}
+function notifInit(){
+  if(notifTimerId) return;
+  notifTimerId = setInterval(notifCheck, 3*60*1000);   // alle 3 Minuten prüfen
+  setTimeout(notifCheck, 2000);                        // + einmal kurz nach dem Laden
+}
+
 function renderMainTabs(){
   let h = '';
   h += `<button class="m-tab${currentView==='aufgaben'?' a':''}" onclick="switchView('aufgaben')">🎯 Tagesziel</button>`;
@@ -1109,6 +1221,16 @@ function renderMainTabs(){
   h += `<button class="m-tab${currentView==='folgevo'?' a':''}" onclick="switchView('folgevo')">🔄 Folge-VO</button>`;
   h += `<button class="m-tab${currentView==='verlauf'?' a':''}" onclick="switchView('verlauf')">📈 Verlauf</button>`;
   h += `<button class="m-tab${currentView==='controlling'?' a':''}" onclick="switchView('controlling')">📊 Controlling</button>`;
+  // Punkt 19: 🔔-Schalter für Browser-Benachrichtigungen
+  if(notifSupported()){
+    const on = lsGet('cki_notif_on', false) && Notification.permission==='granted';
+    const blocked = Notification.permission==='denied';
+    const ttl = blocked
+      ? 'Benachrichtigungen sind im Browser blockiert – über das Schloss-Symbol neben der Adresse erlauben'
+      : on ? 'Benachrichtigungen sind AN (Lücken heute · Schichtbeginn ohne Verteilung · Schichtende mit offenen Aufgaben) – klicken zum Ausschalten'
+           : 'Benachrichtigungen einschalten: Lücken heute · Schichtbeginn ohne Verteilung · Schichtende mit offenen Aufgaben';
+    h += `<button class="m-tab" id="notifBell" style="margin-left:auto${on?';background:var(--teal);color:#fff':''}" onclick="toggleNotifications()" title="${ttl}">${on?'🔔 an':'🔕 aus'}</button>`;
+  }
   document.getElementById('mainTabs').innerHTML = h;
 }
 
@@ -2522,6 +2644,15 @@ function ctrlAllWeeks(){
   DATA.dates.forEach(d=> set.add(isoWeekKey(new Date(d+'T12:00:00'))));
   return [...set].sort();
 }
+function ctrlAllMonths(){
+  const set = new Set();
+  DATA.dates.forEach(d=> set.add(d.slice(0,7)));
+  return [...set].sort();
+}
+function ctrlMonthLabel(m){
+  if(!m) return '–';
+  return new Date(m+'-15T12:00:00').toLocaleDateString('de-DE',{month:'long',year:'numeric'});
+}
 function ctrlActiveDates(){
   if(!DATA || !DATA.dates.length) return [];
   const all = DATA.dates;
@@ -2535,6 +2666,10 @@ function ctrlActiveDates(){
     if(!ctrlWeek){ const ws=ctrlAllWeeks(); ctrlWeek=ws[ws.length-1]; }
     return all.filter(d=>isoWeekKey(new Date(d+'T12:00:00'))===ctrlWeek);
   }
+  if(ctrlMode==='monat'){
+    if(!ctrlMonth){ const ms=ctrlAllMonths(); ctrlMonth=ms[ms.length-1]; }
+    return all.filter(d=>d.slice(0,7)===ctrlMonth);
+  }
   const from = ctrlFrom||all[0], to = ctrlTo||all[all.length-1];
   return all.filter(d=>d>=from && d<=to);
 }
@@ -2542,6 +2677,7 @@ function ctrlPeriodLabel(){
   const ds = ctrlActiveDates();
   if(ctrlMode==='heute') return ds.length? new Date(ds[0]+'T12:00:00').toLocaleDateString('de-DE',{weekday:'long',day:'2-digit',month:'2-digit',year:'numeric'}) : '–';
   if(ctrlMode==='woche') return (ctrlWeek||'–')+' · '+ds.length+' Tag'+(ds.length===1?'':'e');
+  if(ctrlMode==='monat') return ctrlMonthLabel(ctrlMonth)+' · '+ds.length+' Tag'+(ds.length===1?'':'e');
   const all=DATA.dates, from=ctrlFrom||all[0], to=ctrlTo||all[all.length-1];
   const f=new Date(from+'T12:00:00').toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'2-digit'});
   const t=new Date(to+'T12:00:00').toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'2-digit'});
@@ -2550,11 +2686,14 @@ function ctrlPeriodLabel(){
 function ctrlSetMode(m){
   ctrlMode=m;
   if(m==='woche' && !ctrlWeek){ const ws=ctrlAllWeeks(); ctrlWeek=ws[ws.length-1]; }
+  if(m==='monat' && !ctrlMonth){ const ms=ctrlAllMonths(); const nowM=localDateStrG(new Date()).slice(0,7); ctrlMonth = ms.includes(nowM)? nowM : ms[ms.length-1]; }
   if(m==='zeitraum'){ if(!ctrlFrom)ctrlFrom=DATA.dates[0]; if(!ctrlTo)ctrlTo=DATA.dates[DATA.dates.length-1]; }
   renderControlling();
 }
 function ctrlStepWeek(delta){ const ws=ctrlAllWeeks(); let i=ws.indexOf(ctrlWeek); if(i<0)i=ws.length-1; i=Math.min(ws.length-1,Math.max(0,i+delta)); ctrlWeek=ws[i]; renderControlling(); }
 function ctrlSetWeek(w){ ctrlWeek=w; renderControlling(); }
+function ctrlStepMonth(delta){ const ms=ctrlAllMonths(); let i=ms.indexOf(ctrlMonth); if(i<0)i=ms.length-1; i=Math.min(ms.length-1,Math.max(0,i+delta)); ctrlMonth=ms[i]; renderControlling(); }
+function ctrlSetMonth(m){ ctrlMonth=m; renderControlling(); }
 function ctrlSetFrom(v){ if(v){ ctrlFrom=v; if(ctrlTo && ctrlTo<v) ctrlTo=v; renderControlling(); } }
 function ctrlSetTo(v){ if(v){ ctrlTo=v; if(ctrlFrom && ctrlFrom>v) ctrlFrom=v; renderControlling(); } }
 function periodSelectorHTML(){
@@ -2577,6 +2716,21 @@ function periodSelectorHTML(){
         ${todayBadge}
         ${infoI('<b>Kalenderwoche (ISO 8601)</b><br>Eine KW läuft von Montag bis Sonntag. KW 1 ist die Woche, die den ersten Donnerstag des Jahres enthält. „📍 heute" markiert die Woche des heutigen Datums.')}
       </span>`;
+  } else if(ctrlMode==='monat'){
+    const ms=ctrlAllMonths(); const i=ms.indexOf(ctrlMonth);
+    const todayM = localDateStrG(new Date()).slice(0,7);
+    let opts=''; ms.forEach(m=>{ opts+=`<option value="${m}"${m===ctrlMonth?' selected':''}>${ctrlMonthLabel(m)}${m===todayM?' · heute':''}</option>`; });
+    const todayBadge = ms.includes(todayM)
+      ? `<button class="cp-today" onclick="ctrlSetMonth('${todayM}')" title="Zum aktuellen Monat springen">📍 heute: ${ctrlMonthLabel(todayM)}</button>`
+      : `<span class="cp-today" style="color:var(--muted);background:var(--border)">heute (${ctrlMonthLabel(todayM)}) nicht im Export</span>`;
+    detail = `<span class="cp-detail">
+        <button class="cp-navbtn" onclick="ctrlStepMonth(-1)"${i<=0?' disabled':''}>‹</button>
+        <span class="cp-kw">${ctrlMonthLabel(ctrlMonth)}${ctrlMonth===todayM?' 📍':''}</span>
+        <button class="cp-navbtn" onclick="ctrlStepMonth(1)"${i>=ms.length-1?' disabled':''}>›</button>
+        <select class="cp-sel" onchange="ctrlSetMonth(this.value)">${opts}</select>
+        ${todayBadge}
+        ${infoI('<b>Monats-Ansicht (Punkt 13)</b><br>Auslastung und Kapazität werden über den ganzen Kalendermonat bewertet – Über- und Unterstunden amortisieren sich über den Monat, statt jede KW einzeln zu bewerten.')}
+      </span>`;
   } else {
     detail = `<span class="cp-detail">
         von <input type="date" class="cp-date" min="${min}" max="${max}" value="${ctrlFrom||min}" onchange="ctrlSetFrom(this.value)">
@@ -2587,6 +2741,7 @@ function periodSelectorHTML(){
     <div class="cp-seg">
       <button class="cp-tab${ctrlMode==='heute'?' a':''}" onclick="ctrlSetMode('heute')">Heute</button>
       <button class="cp-tab${ctrlMode==='woche'?' a':''}" onclick="ctrlSetMode('woche')">Woche</button>
+      <button class="cp-tab${ctrlMode==='monat'?' a':''}" onclick="ctrlSetMode('monat')">Monat</button>
       <button class="cp-tab${ctrlMode==='zeitraum'?' a':''}" onclick="ctrlSetMode('zeitraum')">Zeitraum</button>
     </div>
     ${detail}
@@ -2626,6 +2781,10 @@ function ctrlKapazitaetChart(data){
   const {weeks, cap, capH, refMax, refMaxH} = data;
   if(!weeks.length) return '<div class="empty">Keine Arbeitszeit-Daten für die KW-Kapazität gefunden.</div>';
   const gT=CONFIG.ampelGruen, gE=CONFIG.ampelGelb;   // Ampel-Schwellen (% Abweichung von der Max-Kapazität)
+  // Punkt 13/15 (Call 15.09.): 87%-Auslastungsziel direkt im Chart
+  const TARGET_PCT = 87;
+  const target = refMax*(TARGET_PCT/100);            // Ziel in Terminen
+  const targetH = refMaxH*(TARGET_PCT/100);          // Ziel in Stunden
   const W=780,H=270,padL=46,padR=16,padT=40,padB=54;
   const yMax = Math.max(1, Math.ceil(Math.max(refMax, ...cap)*1.16));
   const n=weeks.length;
@@ -2652,9 +2811,12 @@ function ctrlKapazitaetChart(data){
     const col = adev<=gT ? 'var(--teal)' : adev<=gE ? 'var(--amber)' : 'var(--accent)';
     const ampel = adev<=gT ? `beobachten (bis ${gT}%)` : adev<=gE ? `handeln (${gT}–${gE}%)` : `🚨 Notstand (über ${gE}%)`;
     const richtung = diffH<0 ? `⏱️ es fehlen ${-diffH} h zur Max-Kapazität` : 'volle Kapazität erreicht';
+    const zielPct = refMax>0 ? Math.round(v/refMax*100) : 0;                       // Auslastung der Max-Kapazität in %
+    const fehlZielH = v<target ? Math.round((target-v)*CONFIG.slotMin/60) : 0;     // fehlende Stunden zum 87%-Ziel
+    const zielTxt = fehlZielH>0 ? `🎯 ${zielPct}% – es fehlen ${fehlZielH} h zum ${TARGET_PCT}%-Ziel` : `🎯 ${zielPct}% – ${TARGET_PCT}%-Ziel erreicht`;
     const pct = `${dev>0?'+':''}${Math.round(dev)}%`;
     const diffLab = `${diffH>0?'+':diffH<0?'−':''}${Math.abs(diffH)} h`;
-    bars+=`<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${hgt.toFixed(1)}" rx="3" fill="${col}" style="cursor:pointer" onclick="ctrlKapSelect('${w}')"${(isToday||isSel)?' stroke="var(--dark,#0f172a)" stroke-width="2"':''}><title>${w}: ${capH[i]} h Kapazität · ${pct} · ${ampel} · ${richtung}${isToday?' · aktuelle KW':''}</title></rect>`;
+    bars+=`<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${hgt.toFixed(1)}" rx="3" fill="${col}" style="cursor:pointer" onclick="ctrlKapSelect('${w}')"${(isToday||isSel)?' stroke="var(--dark,#0f172a)" stroke-width="2"':''}><title>${w}: ${capH[i]} h Kapazität · ${pct} · ${ampel} · ${richtung} · ${zielTxt}${isToday?' · aktuelle KW':''}</title></rect>`;
     // Zahlen nur am angeklickten Balken (und 📍-Markierung an der aktuellen KW)
     if(isSel){
       const yBase = isToday ? y-16 : y-5;
@@ -2668,25 +2830,37 @@ function ctrlKapazitaetChart(data){
   const my=Y(refMax);
   const merLine=`<line x1="${padL}" y1="${my.toFixed(1)}" x2="${W-padR}" y2="${my.toFixed(1)}" stroke="var(--dark,#0f172a)" stroke-width="2" stroke-dasharray="7 4"/>`
     + `<text x="${W-padR}" y="${(my-6).toFixed(1)}" text-anchor="end" font-size="10" font-weight="800" fill="var(--dark,#0f172a)">Max. Kapazität ${refMaxH} h</text>`;
+  // 87%-Ziellinie (Punkt 13/15)
+  const ty=Y(target);
+  const zielLine=`<line x1="${padL}" y1="${ty.toFixed(1)}" x2="${W-padR}" y2="${ty.toFixed(1)}" stroke="var(--primary,#7c3aed)" stroke-width="2" stroke-dasharray="4 4"/>`
+    + `<text x="${W-padR}" y="${(ty+12).toFixed(1)}" text-anchor="end" font-size="10" font-weight="800" fill="var(--primary,#7c3aed)">🎯 Ziel ${TARGET_PCT} % · ${Math.round(targetH)} h</text>`;
   // Echte Ampel-Legende mit den Schwellen
   const dot = c => `<span style="width:11px;height:11px;border-radius:50%;background:${c};display:inline-block"></span>`;
   const defSumH = Math.round(cap.reduce((a,v)=> a + (v<refMax ? refMax-v : 0), 0)*CONFIG.slotMin/60);
+  const zielFehlSumH = Math.round(cap.reduce((a,v)=> a + (v<target ? target-v : 0), 0)*CONFIG.slotMin/60);
+  const wksUnterZiel = cap.filter(v=> v<target).length;
   // Detail-Zeile zum angeklickten Balken
   let selInfo='';
   const si = weeks.indexOf(ctrlKapSel);
   if(si>=0){
     const sdH = Math.round((cap[si]-refMax)*CONFIG.slotMin/60);
     const sPct = refMax>0 ? Math.round((cap[si]-refMax)/refMax*100) : 0;
-    selInfo = `<span style="display:inline-flex;align-items:center;gap:5px;font-weight:800;color:var(--dark)">▸ ${ctrlKapSel}: ${capH[si]} h Kapazität · ${sdH<0?'fehlen '+(-sdH)+' h':'volle Kapazität'} (${sPct>0?'+':''}${sPct}%)</span>`;
+    const sZielPct = refMax>0 ? Math.round(cap[si]/refMax*100) : 0;
+    const sFehlZ = cap[si]<target ? Math.round((target-cap[si])*CONFIG.slotMin/60) : 0;
+    const zielPart = sFehlZ>0
+      ? ` · <span style="color:var(--fire,#e11d48)">🎯 ${sZielPct}% → es fehlen ${sFehlZ} h zum ${TARGET_PCT}%-Ziel</span>`
+      : ` · <span style="color:var(--teal,#16a34a)">🎯 ${sZielPct}% → ${TARGET_PCT}%-Ziel erreicht</span>`;
+    selInfo = `<span style="display:inline-flex;align-items:center;gap:5px;font-weight:800;color:var(--dark)">▸ ${ctrlKapSel}: ${capH[si]} h Kapazität · ${sdH<0?'fehlen '+(-sdH)+' h zur Max':'volle Kapazität'} (${sPct>0?'+':''}${sPct}%)${zielPart}</span>`;
   }
   const legend = `<div style="margin-bottom:6px;font-size:11px;color:var(--dark);display:flex;gap:14px;flex-wrap:wrap;align-items:center">
       <span style="display:inline-flex;align-items:center;gap:5px">${dot('var(--teal)')}bis ${gT}% unter Max → beobachten</span>
       <span style="display:inline-flex;align-items:center;gap:5px">${dot('var(--amber)')}${gT}–${gE}% → handeln</span>
       <span style="display:inline-flex;align-items:center;gap:5px">${dot('var(--accent)')}über ${gE}% → Notstand</span>
       <span style="display:inline-flex;align-items:center;gap:5px;font-weight:800;color:var(--accent)">Σ Defizit zur Max-Kapazität: ${defSumH} h</span>
-      ${selInfo || '<span style="color:var(--muted)">💡 Balken anklicken für die genauen Zahlen</span>'}
+      <span style="display:inline-flex;align-items:center;gap:5px;font-weight:800;color:var(--primary)">🎯 ${wksUnterZiel>0 ? wksUnterZiel+' KW unter '+TARGET_PCT+'%-Ziel · es fehlen '+zielFehlSumH+' h' : 'alle KW über dem '+TARGET_PCT+'%-Ziel'}</span>
+      ${selInfo || '<span style="color:var(--muted)">💡 Balken anklicken für die genauen Zahlen (inkl. fehlender Stunden zum 87%-Ziel)</span>'}
     </div>`;
-  return legend + `<svg viewBox="0 0 ${W} ${H}" width="100%" style="max-width:100%;height:auto;display:block">${grid}${bars}${pctlab}${merLine}${xlab}</svg>`;
+  return legend + `<svg viewBox="0 0 ${W} ${H}" width="100%" style="max-width:100%;height:auto;display:block">${grid}${bars}${pctlab}${merLine}${zielLine}${xlab}</svg>`;
 }
 let ctrlKapSel = null;   // angeklickte KW im Kapazitäts-Chart
 function ctrlKapSelect(w){ ctrlKapSel = (ctrlKapSel===w ? null : w); renderControlling(); }
@@ -2736,33 +2910,8 @@ function renderControlling(){
   </div>`;
 
   const auslInfo = `<b>Auslastung pro Therapeut</b><br>Auslastung = <b>belegte Zeit ÷ volle Arbeitszeit</b>.<br>• <b>Arbeitszeit</b> = alle bezahlten 10-Min-Slots (AZ=J), ohne Abzug.<br>• <b>Belegte Zeit</b> = Arbeitszeit minus wirklich leere Fenster. Termine, Blocker, Fahrtzeit und Doku zählen als belegt.<br>Nur echte Lücken (Slot, in dem gar nichts steht) senken den Wert.<br>⏱️ <b>Überstunden</b> = Patiententermine <b>außerhalb der geplanten Arbeitszeit</b> – also Termine in Slots, die laut Theorg nicht als Arbeitszeit (AZ) markiert sind. Pro 10-Min-Slot gezählt und über den Zeitraum summiert. Details beim Überfahren des Balkens.`;
-  // Punkt 20: 87%-Auslastungsziel über 4 Wochen
-  const TARGET_PCT = 87;
-  const kapData = calcKap4Wochen();
-  if(kapData.weeks && kapData.weeks.length && kapData.refMaxH>0){
-    const forthcoming = [];
-    const maxWeeks = Math.min(4, kapData.weeks.length);
-    for(let i=0;i<maxWeeks;i++){
-      const w = kapData.weeks[i];
-      const h_avail = kapData.capH[i];
-      const h_target = kapData.refMaxH * (TARGET_PCT/100);
-      const pct = (h_avail/kapData.refMaxH*100).toFixed(0);
-      forthcoming.push({week:w, capH:h_avail, target:h_target, pct:pct});
-    }
-    h += `<div style="background:var(--primary-bg);border:1px solid var(--primary);border-radius:12px;padding:12px;margin-bottom:14px">
-      <div style="font-family:Montserrat;font-weight:800;color:var(--primary);font-size:12px;margin-bottom:8px">📊 Auslastungsziel: 87 % der verfügbaren Kapazität</div>`;
-    forthcoming.forEach(w=>{
-      const isBad = w.pct < TARGET_PCT;
-      h += `<div style="display:flex;justify-content:space-between;align-items:center;font-size:11px;padding:6px 0;border-bottom:1px solid rgba(0,0,0,.05)">
-        <span>${w.week}:</span>
-        <span style="font-weight:700;color:${isBad?'var(--fire)':'var(--teal)'}">${w.pct}%</span>
-        <span style="color:var(--muted);font-size:10px">${w.capH.toFixed(1)}h / ${w.target.toFixed(1)}h</span>
-        ${isBad?'<span style="color:var(--fire);font-weight:700">⚠️ unter Ziel</span>':''}
-      </div>`;
-    });
-    h += `${forthcoming.some(w=>w.pct<TARGET_PCT)?'<div style="color:var(--fire);font-size:10px;margin-top:8px;font-weight:600">→ Backoffice: Kapazität in kommenden Wochen anpassen</div>':''}`;
-    h += `</div>`;
-  }
+  // Punkt 13/15 (Call 15.09.): das 87%-Auslastungsziel ist jetzt direkt in den
+  // Chart „Verfügbare Kapazität pro KW" integriert (Ziellinie + Klick → fehlende Stunden).
   h += `<div class="st">📊 Auslastung pro Therapeut <span class="sub">⏱️ Überstunden = Termine außerhalb der Arbeitszeit</span> ${infoI(auslInfo)}</div>`;
   h += `<div class="ausl-card" style="margin-bottom:16px"><h4>${ctrlPeriodLabel()}</h4>`;
   if(thStats.length){
@@ -2880,10 +3029,12 @@ function renderControlling(){
   let ampGruen=0, ampGelb=0, ampRot=0;
   kd.cap.forEach(v=>{ const ad = kd.refMax>0?Math.abs((v-kd.refMax)/kd.refMax*100):0;
     if(ad<=CONFIG.ampelGruen) ampGruen++; else if(ad<=CONFIG.ampelGelb) ampGelb++; else ampRot++; });
-  const kapInfo = `<b>Verfügbare Kapazität pro KW</b><br>Je KW = alle bezahlten Arbeitszeit-Slots (AZ=J) aller Mitarbeiter, umgerechnet in Termine à ${CONFIG.slotMin} min bzw. Stunden.<br><b>Referenz = maximale Kapazität</b>: die höchste KW-Kapazität über <u>alle</u> Wochen im Export (angeschnittene Rand-KW ausgeklammert) — sie bleibt auch bei gefiltertem Zeitraum stabil.<br><b>Anzeige</b> folgt dem Zeitraum-Selektor oben: es werden nur die Kalenderwochen des gewählten Zeitraums gezeigt.<br><b>Ampel</b> nach Abweichung von der Max-Kapazität: bis ${CONFIG.ampelGruen}% beobachten (grün), ${CONFIG.ampelGruen}–${CONFIG.ampelGelb}% handeln (gelb), über ${CONFIG.ampelGelb}% Notstand (rot).`;
-  h += `<div class="st">🗓️ Verfügbare Kapazität pro KW <span class="sub">in Stunden · Ampel vs. Max-Kapazität</span> ${infoI(kapInfo)}</div>`;
+  const kapInfo = `<b>Verfügbare Kapazität pro KW</b><br>Je KW = alle bezahlten Arbeitszeit-Slots (AZ=J) aller Mitarbeiter, umgerechnet in Termine à ${CONFIG.slotMin} min bzw. Stunden.<br><b>Referenz = maximale Kapazität</b>: die höchste KW-Kapazität über <u>alle</u> Wochen im Export (angeschnittene Rand-KW ausgeklammert) — sie bleibt auch bei gefiltertem Zeitraum stabil.<br><b>Anzeige</b> folgt dem Zeitraum-Selektor oben: es werden nur die Kalenderwochen des gewählten Zeitraums gezeigt.<br><b>Ampel</b> nach Abweichung von der Max-Kapazität: bis ${CONFIG.ampelGruen}% beobachten (grün), ${CONFIG.ampelGruen}–${CONFIG.ampelGelb}% handeln (gelb), über ${CONFIG.ampelGelb}% Notstand (rot).<br><b>🎯 87%-Ziel</b> (lila Linie): Ziel-Auslastung = 87 % der Max-Kapazität. Klick auf einen Balken zeigt, wie viele <u>Stunden</u> zur Ziellinie fehlen.`;
+  const kdUnterZiel = kd.cap.filter(v=> v < kd.refMax*0.87).length;
+  h += `<div class="st">🗓️ Verfügbare Kapazität pro KW <span class="sub">in Stunden · Ampel vs. Max-Kapazität · 🎯 87%-Ziel</span> ${infoI(kapInfo)}</div>`;
   h += `<div class="sg" style="margin-bottom:12px">
     <div class="si"><div class="si-l">Max. Kapazität</div><div class="si-v">${kd.refMaxH} h</div><div class="si-s">pro Woche</div></div>
+    <div class="si"><div class="si-l">🎯 Ziel 87 %</div><div class="si-v">${Math.round(kd.refMaxH*0.87)} h</div><div class="si-s">${kdUnterZiel>0 ? kdUnterZiel+' KW unter Ziel' : 'alle KW im Ziel'}</div></div>
     <div class="si"><div class="si-l">🟢 beobachten</div><div class="si-v">${ampGruen}</div><div class="si-s">bis ${CONFIG.ampelGruen}% unter Max</div></div>
     <div class="si"><div class="si-l">🟡 handeln</div><div class="si-v">${ampGelb}</div><div class="si-s">${CONFIG.ampelGruen}–${CONFIG.ampelGelb}% unter Max</div></div>
     <div class="si"><div class="si-l">🔴 Notstand</div><div class="si-v">${ampRot}</div><div class="si-s">über ${CONFIG.ampelGelb}% unter Max</div></div>
@@ -4052,9 +4203,17 @@ function matrixAssignee(id,catkey,tdef){
 }
 function effectiveAssignee(id,catkey,tdef){ return getTaskAssign(id) || getCatAssign(catkey) || matrixAssignee(id,catkey,tdef) || ''; }
 // Dropdown für den Kategorie-Kopf
+// Call 17.09.: Ohne manuellen Standard zeigt die erste Option, wer über die
+// Tages-Zuweisung (Bereich + Zeit der Kategorie) automatisch zuständig ist.
 function catAssignSelect(catkey){
   const cur=getCatAssign(catkey);
-  const opts=['<option value=""'+(cur===''?' selected':'')+'>— offen</option>']
+  let openLbl='— offen';
+  if(cur==='' && currentDate){
+    const mxNames = getAssignmentMatrixByArea(currentDate, effectiveArea('',catkey), effectiveTime('',catkey));
+    if(mxNames.length===1) openLbl='— autom.: '+mxNames[0];
+    else if(mxNames.length>1) openLbl='— autom.: '+mxNames.join(', ');
+  }
+  const opts=['<option value=""'+(cur===''?' selected':'')+'>'+esc(openLbl)+'</option>']
     .concat(getTeam().map(m=>'<option value="'+esc(m.n)+'"'+(cur===m.n?' selected':'')+'>'+esc(m.n)+'</option>'));
   return '<select class="asg-sel" onclick="event.stopPropagation()" onchange="setCatAssign(\''+jsq(catkey)+'\',this.value)">'+opts.join('')+'</select>';
 }
@@ -4377,10 +4536,9 @@ const TZ_FRUEHSCHICHT = [
   {t:'Alle HB Akten für den nächsten Tag eintragen', s:''}
 ];
 
-function renderAufgaben(){
-  const a = computeActionItems();
-  const dd = new Date(currentDate+'T12:00:00').toLocaleDateString('de-DE',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
-
+// Aufgaben-Sektionen headless aufbauen (gemeinsame Basis für renderAufgaben
+// und die Browser-Benachrichtigungen, Punkt 19) — nutzt currentDate.
+function buildAufgabenSections(a){
   // ── Lücken heute + morgen ──
   const gapsHeute = a.gaps.slice().sort((x,y)=> x.start-y.start);
   const idxD = DATA.dates.indexOf(currentDate);
@@ -4476,6 +4634,13 @@ function renderAufgaben(){
     { key:'std_fs', ico:'🌅', color:'var(--accent)', ttl:'Frühschicht', defOpen:true, items:mkStd('fs',TZ_FRUEHSCHICHT) }
   ].filter(s=>s.items.length);
   const allSections = stdSections.concat(sections);
+  return {gapsHeute, gapsMorgen, morgenStr, morgenLabel, rez, sections, stdSections, allSections};
+}
+
+function renderAufgaben(){
+  const a = computeActionItems();
+  const dd = new Date(currentDate+'T12:00:00').toLocaleDateString('de-DE',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
+  const {gapsMorgen, morgenStr, morgenLabel, rez, sections, stdSections, allSections} = buildAufgabenSections(a);
 
   // ── Bereichsfilter anwenden (Alle / Backoffice / Tagesgeschäft) ──
   if(tzArea!=='alle'){
@@ -4573,6 +4738,16 @@ function renderAufgaben(){
       h += buildTagesplan(a, rez);
       document.getElementById('content').innerHTML = h;
       return;
+    }
+
+    // ── „nur meine"-Filter auch in den Bereichs-Ansichten (Call 17.09.) ──
+    if(getTeam().length){
+      const meOpts2=['<option value="">— ich bin …</option>'].concat(getTeam().map(m=>'<option value="'+esc(m.n)+'"'+(getMe()===m.n?' selected':'')+'>'+esc(m.n)+'</option>')).join('');
+      h += `<div class="tm-bar" style="margin-bottom:12px">
+        <span class="tm-label">👤 Filter</span>
+        <select class="asg-sel tm-me" onchange="setMe(this.value)">${meOpts2}</select>
+        <label class="tm-mine"><input type="checkbox" ${tzOnlyMine?'checked':''} onchange="toggleOnlyMine(this.checked)"> nur meine</label>
+      </div>`;
     }
 
     // Standard-Aufgabenlisten-Ansicht

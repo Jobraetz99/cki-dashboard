@@ -47,7 +47,10 @@ window.__msalReady = new Promise(function(resolve){
   --e2:0 1px 2px rgba(2,32,58,.06),0 4px 10px 3px rgba(2,32,58,.07);
   --e3:0 4px 8px rgba(2,32,58,.07),0 12px 28px 6px rgba(2,32,58,.10);
   --ease:cubic-bezier(.2,0,0,1);
-  --ring:0 0 0 3px rgba(0,118,191,.22)
+  --ring:0 0 0 3px rgba(0,118,191,.22);
+  /* On-Primary-Töne: Bereichsfarben, die auf dem blauen Hero lesbar sind (M3 on-primary) */
+  --on-primary-tg:#aedcff;   /* Tagesgeschäft hell-blau */
+  --on-primary-bo:#9ff0f9    /* Backoffice hell-cyan */
 }
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--dark);min-height:100vh;line-height:1.6}
@@ -585,10 +588,32 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 .th-dd-menu{box-shadow:var(--e3);border-color:var(--outline)}
 .info-i .info-pop{box-shadow:var(--e3)}
 
+/* ── On-Primary-Kontrast-Garantie (M3): im blauen Hero niemals dunkle Textfarben ── */
+.summary{color:#fff}
+.summary h2{color:rgba(255,255,255,.92)}
+.summary .si-l{color:rgba(255,255,255,.88);opacity:1}
+.summary .si-s{color:rgba(255,255,255,.78);opacity:1}
+.summary .si-v{color:#fff;text-shadow:0 1px 2px rgba(2,32,58,.18)}
+.summary a{color:#fff;text-decoration:underline}
+/* Fortschrittsbalken im Hero: heller Track, damit die Füllung absetzt */
+.summary .tz-bar{background:rgba(255,255,255,.25)}
+.summary .tz-fill{box-shadow:inset 0 1px 0 rgba(255,255,255,.25)}
+
+/* ── M3 State-Layer: Pressed (10–12 % Abdunkelung + minimaler Scale) ── */
+.m-tab:active,.tz-mode:active,.nr-filter:active,.up-btn:active,.area-chip:active,
+.tm-chip:active,.verlauf-tab:active{filter:brightness(.9);transform:scale(.97);transition-duration:.06s}
+button:active{filter:brightness(.92);transition-duration:.06s}
+select:active,input[type=checkbox]:active{filter:brightness(.95)}
+.ac:active,.tc-card:active,.rkpi:active,.aufg-card:active{transform:translateY(0) scale(.995);box-shadow:var(--e1);transition-duration:.08s}
+/* Ripple-Ersatz für die Haupt-Tabs: Abdunkelung über State-Layer statt Farbe */
+.m-tab{-webkit-tap-highlight-color:transparent}
+.m-tab.a:active{filter:brightness(.94)}
+
 /* ── Reduzierte Bewegung respektieren ── */
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{transition-duration:.01ms !important;animation-duration:.01ms !important}
   .ac:hover,.pr:hover,.tc-card:hover,.rkpi:hover,.aufg-card:hover,.m-tab:hover,.drop:hover,.up-btn:hover{transform:none}
+  .m-tab:active,.tz-mode:active,.nr-filter:active,.up-btn:active,button:active,.ac:active,.tc-card:active,.rkpi:active,.aufg-card:active{transform:none;filter:none}
 }
 </style>
 </head>
@@ -4840,7 +4865,7 @@ function renderAufgaben(){
 
     if(personsByArea.length){
       h += `<div style="margin-bottom:16px">
-        <div style="font-family:Montserrat;font-weight:700;font-size:12px;color:var(--muted);margin-bottom:8px">👥 Heute zugewiesen:</div>
+        <div style="font-family:Montserrat;font-weight:700;font-size:12px;color:rgba(255,255,255,.8);margin-bottom:8px">👥 Heute zugewiesen:</div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">`;
       personsByArea.forEach(name=>{
         // Zeige pro Person ihre Zeitblöcke
@@ -4854,7 +4879,7 @@ function renderAufgaben(){
       });
       h += `</div></div>`;
     } else {
-      h += `<div style="background:var(--amber-bg);color:var(--amber);border-radius:8px;padding:12px;margin-bottom:16px;font-size:12px">
+      h += `<div style="background:#fff3d6;color:#92600a;border-radius:12px;padding:12px;margin-bottom:16px;font-size:12px;font-weight:600">
         ⚠️ Noch niemand für heute zugewiesen — Zuweisung unter „Alle Aufgaben"
       </div>`;
     }
@@ -4863,18 +4888,18 @@ function renderAufgaben(){
     if(tzArea==='bo'){
       h += `<div style="margin-bottom:16px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-          <div style="font-family:Montserrat;font-weight:700;font-size:12px;color:var(--dark)">Fortschritt Backoffice</div>
-          <div style="font-family:Montserrat;font-weight:900;font-size:13px;color:#0891b2">${boDone} von ${boTotal} erledigt</div>
+          <div style="font-family:Montserrat;font-weight:700;font-size:12px;color:#fff">Fortschritt Backoffice</div>
+          <div style="font-family:Montserrat;font-weight:900;font-size:13px;color:var(--on-primary-bo)">${boDone} von ${boTotal} erledigt</div>
         </div>
-        <div class="tz-bar"><div class="tz-fill" style="width:${Math.max(boPct,6)}%;background:#0891b2">${boPct}%</div></div>
+        <div class="tz-bar" style="background:rgba(255,255,255,.25)"><div class="tz-fill" style="width:${Math.max(boPct,6)}%;background:#0891b2">${boPct}%</div></div>
       </div>`;
     } else {
       h += `<div style="margin-bottom:16px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-          <div style="font-family:Montserrat;font-weight:700;font-size:12px;color:var(--dark)">Fortschritt Tagesgeschäft</div>
-          <div style="font-family:Montserrat;font-weight:900;font-size:13px;color:var(--primary)">${tgDone} von ${tgTotal} erledigt</div>
+          <div style="font-family:Montserrat;font-weight:700;font-size:12px;color:#fff">Fortschritt Tagesgeschäft</div>
+          <div style="font-family:Montserrat;font-weight:900;font-size:13px;color:var(--on-primary-tg)">${tgDone} von ${tgTotal} erledigt</div>
         </div>
-        <div class="tz-bar"><div class="tz-fill" style="width:${Math.max(tgPct,6)}%;background:var(--primary)">${tgPct}%</div></div>
+        <div class="tz-bar" style="background:rgba(255,255,255,.25)"><div class="tz-fill" style="width:${Math.max(tgPct,6)}%;background:#003a5e">${tgPct}%</div></div>
       </div>`;
     }
 
@@ -4958,8 +4983,8 @@ function renderAufgaben(){
     <h2>🎯 Tagesziel · ${dd}</h2>
     <div class="sg">
       <div class="si"><div class="si-l">Gesamt</div><div class="si-v">${pct}%</div><div class="si-s">${done}/${total} Aufgaben</div></div>
-      ${tgTotal>0?`<div class="si"><div class="si-l">Tagesgeschäft</div><div class="si-v" style="color:var(--primary)">${tgPct}%</div><div class="si-s">${tgDone}/${tgTotal} Aufgaben</div></div>`:''}
-      ${boTotal>0?`<div class="si"><div class="si-l">Backoffice</div><div class="si-v" style="color:#0891b2">${boPct}%</div><div class="si-s">${boDone}/${boTotal} Aufgaben</div></div>`:''}
+      ${tgTotal>0?`<div class="si"><div class="si-l">🏃 Tagesgeschäft</div><div class="si-v" style="color:var(--on-primary-tg)">${tgPct}%</div><div class="si-s">${tgDone}/${tgTotal} Aufgaben</div></div>`:''}
+      ${boTotal>0?`<div class="si"><div class="si-l">💼 Backoffice</div><div class="si-v" style="color:var(--on-primary-bo)">${boPct}%</div><div class="si-s">${boDone}/${boTotal} Aufgaben</div></div>`:''}
       <div class="si"><div class="si-l">Fortschritt</div><div class="si-v"><div style="width:100%;background:var(--border);border-radius:6px;height:20px;overflow:hidden"><div style="width:${pct}%;background:${barColor};height:100%;transition:width .3s"></div></div></div></div>
     </div>
   </div>`;

@@ -294,6 +294,7 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--dark);min
 .abw-name{font-size:13px;font-weight:600;color:var(--dark);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .abw-track{display:flex;height:22px;border-radius:6px;overflow:hidden;background:var(--border)}
 .abw-seg{height:100%;display:flex;align-items:center;justify-content:center;color:#fff;font-size:11px;font-weight:800;min-width:0}
+.abw-seg-work{background:#d5dce5;color:#475569;font-size:10px}
 .abw-val{font-size:12px;font-weight:700;color:var(--muted);white-space:nowrap}
 .abw-legend{display:flex;gap:16px;flex-wrap:wrap;margin-bottom:12px;font-size:12px;color:var(--dark)}
 .abw-legend span{display:inline-flex;align-items:center;gap:6px}
@@ -1847,7 +1848,8 @@ function analyzeRezepteFull(cellsForDay, allCells, opts){
         allTermine: new Set(),
         weekTermine: new Set(),
         windowTermine: new Set(),   // Termine innerhalb der Blanko-Gültigkeit (16 Wo ab VO-Datum)
-        lastDate: null
+        lastDate: null,
+        nextTerminDate: null        // nächster Termin NACH dem Stichtag (Mail Chaled 17.09.)
       };
     }
     if(c.termIdent)rezeptMap[key].termineHeute.add(c.termIdent);
@@ -1881,8 +1883,12 @@ function analyzeRezepteFull(cellsForDay, allCells, opts){
   // Zähle ALLE Termine pro Rezept aus dem GESAMTEN Export + Termine dieser Woche + letztes Datum
   allCells.forEach(c=>{
     if(!c.rezeptNr || !rezeptMap[c.rezeptNr])return;
-    if(c.belArt!=='R' || !c.belegt || !c.termIdent)return;
+    if(c.belArt!=='R' || !c.termIdent)return;
     const rm = rezeptMap[c.rezeptNr];
+    // Nächsten ZUKUNFTS-Termin merken (Mail Chaled 17.09.): „Kein Termin!" darf nur
+    // erscheinen, wenn wirklich kein Termin nach dem Stichtag geplant ist.
+    if(c.start && c.start.getTime()>refT && (!rm.nextTerminDate || c.start<rm.nextTerminDate)) rm.nextTerminDate = c.start;
+    if(!c.belegt)return;
     rm.allTermine.add(c.termIdent);
     if(c.start){
       const t=c.start.getTime();
@@ -1915,6 +1921,7 @@ function analyzeRezepteFull(cellsForDay, allCells, opts){
     p.erbracht = erbracht;
     p.total = total;
     p.rest = rest;
+    p.hasFuture = !!p.nextTerminDate;
 
     // Aktiv-Filter (nur im allActive-Modus): läuft noch UND aktuell.
     //   läuft noch = offene Behandlungen (rest>0) oder Blanko/BVB (Kapazität separat)
@@ -2322,7 +2329,7 @@ function showRezeptDetail(k){
         <div class="pr-i">
           <div class="pr-n">${p.name} ${ageStr ? `<span style="font-size:9px;color:var(--muted);font-weight:600;margin-left:6px">${ageStr}</span>` : ''} <span style="font-size:9px;color:var(--accent);font-weight:700;margin-left:6px">${p.icd||'—'}</span></div>
           <div class="pr-d">
-            <b>${p.heilmittel||'?'}</b> · <b style="color:var(--fire);font-size:11px">Ø ${avgStr}×/Woche geplant</b> · Ziel 2×/Woche
+            <b>${p.heilmittel||'?'}</b> · <b style="color:var(--fire);font-size:11px">Ø ${avgStr}×/Woche geplant</b> · Ziel 2×/Woche${voDat(p.rezDatum)}
             ${tg!==null?` · <span style="color:${tgC}">🗓 ${tg<0?'⚠ abgelaufen':'noch '+tg+' Tage gültig'}</span>`:''}
           </div>
           <div class="progress-mini"><div class="progress-mini-f" style="width:${pct}%;background:var(--accent)"></div></div>
@@ -2350,7 +2357,7 @@ function showRezeptDetail(k){
         <div class="pr-i">
           <div class="pr-n">${p.name} ${ageStr ? `<span style="font-size:9px;color:var(--muted);font-weight:600;margin-left:6px">${ageStr}</span>` : ''} <span style="font-size:9px;color:var(--purple);font-weight:700;margin-left:6px">${p.icd||'—'}</span></div>
           <div class="pr-d">
-            Aktuell: <b>${p.heilmittel||'?'}</b> · ${p.erbracht}/${p.total||'?'} Beh. ${restJetzt>0?`(noch ${restJetzt} offen)`:''}
+            Aktuell: <b>${p.heilmittel||'?'}</b> · ${p.erbracht}/${p.total||'?'} Beh. ${restJetzt>0?`(noch ${restJetzt} offen)`:''}${voDat(p.rezDatum)}
             ${p.diagnose ? '<br>📋 '+String(p.diagnose).substring(0,60) : ''}
             <br><b style="color:var(--purple)">💎 Möglich: Umstellung auf Blanko-VO (bis ${maxMoeglich} Beh., 16 Wo)</b>
           </div>
@@ -2376,7 +2383,7 @@ function showRezeptDetail(k){
         <div class="pr-i">
           <div class="pr-n">${p.name} ${ageStr ? `<span style="font-size:9px;color:var(--muted);font-weight:600;margin-left:6px">${ageStr}</span>` : ''} <span style="font-size:9px;color:var(--primary);font-weight:700;margin-left:6px">${p.icd||'—'}</span></div>
           <div class="pr-d">
-            <b>${p.heilmittel||'?'}</b> · Rezept: <b>${p.menge}</b> Beh. · Freq. bis <b>${p.bvbFreqMax}×/Wo</b>
+            <b>${p.heilmittel||'?'}</b> · Rezept: <b>${p.menge}</b> Beh. · Freq. bis <b>${p.bvbFreqMax}×/Wo</b>${voDat(p.rezDatum)}
             <br><b style="color:var(--primary)">🔼 Möglich bis ${p.bvbMaxMoeglich} Beh. → noch ${p.bvbOffen} über größeres Folge-VO</b>
           </div>
           <div class="progress-mini"><div class="progress-mini-f" style="width:${pct}%;background:var(--primary)"></div></div>
@@ -2403,7 +2410,7 @@ function showRezeptDetail(k){
         <div class="pr-i">
           <div class="pr-n">${p.name} ${ageStr ? `<span style="font-size:9px;color:var(--muted);font-weight:600;margin-left:6px">${ageStr}</span>` : ''} <span style="font-size:9px;color:${col};font-weight:700;margin-left:6px">${p.icd||'—'}</span></div>
           <div class="pr-d">
-            <b>${p.heilmittel||'?'}</b> · Soll ${p.freq?(p.freqMax&&p.freqMax!==p.freq?`${p.freq}–${p.freqMax}`:`${p.freq}`):'?'}×/Wo · <b style="color:${col}">diese Woche ${p.weekCount}×</b> (möglich bis ${p.freqMax}×)
+            <b>${p.heilmittel||'?'}</b> · Soll ${p.freq?(p.freqMax&&p.freqMax!==p.freq?`${p.freq}–${p.freqMax}`:`${p.freq}`):'?'}×/Wo · <b style="color:${col}">diese Woche ${p.weekCount}×</b> (möglich bis ${p.freqMax}×)${voDat(p.rezDatum)}
             <br><b style="color:${col}">${p.unterSoll?'⚠ unter Soll-Frequenz':'🐌 unter möglicher Frequenz'} — noch ${p.rest} Beh. offen → öfter takten</b>
           </div>
           <div class="progress-mini"><div class="progress-mini-f" style="width:${pct}%;background:${col}"></div></div>
@@ -2426,7 +2433,7 @@ function showRezeptDetail(k){
       h += `<div class="pr-i">
         <div class="pr-n">${isNR?'#'+(i+1)+' ':''}${p.name} ${ageStr ? `<span style="color:var(--muted);font-size:9px;font-weight:600;margin-left:6px">${ageStr}</span>` : ''}</div>
         <div class="pr-d">
-          ${isNR?`<span style="color:var(--accent);font-weight:700">⏱ ${p.hmDauer}min</span> · `:''}<b>${p.heilmittel||'?'}</b> · <b>${p.erbracht}/${p.total||'?'}</b> Beh. · ${p.icd||'?'} ${p.diagnose ? '· '+String(p.diagnose).substring(0,50) : ''}
+          ${isNR?`<span style="color:var(--accent);font-weight:700">⏱ ${p.hmDauer}min</span> · `:''}<b>${p.heilmittel||'?'}</b> · <b>${p.erbracht}/${p.total||'?'}</b> Beh. · ${p.icd||'?'}${voDat(p.rezDatum)} ${p.diagnose ? '· '+String(p.diagnose).substring(0,50) : ''}
           ${p.reasons.length?'<br>💡 '+p.reasons.join(' · '):''}
         </div>
       </div>
@@ -2735,7 +2742,7 @@ function renderKarteileiche(r, typ){
     <div class="pr-i">
       <div class="pr-n">${r.name} ${ageStr ? `<span style="font-size:9px;color:var(--muted);font-weight:600;margin-left:6px">${ageStr}</span>` : ''} <span style="font-size:9px;color:${tColor};font-weight:700;margin-left:6px">${r.icd||'—'}</span></div>
       <div class="pr-d">
-        <b>${r.heilmittel||'?'}</b> · <b style="color:${tColor}">${r.erbracht}/${r.echteMenge} erbracht</b> ${r.bearbStatus?'· Status: <i>'+r.bearbStatus+'</i>':''}
+        <b>${r.heilmittel||'?'}</b> · <b style="color:${tColor}">${r.erbracht}/${r.echteMenge} erbracht</b>${voDat(r.rezDatum)} ${r.bearbStatus?'· Status: <i>'+r.bearbStatus+'</i>':''}
         ${r.therapist?'<br>👤 '+r.therapist:''}
         <br>${action}
       </div>
@@ -2756,6 +2763,12 @@ function filterOffeneSearch(){
     const name = (r.querySelector('.pr-n')?.textContent||'').toLowerCase();
     r.style.display = !q || name.includes(q) ? '' : 'none';
   });
+}
+
+// Rezeptdatum-Anzeige (Mail Chaled 17.09.): überall wo ein Rezept gezeigt wird, das VO-Datum dazu.
+function voDat(d, pre){
+  if(!d || typeof d.toLocaleDateString!=='function' || isNaN(d)) return '';
+  return (pre===undefined?' · ':pre)+'📅 VO '+d.toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'2-digit'});
 }
 
 function renderRezeptRow(r, type, cat){
@@ -2780,7 +2793,7 @@ function renderRezeptRow(r, type, cat){
     <div class="pr-i">
       <div class="pr-n">${r.name}</div>
       <div class="pr-d">
-        <b>${r.heilmittel||'?'}</b> · <b style="color:${c}">${r.erbracht}/${r.total}</b> · ${r.icd||'?'} ${r.diagnose ? '· '+String(r.diagnose).substring(0,40) : ''}
+        <b>${r.heilmittel||'?'}</b> · <b style="color:${c}">${r.erbracht}/${r.total}</b> · ${r.icd||'?'}${voDat(r.rezDatum)} ${r.diagnose ? '· '+String(r.diagnose).substring(0,40) : ''}
         ${r.therapist?'<br>👤 '+r.therapist:''}
       </div>
       <div class="progress-mini"><div class="progress-mini-f" style="width:${pct}%;background:${c}"></div></div>
@@ -3030,10 +3043,14 @@ function ctrlKapazitaetChart(data){
     const diffLab = `${diffH>0?'+':diffH<0?'−':''}${Math.abs(diffH)} h`;
     bars+=`<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${hgt.toFixed(1)}" rx="3" fill="${col}" style="cursor:pointer" onclick="ctrlKapSelect('${w}')"${(isToday||isSel)?' stroke="var(--dark,#0f172a)" stroke-width="2"':''}><title>${w}: ${capH[i]} h Kapazität · ${pct} · ${ampel} · ${richtung} · ${zielTxt}${isToday?' · aktuelle KW':''}</title></rect>`;
     // Zahlen nur am angeklickten Balken (und 📍-Markierung an der aktuellen KW)
+    // Punkt 12 (Call 17.09.): angezeigt wird die Differenz zum 87%-Ziel, NICHT zur Max-Kapazität
     if(isSel){
+      const zDiffH = Math.round((v-target)*CONFIG.slotMin/60);
+      const zDiffLab = `${zDiffH>0?'+':zDiffH<0?'−':''}${Math.abs(zDiffH)} h`;
+      const zPct = target>0 ? Math.round(v/target*100) : 0;
       const yBase = isToday ? y-16 : y-5;
-      pctlab+=`<text x="${Xc(i).toFixed(1)}" y="${yBase.toFixed(1)}" text-anchor="middle" font-size="9" font-weight="800" fill="${col}" style="pointer-events:none">${diffLab}</text>`;
-      pctlab+=`<text x="${Xc(i).toFixed(1)}" y="${(yBase-10).toFixed(1)}" text-anchor="middle" font-size="8" font-weight="700" fill="${col}" opacity=".8" style="pointer-events:none">${pct}</text>`;
+      pctlab+=`<text x="${Xc(i).toFixed(1)}" y="${yBase.toFixed(1)}" text-anchor="middle" font-size="9" font-weight="800" fill="var(--primary,#7c3aed)" style="pointer-events:none">🎯 ${zDiffLab}</text>`;
+      pctlab+=`<text x="${Xc(i).toFixed(1)}" y="${(yBase-10).toFixed(1)}" text-anchor="middle" font-size="8" font-weight="700" fill="var(--primary,#7c3aed)" opacity=".85" style="pointer-events:none">${zPct}% v. Ziel</text>`;
     }
     if(isToday){ pctlab+=`<text x="${Xc(i).toFixed(1)}" y="${(y-5).toFixed(1)}" text-anchor="middle" font-size="9" font-weight="800" fill="var(--dark,#0f172a)" style="pointer-events:none">📍heute</text>`; }
     if(i%showEvery===0 || i===n-1 || isToday){ xlab+=`<text x="${Xc(i).toFixed(1)}" y="${H-padB+16}" text-anchor="middle" font-size="8.5" font-weight="${isToday?'800':'400'}" fill="${isToday?'var(--dark,#0f172a)':'var(--muted,#94a3b8)'}">${w.replace(/^\d{4}-/,'')}</text>`; }
@@ -3055,14 +3072,13 @@ function ctrlKapazitaetChart(data){
   let selInfo='';
   const si = weeks.indexOf(ctrlKapSel);
   if(si>=0){
-    const sdH = Math.round((cap[si]-refMax)*CONFIG.slotMin/60);
-    const sPct = refMax>0 ? Math.round((cap[si]-refMax)/refMax*100) : 0;
-    const sZielPct = refMax>0 ? Math.round(cap[si]/refMax*100) : 0;
-    const sFehlZ = cap[si]<target ? Math.round((target-cap[si])*CONFIG.slotMin/60) : 0;
-    const zielPart = sFehlZ>0
-      ? ` · <span style="color:var(--fire,#e11d48)">🎯 ${sZielPct}% → es fehlen ${sFehlZ} h zum ${TARGET_PCT}%-Ziel</span>`
-      : ` · <span style="color:var(--teal,#16a34a)">🎯 ${sZielPct}% → ${TARGET_PCT}%-Ziel erreicht</span>`;
-    selInfo = `<span style="display:inline-flex;align-items:center;gap:5px;font-weight:800;color:var(--dark)">▸ ${ctrlKapSel}: ${capH[si]} h Kapazität · ${sdH<0?'fehlen '+(-sdH)+' h zur Max':'volle Kapazität'} (${sPct>0?'+':''}${sPct}%)${zielPart}</span>`;
+    // Punkt 12 (Call 17.09.): Detail-Zeile zeigt die Differenz zum 87%-Ziel (nicht zur Max-Kapazität)
+    const sZielPct = target>0 ? Math.round(cap[si]/target*100) : 0;
+    const sZDiffH = Math.round((cap[si]-target)*CONFIG.slotMin/60);
+    const zielPart = sZDiffH<0
+      ? `<span style="color:var(--fire,#e11d48)">🎯 es fehlen ${-sZDiffH} h zum ${TARGET_PCT}%-Ziel (${sZielPct}% vom Ziel)</span>`
+      : `<span style="color:var(--teal,#16a34a)">🎯 ${TARGET_PCT}%-Ziel erreicht · +${sZDiffH} h drüber (${sZielPct}% vom Ziel)</span>`;
+    selInfo = `<span style="display:inline-flex;align-items:center;gap:5px;font-weight:800;color:var(--dark)">▸ ${ctrlKapSel}: ${capH[si]} h Kapazität · Ziel ${Math.round(targetH)} h · ${zielPart}</span>`;
   }
   const legend = `<div style="margin-bottom:6px;font-size:11px;color:var(--dark);display:flex;gap:14px;flex-wrap:wrap;align-items:center">
       <span style="display:inline-flex;align-items:center;gap:5px">${dot('var(--teal)')}bis ${gT}% unter Max → beobachten</span>
@@ -3232,15 +3248,21 @@ function renderControlling(){
   </div>
   <div style="font-size:11px;color:var(--muted);margin:-8px 0 14px">*Stunden = Tage × ${hPerDay} h (pauschale Annahme, individuelle Arbeitszeiten folgen mit Stammdaten)</div>`;
   if(abwRows.length){
-    const maxA = abwRows[0].total || 1;
     h += `<div class="ausl-card" style="margin-bottom:16px"><h4>Abwesenheit & gearbeitete Tage pro Mitarbeiter <span style="font-weight:400;font-size:11px;color:var(--muted)">· Stunden = ${hPerDay}h-Annahme</span></h4>`;
-    h += `<div class="abw-legend">${CATS.map(c=>`<span><i style="background:${c.color}"></i>${c.label}</span>`).join('')}<span><i style="background:var(--border)"></i>💼 Gearbeitet</span></div>`;
+    h += `<div class="abw-legend">${CATS.map(c=>`<span><i style="background:${c.color}"></i>${c.label}</span>`).join('')}<span><i style="background:#d5dce5"></i>💼 Gearbeitet</span></div>`;
+    // Punkt 11 (Call 17.09.): gearbeitete Tage als eigenes Segment im Balken.
+    // Skala = größte Summe aus Fehltagen + gearbeiteten Tagen → Balkenlängen sind vergleichbar.
+    const maxGes = Math.max(1, ...abwRows.map(r=>r.total + (r.gearb||0)));
     abwRows.forEach(r=>{
-      const segs = CATS.map(c=>{
+      let segs = CATS.map(c=>{
         const v=r[c.key]; if(!v) return '';
-        const w=(v/maxA*100).toFixed(1);
+        const w=(v/maxGes*100).toFixed(1);
         return `<div class="abw-seg" style="width:${w}%;background:${c.color}" title="${c.label}: ${v} Tag${v===1?'':'e'} · ${toH(v)} h">${v>=2?v:''}</div>`;
       }).join('');
+      if(r.gearb){
+        const wg=(r.gearb/maxGes*100).toFixed(1);
+        segs += `<div class="abw-seg abw-seg-work" style="width:${wg}%" title="💼 Gearbeitet: ${r.gearb} Tag${r.gearb===1?'':'e'} · ${toH(r.gearb)} h">${r.gearb>=4?'💼 '+r.gearb:''}</div>`;
+      }
       const parts=CATS.filter(c=>r[c.key]).map(c=>`${r[c.key]} ${c.label} (${toH(r[c.key])} h)`).join(' · ');
       const quote = (r.total+r.gearb)>0 ? Math.round(r.total/(r.total+r.gearb)*100) : 0;
       h += `<div class="abw-row"><div class="abw-name" title="${esc(r.name)}">${esc(r.name)}</div>
@@ -3853,7 +3875,7 @@ function renderFolgeVO(){
     const sm = statusMeta[f.status]||statusMeta.offen;
     const tel = f.mobil ? `<a class="pr-tel" href="tel:${String(f.mobil).replace(/[^+\d]/g,'')}">📞 ${esc(f.mobil)}</a>` : '';
     const grpChip = f.gruppe ? `<span class="cat-chip" style="background:var(--primary)">${esc(f.gruppe)}${KAT_SICHER[f.gruppe]?'':' *'}</span>` : '';
-    const fallSpan = `Fall seit ${fmtDE(f.erstesRezept)}${f.datumFehlt?' <span style="color:var(--amber)">· Datum unvollständig</span>':''}`;
+    const fallSpan = `Fall seit ${fmtDE(f.erstesRezept)}${f.lastRez?' · aktuelle VO vom '+fmtDE(f.lastRez):''}${f.datumFehlt?' <span style="color:var(--amber)">· Datum unvollständig</span>':''}`;
     let mitte='', handlungBadge='', borderCol='var(--border)';
     if(mode==='bvb'){
       borderCol='var(--teal)';
@@ -4796,7 +4818,6 @@ function tageszielUebersichtHTML(a){
     return `<div class="tzh-blk"><span class="tzh-blk-l">${b[1]}</span> 💶 – · 📞 <b>${v[0]}/${v[1]}</b> · 🎯 <b>${d[0]}/${d[1]}</b></div>`;
   }).join('');
   if(rows) h += `<div style="margin-bottom:6px">${rows}</div>`;
-  if(s.arzt.tot) h += `<div class="tzh-arzt">👨‍⚕️ Ärzte: 🔄 ${cnt(s.arzt)} Folge-VO angefordert</div>`;
   return h;
 }
 
@@ -4813,11 +4834,11 @@ function buildTagesplan(a, rez){
   const byKey = {};
   const push = (key, t)=>{ if(!key) return; (byKey[key]=byKey[key]||[]).push(t); };
   a.typA.forEach(r=>push(r.patKey, {id:'abr|'+r.rezeptNr, cat:'abr', ico:'💰', txt:'Rezept abrechnen',
-    sub:`${r.erbracht}/${r.echteMenge} erbracht${r.heilmittel?' · '+esc(r.heilmittel):''}`}));
+    sub:`${r.erbracht}/${r.echteMenge} erbracht${r.heilmittel?' · '+esc(r.heilmittel):''}${voDat(r.rezDatum)}`}));
   a.typB.forEach(r=>push(r.patKey, {id:'ft|'+r.rezeptNr, cat:'ft', ico:'📞', txt:'Folgetermin vereinbaren',
-    sub:`${r.erbracht}/${r.echteMenge} · Serie läuft`}));
+    sub:`${r.erbracht}/${r.echteMenge} · Serie läuft${voDat(r.rezDatum)}`}));
   a.folgeVO.forEach(r=>push(r.patKey, {id:'fvo|'+r.rezeptNr, cat:'fvo', ico:'🔄', txt:'Folge-VO anfordern',
-    sub:`Serie fertig · Arzt: ${r.arzt?esc(r.arzt):'?'}`}));
+    sub:`Serie fertig · Arzt: ${r.arzt?esc(r.arzt):'?'}${voDat(r.rezDatum)}`}));
   const dauerKeys = dauerKandidatKeys();
 
   // 2) Termine des Tages nach Patient bündeln
@@ -5137,30 +5158,30 @@ function buildAufgabenSections(a){
         id:'abr|'+r.rezeptNr,
         main:esc(r.name),
         tdef: r.nextTermin ? timeBlockOfHour(r.nextTermin.getHours() + r.nextTermin.getMinutes()/60) : undefined,
-        sub:`${r.erbracht}/${r.echteMenge} erbracht${r.heilmittel?' · '+esc(r.heilmittel):''}${r.tageSeitLetzterTermin!=null?' · seit '+r.tageSeitLetzterTermin+' Tagen':''}` })) },
+        sub:`${r.erbracht}/${r.echteMenge} erbracht${r.heilmittel?' · '+esc(r.heilmittel):''}${voDat(r.rezDatum)}${r.tageSeitLetzterTermin!=null?' · seit '+r.tageSeitLetzterTermin+' Tagen':''}` })) },
     { key:'ft', ico:'📞', color:'var(--primary)', ttl:'Folgetermin vereinbaren', go:"gotoOffene('ohne')",
       items: a.typB.map(r=>({
         id:'ft|'+r.rezeptNr,
         main:esc(r.name),
         tdef: r.nextTermin ? timeBlockOfHour(r.nextTermin.getHours() + r.nextTermin.getMinutes()/60) : undefined,
-        sub:`${r.erbracht}/${r.echteMenge} · ${r.mobil?esc(r.mobil):'keine Nummer'}` })) },
+        sub:`${r.erbracht}/${r.echteMenge}${voDat(r.rezDatum)} · ${r.mobil?esc(r.mobil):'keine Nummer'}` })) },
     { key:'fvo', ico:'🔄', color:'var(--amber)', ttl:'Folge-VO anfordern', go:"gotoFolgeVO()",
       items: a.folgeVO.map(r=>({
         id:'fvo|'+r.rezeptNr,
         main:esc(r.name),
         tdef: r.nextTermin ? timeBlockOfHour(r.nextTermin.getHours() + r.nextTermin.getMinutes()/60) : undefined,
-        sub:`Serie fertig · Arzt: ${r.arzt?esc(r.arzt):'?'}` })) },
+        sub:`Serie fertig · Arzt: ${r.arzt?esc(r.arzt):'?'}${voDat(r.rezDatum)}` })) },
     { key:'blum', ico:'📄', color:'var(--purple)', ttl:'Auf Blanko-VO umstellen', go:"switchView('rezepte')",
       items: blUm.map(p=>({
         id:'blum|'+p.rezeptNr,
         main:esc(p.name),
-        sub:`${p.heilmittel?esc(p.heilmittel):''}${p.icd?' · '+esc(p.icd):''} · beim Arzt Umstellung anstoßen`,
+        sub:`${p.heilmittel?esc(p.heilmittel):''}${p.icd?' · '+esc(p.icd):''}${voDat(p.rezDatum)} · beim Arzt Umstellung anstoßen`,
         statusSel: blStatusSelect('um',p.rezeptNr,p.name) })) },
     { key:'blpl', ico:'💎', color:'var(--accent)', ttl:'Blanko-VO zu Ende planen', go:"switchView('rezepte')",
       items: blPl.map(p=>({
         id:'blpl|'+p.rezeptNr,
         main:esc(p.name),
-        sub:`${p.blankoVerplant!=null?p.blankoVerplant+' von '+p.blankoZiel+' verplant':''}${p.tageUebrig!=null?' · noch '+p.tageUebrig+' Tage gültig':''}`,
+        sub:`${p.blankoVerplant!=null?p.blankoVerplant+' von '+p.blankoZiel+' verplant':''}${p.tageUebrig!=null?' · noch '+p.tageUebrig+' Tage gültig':''}${voDat(p.rezDatum)}`,
         statusSel: blStatusSelect('pl',p.rezeptNr,p.name) })) },
     { key:'kap', ico:'📊', color:'var(--primary)', ttl:'Kapazität 4 Wochen im Voraus bereinigen · Ziel 87 %', go:"switchView('controlling')",
       items: kapItems }

@@ -927,6 +927,7 @@ function showError(msg){
 
 function handleFile(file){
   document.getElementById('err').style.display='none';
+  try{ spLoadedFileInfo = { name:file.name, mod:file.lastModified?new Date(file.lastModified).toISOString():null }; }catch(e){}
   
   const isCSV = /\.csv$/i.test(file.name);
   
@@ -1175,7 +1176,13 @@ function renderDashboard(){
   document.getElementById('upload').style.display='none';
   document.getElementById('db').style.display='block';
   
-  document.getElementById('meta').textContent = `${DATA.dates.length} Tag${DATA.dates.length>1?'e':''} · ${DATA.therapists.length} Therapeut${DATA.therapists.length>1?'en':''}`;
+  let metaTxt = `${DATA.dates.length} Tag${DATA.dates.length>1?'e':''} · ${DATA.therapists.length} Therapeut${DATA.therapists.length>1?'en':''}`;
+  // Welche Datei ist geladen? (Transparenz gegen "springende Zahlen")
+  if(typeof spLoadedFileInfo!=='undefined' && spLoadedFileInfo){
+    const st = spLoadedFileInfo.mod ? ' · Stand '+new Date(spLoadedFileInfo.mod).toLocaleString('de-DE',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
+    metaTxt += ' · 📄 '+spLoadedFileInfo.name+st;
+  }
+  document.getElementById('meta').textContent = metaTxt;
   
   renderMainTabs();
   recordKpiSnapshot();
@@ -5092,6 +5099,11 @@ const SP = {
 
 let msalApp = null, spSiteId = null, spByLicense = {}, spRefreshTimer = null;
 let spLocations = [], spCurrentLoc = null;   // Standort-Ordner (ein Ordner pro Standort)
+let spLoadedFileInfo = null;                 // zuletzt geladene Datei {name, mod} → Anzeige im Header
+
+// Fortlaufende Nummer aus dem Dateinamen: Export140_14.csv → 14, Export140.csv → 0.
+// Luis lädt täglich eine neue Datei mit hochgezählter Nummer hoch (Historie bleibt erhalten).
+function spSeqNum(name){ const m=String(name).match(/_(\d+)\.csv$/i); return m?parseInt(m[1],10):0; }
 
 function msStatus(t){ const e=document.getElementById('msStatus'); if(e) e.textContent = t||''; }
 // Fortschrittsbalken unter der Statuszeile (frac 0–1, null = ausblenden)
@@ -5230,9 +5242,20 @@ async function loadSpLocation(loc){
     const listing = await graphGet('/sites/'+spSiteId+'/drive/items/'+loc.id+'/children?$top=999&$select=name,id,size,@microsoft.graph.downloadUrl,lastModifiedDateTime', token);
     const csvs = (listing.value||[]).filter(f=>/\.csv$/i.test(f.name));
     if(!csvs.length){ msStatus('⚠️ Keine CSV im Standort „'+loc.name+'".'); return; }
-    // neueste Datei (Lizenz-Schema, sonst lastModified)
-    const map = buildLicenseMap(csvs);
-    const newest = Object.values(map).sort((a,b)=>String(b._stamp).localeCompare(String(a._stamp)))[0];
+    // Neueste Datei bestimmen (Fix Sep 2026 – springende Zahlen):
+    // 1) Lizenz-Schema (Lizenz_YYYYMMDDhhmmss.csv) → neuester Zeitstempel im Namen
+    // 2) Fortlaufende Nummerierung (Export140_14.csv > Export140_2.csv > Export140.csv)
+    //    → HÖCHSTE Nummer gewinnt. Bewusst NICHT das SharePoint-Änderungsdatum:
+    //    das wird durch Sync-Vorgänge verfälscht und ließ das Dashboard zwischen
+    //    alten und neuen Exporten hin- und herspringen.
+    let newest;
+    if(csvs.some(f=>parseFileName(f.name).ts)){
+      const map = buildLicenseMap(csvs);
+      newest = Object.values(map).sort((a,b)=>String(b._stamp).localeCompare(String(a._stamp)))[0];
+    } else {
+      newest = csvs.slice().sort((a,b)=> spSeqNum(b.name)-spSeqNum(a.name)
+        || String(b.lastModifiedDateTime||'').localeCompare(String(a.lastModifiedDateTime||'')))[0];
+    }
     await loadSpFile(newest);
   }catch(e){
     console.error(e);
@@ -5244,6 +5267,7 @@ async function loadSpFile(f){
   try{
     const token = await getToken();
     const mb = (f.size/1e6).toFixed(1);
+    spLoadedFileInfo = { name:f.name, mod:f.lastModifiedDateTime||null };   // → Header-Anzeige
     msStatus('Lade '+f.name+' ('+mb+' MB) …');
     msProgress(0);
     // Vorautorisierte Download-URL holen – umgeht das CORS/Redirect-Problem des /content-Endpunkts

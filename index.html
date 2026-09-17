@@ -325,6 +325,17 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--dark);min
 .tz-sec{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:4px 14px;box-shadow:var(--shadow)}
 .tz-item{display:flex;gap:10px;padding:10px 0;border-bottom:1px solid var(--border)}
 .tz-item:last-child{border-bottom:none}
+/* Händische Backoffice-Listen (Punkt 7/8, Call 17.09.) */
+.man-add{display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap}
+.man-in{flex:1;min-width:120px;border:1px solid var(--border);border-radius:10px;padding:8px 12px;font-size:12px;font-family:Poppins,sans-serif;background:var(--card);color:var(--dark)}
+.man-btn{border:none;background:var(--primary);color:#fff;border-radius:10px;padding:8px 14px;font-size:11px;font-weight:700;font-family:Montserrat,sans-serif;cursor:pointer}
+.man-x{border:none;background:var(--border);color:var(--muted);border-radius:8px;width:24px;height:24px;cursor:pointer;font-size:11px;flex-shrink:0}
+/* Ansprache-Fenster im Tagesplan (Punkt 9, Call 17.09.) */
+.lf-modal{position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px}
+.lf-modal-card{background:var(--card);border-radius:18px;padding:18px 20px;max-width:520px;width:100%;max-height:80vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,.3)}
+.lf-modal-h{display:flex;justify-content:space-between;align-items:center;font-family:'Montserrat',sans-serif;font-weight:800;font-size:13px;color:var(--dark);margin-bottom:10px}
+.lf-modal-t{font-size:12px;line-height:1.65;color:var(--dark);white-space:pre-wrap;background:var(--primary-bg);border:1px solid var(--primary);border-radius:12px;padding:12px;margin-bottom:12px}
+.tps-btn.lf{color:var(--primary);border-color:var(--primary)}
 .tp-status{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:8px}
 .tps-btn{border:1px solid var(--border);background:var(--card);border-radius:100px;padding:4px 10px;font-size:10px;font-weight:700;font-family:'Montserrat',sans-serif;cursor:pointer;color:var(--muted);transition:all .15s}
 .tps-btn.wp.a{background:var(--teal);border-color:var(--teal);color:#fff}
@@ -3524,6 +3535,38 @@ function fallbackCopy(text){
   alert('✓ In die Zwischenablage kopiert!');
 }
 
+// ── Punkt 9 (Call 17.09.): Ansprache direkt im Tagesplan ──
+// Öffnet den jeweiligen Telefonleitfaden als Fenster, fertig ausgefüllt mit Patient/Therapeut/Uhrzeit.
+const LF_TITEL = { potential:'Dauerplan anbieten', folgevo:'Folge-VO ansprechen', rezepte:'Folgetermin vereinbaren', offene:'Zuzahlung / erste Behandlung', luecken:'Lücke füllen' };
+let lfModalText = '';
+function showAnsprache(key, patName, therapist, time){
+  const saveSel = leitfadenSel;
+  leitfadenSel = {patName:patName, patTel:'', therapist:therapist||'', time:time||''};
+  lfModalText = lfFilledText(leitfadenGet(key));
+  leitfadenSel = saveSel;
+  let m = document.getElementById('lf-modal');
+  if(!m){ m = document.createElement('div'); m.id='lf-modal'; m.className='lf-modal'; document.body.appendChild(m); }
+  m.innerHTML = `<div class="lf-modal-card" onclick="event.stopPropagation()">
+    <div class="lf-modal-h">💬 Ansprache · ${LF_TITEL[key]||'Telefonleitfaden'}<button class="man-x" onclick="closeAnsprache()">✕</button></div>
+    <div class="lf-modal-t">${esc(lfModalText)}</div>
+    <div style="display:flex;gap:8px">
+      <button class="man-btn" style="flex:1" onclick="copyAnsprache()">📋 Kopieren</button>
+      <button class="man-btn" style="background:var(--border);color:var(--dark)" onclick="closeAnsprache()">Schließen</button>
+    </div>
+    <div class="lf-hint" style="margin-top:8px">Vorlage anpassbar im jeweiligen Reiter (Potential / Folge-VO / Rezepte) · wird lokal gespeichert.</div>
+  </div>`;
+  m.onclick = closeAnsprache;
+  m.style.display='flex';
+}
+function closeAnsprache(){ const m=document.getElementById('lf-modal'); if(m) m.style.display='none'; }
+function copyAnsprache(){
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(lfModalText).then(()=>alert('✓ In die Zwischenablage kopiert!')).catch(()=>fallbackCopy(lfModalText));
+  } else { fallbackCopy(lfModalText); }
+}
+// Aufgaben-Kategorie → passender Leitfaden
+function lfKeyOfCat(cat){ return {dauer:'potential', fvo:'folgevo', ft:'rezepte', abr:'offene'}[cat]||''; }
+
 function leitfadenBox(key, titel, platzhalter){
   const val = leitfadenGet(key);
   return `<div class="lf-box">
@@ -4192,6 +4235,90 @@ function ablehnungDel(ts){
   lsSet('cki_ablehnungen', ablehnungen().filter(e=>e.ts!==ts));
   renderAufgaben();
 }
+// ── Punkt 7/8 (Call 17.09.): händische Backoffice-Listen (Rezeptbestellungen, fehlende Unterschriften) ──
+function manList(k){ return lsGet(k, []); }
+function manSet(k, id, field, val){ const a=manList(k); const e=a.find(x=>x.id===id); if(e){ e[field]=val; lsSet(k,a); renderAufgaben(); } }
+function manDel(k, id){ lsSet(k, manList(k).filter(x=>x.id!==id)); renderAufgaben(); }
+const RB_STATUS=[['offen','offen'],['angefragt','beim Arzt angefragt'],['eingetroffen','eingetroffen'],['erledigt','erledigt ✓']];
+const US_STATUS=[['offen','offen'],['angerufen','angerufen'],['erreicht','erreicht'],['nichterreicht','nicht erreicht']];
+function manStatusSel(k,id,cur,opts){
+  const done = cur==='erledigt'||cur==='erreicht';
+  const col = done?'var(--teal)':(cur==='offen'?'var(--accent)':'var(--amber)');
+  let o=''; opts.forEach(([v,l])=>{ o+=`<option value="${v}"${v===cur?' selected':''}>${l}</option>`; });
+  return `<select class="asg-sel" style="border-color:${col};color:${col};font-weight:700" onchange="manSet('${k}',${id},'st',this.value)">${o}</select>`;
+}
+function rbAdd(){
+  const n=document.getElementById('rb-name'), a=document.getElementById('rb-arzt');
+  if(!n.value.trim()){ alert('Bitte Patientenname eingeben.'); return; }
+  const all=manList('cki_rezeptbest');
+  all.push({id:Date.now(), name:n.value.trim(), arzt:a.value.trim(), st:'offen', by:getMe()||''});
+  lsSet('cki_rezeptbest', all); renderAufgaben();
+}
+function usAdd(){
+  const n=document.getElementById('us-name'), b=document.getElementById('us-bis');
+  if(!n.value.trim()){ alert('Bitte Patientenname eingeben.'); return; }
+  const all=manList('cki_unterschriften');
+  all.push({id:Date.now(), name:n.value.trim(), bis:b.value||'', st:'offen', by:getMe()||''});
+  lsSet('cki_unterschriften', all); renderAufgaben();
+}
+function renderRezeptBestellungen(){
+  const all=manList('cki_rezeptbest');
+  const offen=all.filter(e=>e.st!=='erledigt').length;
+  let h=`<div class="tz-grp">📦 Rezeptbestellungen nachhalten (${offen} offen)</div>
+  <div class="man-add">
+    <input class="man-in" id="rb-name" placeholder="Patient …">
+    <input class="man-in" id="rb-arzt" placeholder="Arzt …">
+    <button class="man-btn" onclick="rbAdd()">+ hinzufügen</button>
+  </div>`;
+  if(all.length){
+    h+=`<div class="tz-sec" style="display:block">`;
+    all.forEach(e=>{
+      h+=`<div class="tz-item${e.st==='erledigt'?'" style="opacity:.5':''}">
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:700;font-size:12px">${esc(e.name)}</div>
+          ${e.arzt?`<div style="font-size:10px;color:var(--muted)">👨‍⚕️ ${esc(e.arzt)}</div>`:''}
+        </div>
+        ${manStatusSel('cki_rezeptbest',e.id,e.st,RB_STATUS)}
+        <button class="man-x" onclick="manDel('cki_rezeptbest',${e.id})">✕</button>
+      </div>`;
+    });
+    h+=`</div>`;
+  } else {
+    h+=`<div class="empty" style="font-size:12px">Noch keine Einträge – Rezeptbestellung oben eintragen (Patient + Arzt), Status hier nachhalten.</div>`;
+  }
+  return h;
+}
+function renderUnterschriften(){
+  const all=manList('cki_unterschriften');
+  const offen=all.filter(e=>e.st!=='erreicht').length;
+  let h=`<div class="tz-grp">✍️ Fehlende Unterschriften nachhalten (${offen} offen)</div>
+  <div class="man-add">
+    <input class="man-in" id="us-name" placeholder="Patient …">
+    <input class="man-in" id="us-bis" type="date" title="bis wann?">
+    <button class="man-btn" onclick="usAdd()">+ hinzufügen</button>
+  </div>`;
+  if(all.length){
+    h+=`<div class="tz-sec" style="display:block">`;
+    all.forEach(e=>{
+      const ueberfaellig = e.bis && e.bis<currentDate && e.st!=='erreicht';
+      h+=`<div class="tz-item${e.st==='erreicht'?'" style="opacity:.5':''}">
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:700;font-size:12px">${esc(e.name)}</div>
+          <div style="font-size:10px;color:${ueberfaellig?'var(--fire)':'var(--muted)'};font-weight:${ueberfaellig?'700':'400'}">
+            ${e.bis?`⏰ bis ${new Date(e.bis+'T12:00:00').toLocaleDateString('de-DE')}${ueberfaellig?' · überfällig!':''}`:'ohne Frist'}
+          </div>
+        </div>
+        <input class="man-in" type="date" value="${esc(e.bis||'')}" style="max-width:130px" onchange="manSet('cki_unterschriften',${e.id},'bis',this.value)">
+        ${manStatusSel('cki_unterschriften',e.id,e.st,US_STATUS)}
+        <button class="man-x" onclick="manDel('cki_unterschriften',${e.id})">✕</button>
+      </div>`;
+    });
+    h+=`</div>`;
+  } else {
+    h+=`<div class="empty" style="font-size:12px">Noch keine Einträge – Patient oben eintragen, Frist per Kalender setzen, Status (angerufen / erreicht / nicht erreicht) nachhalten.</div>`;
+  }
+  return h;
+}
 // Punkt 6 (Call 17.09.): Backoffice-Review aller Ablehnungen mit Begründung.
 // „Endgültig geprüft" durch die Leitung kommt erst mit Microsoft-Konten (echte Rechte-Trennung).
 function renderAblehnungsReview(){
@@ -4758,6 +4885,7 @@ function buildTagesplan(a, rez){
       h += `<div class="tp-task${d?' done':''}">
         <div class="tp-task-cb" onclick="toggleTask('${jsq(t.id)}')">${d?'✓':''}</div>
         <div class="tp-task-body" onclick="toggleTask('${jsq(t.id)}')"><span class="tp-task-txt">${t.ico} ${t.txt}</span><span class="tp-task-sub">${t.sub}</span></div>
+        ${lfKeyOfCat(t.cat)?`<button class="tps-btn lf" onclick="event.stopPropagation();showAnsprache('${lfKeyOfCat(t.cat)}','${jsq(p.name)}','${jsq(p.therapist||'')}','${hhmm(p.start)}')">💬 Ansprache</button>`:''}
         ${areaChip(t.id,t.cat)}
         ${assigneeChip(t.id,t.cat,pTdef)}
       </div>`;
@@ -5201,6 +5329,8 @@ function renderAufgaben(){
       };
       if(stdSections.some(s=>s.items.length)) h += `<div class="tz-grp">📌 Standardaufgaben · Arbeitsaufteilung ${areaLabel}</div>`;
       stdSections.forEach(renderSec);
+      // ── Punkt 7/8 (Call 17.09.): händische Listen direkt unter den Standardaufgaben ──
+      if(tzArea==='bo'){ h += renderRezeptBestellungen(); h += renderUnterschriften(); }
       if(sections.some(s=>s.items.length)) h += `<div class="tz-grp">🗂️ Aufgaben aus dem Theorg-Export</div>`;
       sections.forEach(renderSec);
     } else {

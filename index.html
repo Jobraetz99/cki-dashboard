@@ -1841,7 +1841,9 @@ function groupRezepteByPatient(rezepte){
 }
 
 function renderRezeptGroup(group, cat){
-  const key = encodeURIComponent((group.name||"?")+"_"+(group.geb||"?"));
+  // Key normalisieren: Date → JJJJ-MM-TT (sonst landet der rohe Date-String mit GMT im DOM)
+  const gebKey = (group.geb instanceof Date && !isNaN(group.geb)) ? group.geb.toISOString().slice(0,10) : String(group.geb||"?");
+  const key = encodeURIComponent((group.name||"?")+"_"+gebKey);
   const expanded = localStorage.getItem("cki_rezept_group_"+key)==="1";
   // Status im Kopf (Call 15.09.): gleicher Status wie in der Backoffice-Aufgabe
   const blType = cat==='blanko' ? 'um' : (cat==='blankopot' ? 'pl' : null);
@@ -1854,7 +1856,11 @@ function renderRezeptGroup(group, cat){
   let h = '<div class="rezept-group" style="margin-bottom:8px;border:1px solid var(--border);border-radius:12px;overflow:hidden">';
   h += '<div class="rezept-group-head" style="background:var(--primary-bg);padding:12px 14px;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:8px;font-weight:700" onclick="toggleRezeptGroupExpand(\''+key+'\')">';
   h += '<span>'+(expanded?'▼':'▶')+' '+esc(group.name)+'</span>';
-  h += '<span style="font-size:10px;color:var(--muted);font-weight:600">'+(group.geb||'–')+'</span>';
+  // Geburtsdatum lesbar formatieren (vorher roher Date-String mit GMT-Zusatz)
+  let gebStr = '–';
+  if(group.geb instanceof Date && !isNaN(group.geb)) gebStr = '* '+group.geb.toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'numeric'});
+  else if(group.geb){ const d=new Date(group.geb); gebStr = !isNaN(d) ? '* '+d.toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'numeric'}) : esc(String(group.geb)); }
+  h += '<span style="font-size:10px;color:var(--muted);font-weight:600">'+gebStr+'</span>';
   h += headStatus;
   h += '<span style="background:var(--primary);color:#fff;border-radius:100px;padding:2px 8px;font-size:10px;font-weight:800">' + group.rezepte.length + '</span>';
   h += '</div>';
@@ -1881,8 +1887,10 @@ function showRezeptDetail(k){
   let items = rez[k];
 
   // Punkt 18: Rezepte pro Patient gruppieren (Name + Geburtsdatum Matching)
+  // Call 17.09.: bvbpot + untertaktet NICHT mehr gruppieren – die Spezial-Ansicht
+  // zeigt das konkrete To-Do (Frequenz, Potenzial), das in den Gruppen verloren ging.
   let point18Grouped = false;
-  if(['all','blanko','blankopot','bvbpot','untertaktet'].includes(k) && items.length>0){
+  if(['all','blanko','blankopot'].includes(k) && items.length>0){
     point18Grouped = true;
   }
   const isNR = k==='nr';
@@ -1945,6 +1953,21 @@ function showRezeptDetail(k){
   if(!items.length){
     h += '<div class="empty">Keine Einträge in dieser Kategorie</div>';
   } else if(point18Grouped){
+    // Info-Box: Was ist hier das To-Do? (auch in der gruppierten Ansicht)
+    if(k==='blanko'){
+      h += `<div style="background:var(--purple-bg);border-radius:12px;padding:12px 14px;margin-bottom:10px;font-size:11px;color:var(--dark);line-height:1.6">
+        <b style="color:var(--purple);font-family:Montserrat;font-weight:800">🎯 Aktion: Rezept auf Blankoverordnung umstellen!</b>
+        Diese Patienten haben eine Schulter-Indikation (M75.x, S42-S46), aber noch ein konventionelles Rezept.
+        Beim Arzt die Umstellung auf Blankoverordnung anstoßen — 16 Wochen flexibel, bis zu 18 Behandlungen (26 bei Frakturen).
+        Status direkt am Rezept pflegen · Klick auf den Patienten übernimmt ihn in den Telefonleitfaden.
+      </div>`;
+    } else if(k==='blankopot'){
+      h += `<div style="background:var(--accent-bg);border-radius:12px;padding:12px 14px;margin-bottom:10px;font-size:11px;color:var(--dark);line-height:1.6">
+        <b style="color:var(--accent);font-family:Montserrat;font-weight:800">💎 Aktion: Blanko-VO zu Ende planen!</b>
+        Diese Blanko-VOs sind nicht durchgehend mit <b>Ø 2× pro Woche</b> über die 16 Wochen Gültigkeit verplant —
+        bitte Termine auffüllen. Status direkt am Rezept pflegen · Klick auf den Patienten übernimmt ihn in den Telefonleitfaden.
+      </div>`;
+    }
     // Rezepte gruppieren
     const groups = groupRezepteByPatient(items);
     groups.forEach(g=> h += renderRezeptGroup(g, k));
@@ -2023,7 +2046,7 @@ function showRezeptDetail(k){
       const age = p.geb ? Math.floor((Date.now()-new Date(p.geb).getTime())/(365.25*86400000)) : null;
       const ageStr = age ? `${age}J` : '';
       const pct = p.bvbMaxMoeglich ? Math.min(100, Math.round((p.menge/p.bvbMaxMoeglich)*100)) : 0;
-      h += `<div class="pr${prCardClass(k,p)}">
+      h += `<div class="pr${prCardClass(k,p)}" data-lf-sel="${esc(p.name)}" onclick="selectLeitfadenPatient('${jsq(p.name)}','${jsq(p.mobil||'')}','${jsq(p.therapist||'')}','')">
         <div class="pr-i">
           <div class="pr-n">${p.name} ${ageStr ? `<span style="font-size:9px;color:var(--muted);font-weight:600;margin-left:6px">${ageStr}</span>` : ''} <span style="font-size:9px;color:var(--primary);font-weight:700;margin-left:6px">${p.icd||'—'}</span></div>
           <div class="pr-d">
@@ -2033,7 +2056,7 @@ function showRezeptDetail(k){
           <div class="progress-mini"><div class="progress-mini-f" style="width:${pct}%;background:var(--primary)"></div></div>
         </div>
         ${prStatusChip(k,p)}
-        ${p.mobil?`<a href="tel:${String(p.mobil).replace(/[^+\\d]/g,'')}" class="pr-tel">📞 ${p.mobil}</a>`:''}
+        ${p.mobil?`<a href="tel:${String(p.mobil).replace(/[^+\\d]/g,'')}" class="pr-tel" onclick="event.stopPropagation()">📞 ${p.mobil}</a>`:''}
       </div>`;
     });
   } else if(k==='untertaktet'){
@@ -2050,7 +2073,7 @@ function showRezeptDetail(k){
       const ageStr = age ? `${age}J` : '';
       const col = p.unterSoll ? 'var(--fire)' : 'var(--amber)';
       const pct = p.freqMax ? Math.min(100, Math.round((p.weekCount/p.freqMax)*100)) : 0;
-      h += `<div class="pr${prCardClass(k,p)}"${p.unterSoll?' style="border-left:3px solid var(--fire)"':''}>
+      h += `<div class="pr${prCardClass(k,p)}"${p.unterSoll?' style="border-left:3px solid var(--fire)"':''} data-lf-sel="${esc(p.name)}" onclick="selectLeitfadenPatient('${jsq(p.name)}','${jsq(p.mobil||'')}','${jsq(p.therapist||'')}','')">
         <div class="pr-i">
           <div class="pr-n">${p.name} ${ageStr ? `<span style="font-size:9px;color:var(--muted);font-weight:600;margin-left:6px">${ageStr}</span>` : ''} <span style="font-size:9px;color:${col};font-weight:700;margin-left:6px">${p.icd||'—'}</span></div>
           <div class="pr-d">
@@ -2060,7 +2083,7 @@ function showRezeptDetail(k){
           <div class="progress-mini"><div class="progress-mini-f" style="width:${pct}%;background:${col}"></div></div>
         </div>
         ${prStatusChip(k,p)}
-        ${p.mobil?`<a href="tel:${String(p.mobil).replace(/[^+\\d]/g,'')}" class="pr-tel">📞 ${p.mobil}</a>`:''}
+        ${p.mobil?`<a href="tel:${String(p.mobil).replace(/[^+\\d]/g,'')}" class="pr-tel" onclick="event.stopPropagation()">📞 ${p.mobil}</a>`:''}
       </div>`;
     });
   } else if(k==='blankoOLD'){
@@ -4015,7 +4038,19 @@ function cycleTaskAssign(id){
   lsSet('cki_assign_'+id, order[(idx<0?1:idx+1)%order.length]);
   renderAufgaben();
 }
-function effectiveAssignee(id,catkey){ return getTaskAssign(id) || getCatAssign(catkey) || ''; }
+// Auto-Zuweisung aus der Tages-Matrix (Call 17.09.): Wer laut Zuweisung den Bereich
+// (TG/BO) im Zeitblock (VM/MI/NM) der Aufgabe hat, bekommt sie automatisch.
+// Mehrere Personen im selben Block → Aufgaben werden stabil (per Aufgaben-ID) verteilt.
+function matrixAssignee(id,catkey,tdef){
+  if(!currentDate) return '';
+  const names = getAssignmentMatrixByArea(currentDate, effectiveArea(id,catkey), effectiveTime(id,catkey,tdef));
+  if(!names.length) return '';
+  if(names.length===1) return names[0];
+  let hsum=0; const s=String(id);
+  for(let i=0;i<s.length;i++) hsum=(hsum*31+s.charCodeAt(i))>>>0;
+  return names[hsum%names.length];
+}
+function effectiveAssignee(id,catkey,tdef){ return getTaskAssign(id) || getCatAssign(catkey) || matrixAssignee(id,catkey,tdef) || ''; }
 // Dropdown für den Kategorie-Kopf
 function catAssignSelect(catkey){
   const cur=getCatAssign(catkey);
@@ -4024,11 +4059,14 @@ function catAssignSelect(catkey){
   return '<select class="asg-sel" onclick="event.stopPropagation()" onchange="setCatAssign(\''+jsq(catkey)+'\',this.value)">'+opts.join('')+'</select>';
 }
 // Klickbarer Initialen-Chip je Aufgabe (Klick = nächste Person / zurück auf Standard)
-function assigneeChip(id,catkey){
-  const ov=getTaskAssign(id); const eff=ov||getCatAssign(catkey)||''; const inh=!ov&&!!eff;
+function assigneeChip(id,catkey,tdef){
+  const ov=getTaskAssign(id); const catA=getCatAssign(catkey);
+  const mx=(!ov&&!catA)?matrixAssignee(id,catkey,tdef):'';
+  const eff=ov||catA||mx||''; const inh=!ov&&!!eff;
   if(!getTeam().length) return '';
   if(!eff) return '<span class="asg-chip asg-none" onclick="event.stopPropagation();cycleTaskAssign(\''+jsq(id)+'\')" title="Verantwortliche zuweisen">+</span>';
-  return '<span class="asg-chip'+(inh?' asg-inh':'')+'" style="background:'+teamColor(eff)+'" onclick="event.stopPropagation();cycleTaskAssign(\''+jsq(id)+'\')" title="'+esc(eff)+(inh?' · von Kategorie geerbt':'')+' · klicken zum Ändern">'+esc(teamInitials(eff))+'</span>';
+  const src = mx ? ' · automatisch aus der Tages-Zuweisung ('+(effectiveArea(id,catkey)==='bo'?'Backoffice':'Tagesgeschäft')+' · '+(TZ_TIMES[effectiveTime(id,catkey,tdef)]||'')+')' : (inh?' · von Kategorie geerbt':'');
+  return '<span class="asg-chip'+(inh?' asg-inh':'')+'" style="background:'+teamColor(eff)+'" onclick="event.stopPropagation();cycleTaskAssign(\''+jsq(id)+'\')" title="'+esc(eff)+src+' · klicken zum Ändern">'+esc(teamInitials(eff))+'</span>';
 }
 // „Ich bin …" (persönlich, NICHT geteilt) + Auto-Vorschlag aus MS-Login
 function detectMsUser(){ try{ const a=msalApp&&msalApp.getAllAccounts()[0]; return a?(a.name||a.username||''):''; }catch(e){ return ''; } }
@@ -4124,7 +4162,7 @@ function buildTagesplan(a, rez){
   liste.sort((x,y)=> x.start-y.start || x.name.localeCompare(y.name));
 
   // „nur meine": Patienten behalten, bei denen mind. eine Aufgabe mir gehört
-  if(tzOnlyMine && me) liste = liste.filter(p=>p.tasks.some(t=>effectiveAssignee(t.id,t.cat)===me));
+  if(tzOnlyMine && me) liste = liste.filter(p=>p.tasks.some(t=>effectiveAssignee(t.id,t.cat,timeBlockOfHour(p.start.getHours()+p.start.getMinutes()/60))===me));
 
   const totOffen = liste.reduce((s,p)=>s+p.tasks.filter(t=>!taskDone(t.id)).length,0);
 
@@ -4154,13 +4192,14 @@ function buildTagesplan(a, rez){
         <div class="tp-pat">${esc(p.name)}${p.therapist?`<span class="tp-th"> · ${esc(p.therapist)}</span>`:''}</div>
         ${leist?`<div class="tp-leist">${esc(leist)}</div>`:''}
         <div class="tp-tasks">`;
+    const pTdef = timeBlockOfHour(p.start.getHours()+p.start.getMinutes()/60);
     p.tasks.forEach(t=>{
       const d = taskDone(t.id);
       h += `<div class="tp-task${d?' done':''}">
         <div class="tp-task-cb" onclick="toggleTask('${jsq(t.id)}')">${d?'✓':''}</div>
         <div class="tp-task-body" onclick="toggleTask('${jsq(t.id)}')"><span class="tp-task-txt">${t.ico} ${t.txt}</span><span class="tp-task-sub">${t.sub}</span></div>
         ${areaChip(t.id,t.cat)}
-        ${assigneeChip(t.id,t.cat)}
+        ${assigneeChip(t.id,t.cat,pTdef)}
       </div>`;
     });
     h += `</div></div>`;
@@ -4542,7 +4581,7 @@ function renderAufgaben(){
       const team = getTeam();
       const renderSec = s=>{
         let items = s.items;
-        if(tzOnlyMine && me) items = items.filter(it=>effectiveAssignee(it.id,s.key)===me);
+        if(tzOnlyMine && me) items = items.filter(it=>effectiveAssignee(it.id,s.key,it.tdef)===me);
         if(!items.length) return;
         const sDone = items.filter(it=>taskDone(it.id)).length;
         const open = secOpen(s.key, s.defOpen);
@@ -4561,7 +4600,7 @@ function renderAufgaben(){
             <div class="task-body"><div class="task-main">${it.main}</div><div class="task-sub">${it.sub}</div></div>
             ${it.statusSel||''}
             ${it.tdef?'<span style="font-size:9px;color:var(--muted)">'+TZ_TIMES[it.tdef]+'</span>':''}
-            ${assigneeChip(it.id,s.key)}
+            ${assigneeChip(it.id,s.key,it.tdef)}
           </div>`;
         });
         h += `</div></div>`;
@@ -4677,7 +4716,7 @@ function renderAufgaben(){
   if(team.length){
     const stats={}; team.forEach(m=>stats[m.n]={open:0,done:0}); let unass=0;
     allSections.forEach(s=>s.items.forEach(it=>{
-      const who=effectiveAssignee(it.id,s.key), d=taskDone(it.id);
+      const who=effectiveAssignee(it.id,s.key,it.tdef), d=taskDone(it.id);
       if(who&&stats[who]){ if(d) stats[who].done++; else stats[who].open++; }
       else if(!d){ unass++; }
     }));
@@ -4693,7 +4732,7 @@ function renderAufgaben(){
   const me = getMe();
   const renderSec = s=>{
     let items = s.items;
-    if(tzOnlyMine && me) items = items.filter(it=>effectiveAssignee(it.id,s.key)===me);
+    if(tzOnlyMine && me) items = items.filter(it=>effectiveAssignee(it.id,s.key,it.tdef)===me);
     if(!items.length) return;
     const sDone = items.filter(it=>taskDone(it.id)).length;
     const open = secOpen(s.key, s.defOpen);
@@ -4716,7 +4755,7 @@ function renderAufgaben(){
         ${it.statusSel||''}
         ${timeChip(it.id,s.key,it.tdef)}
         ${areaChip(it.id,s.key)}
-        ${assigneeChip(it.id,s.key)}
+        ${assigneeChip(it.id,s.key,it.tdef)}
       </div>`;
     });
     h += `</div></div>`;

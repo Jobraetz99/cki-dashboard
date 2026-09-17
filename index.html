@@ -37,7 +37,17 @@ window.__msalReady = new Promise(function(resolve){
   --purple:#7c3aed;--purple-bg:rgba(124,58,237,.08);
   --green:#059669;--green-bg:rgba(5,150,105,.08);
   --fire:#ef4444;--fire-bg:rgba(239,68,68,.08);
-  --red:#C03B35;--red-bg:rgba(192,59,53,.08)
+  --red:#C03B35;--red-bg:rgba(192,59,53,.08);
+  /* ── M3-Design-Refresh: Tokens (Farben unverändert, CKI-Blau/-Rot bleiben) ── */
+  --surface:#fff;
+  --surface-1:#f7fafd;
+  --surface-2:#eff5fa;
+  --outline:#e2e8f0;
+  --e1:0 1px 2px rgba(2,32,58,.05),0 1px 3px 1px rgba(2,32,58,.04);
+  --e2:0 1px 2px rgba(2,32,58,.06),0 4px 10px 3px rgba(2,32,58,.07);
+  --e3:0 4px 8px rgba(2,32,58,.07),0 12px 28px 6px rgba(2,32,58,.10);
+  --ease:cubic-bezier(.2,0,0,1);
+  --ring:0 0 0 3px rgba(0,118,191,.22)
 }
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--dark);min-height:100vh;line-height:1.6}
@@ -461,6 +471,125 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--dark);min
 @media(max-width:1024px){.rkpis{grid-template-columns:repeat(4,1fr)}}
 @media(max-width:768px){.sg{grid-template-columns:1fr 1fr}.tg{grid-template-columns:1fr}.rkpis{grid-template-columns:repeat(3,1fr)}.ausl-grid{grid-template-columns:1fr}}
 @media(max-width:480px){.sg{grid-template-columns:1fr}.rkpis{grid-template-columns:repeat(2,1fr)}}
+
+/* ══════════════════════════════════════════════════════════════════
+   M3-DESIGN-REFRESH (Material 3-inspiriert, Sep 2026)
+   Prinzipien: tonale Flächen, Elevation-Stufen (--e1/--e2/--e3),
+   State-Layers auf Interaktion, konsistente Shape-Scale, Fokus-Ringe.
+   Markenfarben (#0076BF / #E30613) und alle Klassennamen unverändert.
+   ══════════════════════════════════════════════════════════════════ */
+
+/* Tonale Grundfläche: sehr dezenter Blau-Verlauf statt flachem Grau */
+body{background:
+  radial-gradient(1100px 500px at 85% -100px,rgba(0,118,191,.055),transparent 60%),
+  radial-gradient(900px 420px at -10% 8%,rgba(0,191,166,.035),transparent 55%),
+  linear-gradient(180deg,#f5f9fc 0%,var(--bg) 420px)}
+::selection{background:rgba(0,118,191,.18)}
+html{scrollbar-color:#c4cfda transparent;scrollbar-width:thin}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-thumb{background:#c4cfda;border-radius:100px;border:2px solid transparent;background-clip:content-box}
+::-webkit-scrollbar-thumb:hover{background:#9fb0c0;border:2px solid transparent;background-clip:content-box}
+::-webkit-scrollbar-track{background:transparent}
+
+/* Fokus-Ringe (Tastatur) überall einheitlich */
+button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,[tabindex]:focus-visible{outline:none;box-shadow:var(--ring)}
+
+/* Zahlen in KPIs: Tabellenziffern für ruhiges Schriftbild */
+.si-v,.rkpi-v,.aufg-num,.tz-kpi-v,.tz-block-v,.fc-rate,.cp-kw,.tp-time,.sc{font-variant-numeric:tabular-nums;font-feature-settings:'tnum'}
+
+/* ── Header & Haupt-Tabs: klare Navigations-Ebene ── */
+.hdr h1{letter-spacing:-.03em}
+.main-tabs{border-bottom:1px solid var(--outline)}
+.m-tab{border-width:1px;border-color:var(--outline);background:var(--surface);box-shadow:var(--e1);transition:all .25s var(--ease)}
+.m-tab:hover{border-color:var(--primary);color:var(--primary);background:var(--primary-bg);box-shadow:var(--e2);transform:translateY(-1px)}
+.m-tab.a{border-color:transparent;background:linear-gradient(135deg,var(--primary),var(--primary-hover));color:#fff;box-shadow:0 6px 16px rgba(0,118,191,.30),var(--e1);transform:none}
+.tab{border-width:1px;border-color:var(--outline);transition:all .2s var(--ease)}
+.tab.a{border-color:var(--primary);box-shadow:inset 0 0 0 1px var(--primary)}
+.hdr-btn{border-width:1px;border-color:var(--outline);box-shadow:var(--e1);transition:all .2s var(--ease)}
+.hdr-btn:hover{background:var(--primary-bg);box-shadow:var(--e2)}
+
+/* ── Hero-Summary: mehr Tiefe, Licht von oben links ── */
+.summary{background:
+  radial-gradient(120% 180% at 0% 0%,rgba(255,255,255,.16),transparent 45%),
+  radial-gradient(90% 150% at 100% 100%,rgba(2,32,58,.22),transparent 55%),
+  linear-gradient(135deg,var(--primary),var(--primary-hover));
+  box-shadow:0 16px 40px rgba(0,92,149,.22),inset 0 1px 0 rgba(255,255,255,.22);
+  border:1px solid rgba(255,255,255,.14)}
+.si{background:rgba(255,255,255,.13);border:1px solid rgba(255,255,255,.18);box-shadow:inset 0 1px 0 rgba(255,255,255,.14);transition:background .25s var(--ease)}
+.si:hover{background:rgba(255,255,255,.2)}
+.si-v{text-shadow:0 1px 2px rgba(2,32,58,.18)}
+
+/* ── Karten: einheitliche Elevation-Sprache (Ruhe im Grundzustand, Reaktion bei Hover) ── */
+.tc-card,.ausl-card,.tz-wrap,.tz-block,.task-sec,.tm-bar,.ctrl-period,.wr-scroll,.fc-card,.tp-card,.lf-box{border-color:var(--outline);box-shadow:var(--e1)}
+.tc-card{transition:box-shadow .25s var(--ease),transform .25s var(--ease)}
+.tc-card:hover{box-shadow:var(--e2);transform:translateY(-2px)}
+.ac{border-color:var(--outline);box-shadow:var(--e1);transition:all .2s var(--ease)}
+.ac:hover{box-shadow:var(--e2);transform:translateX(3px)}
+.pr{border-color:var(--outline);box-shadow:var(--e1);transition:all .2s var(--ease)}
+.pr:hover{box-shadow:var(--e2);transform:translateY(-1px)}
+.rkpi{border-width:1px;border-color:var(--outline);box-shadow:var(--e1);transition:all .25s var(--ease)}
+.rkpi:hover{box-shadow:var(--e2);transform:translateY(-2px)}
+.rkpi.active{box-shadow:inset 0 0 0 2px var(--primary),var(--e1);border-color:var(--primary)}
+.aufg-card{box-shadow:var(--e1);transition:all .25s var(--ease)}
+.aufg-card:hover{transform:translateY(-3px);box-shadow:var(--e3)}
+.tz-block-total:hover{box-shadow:var(--e2)}
+.empty{border:1.5px dashed var(--outline);background:var(--surface-1)}
+
+/* ── Sektions-Köpfe & Gruppierungen: tonale Container statt Hartgrau ── */
+.task-sec-head{background:var(--surface-1)}
+.task-sec-head:hover{background:var(--surface-2)}
+.wr-tab thead th{background:var(--surface-1)}
+.wr-tab thead .wr-name{background:var(--surface-1)}
+.task:hover{background:var(--surface-1)}
+.th-opt:hover{background:var(--surface-1)}
+.tm-chip{background:var(--surface-1);border-color:var(--outline)}
+.tp-task{background:var(--surface-1);border-color:var(--outline)}
+.rezept-group{border-color:var(--outline);box-shadow:var(--e1)}
+
+/* ── Buttons & Chips: State-Layer + sanfte Elevation ── */
+.up-btn{box-shadow:0 6px 16px rgba(0,118,191,.28);transition:all .25s var(--ease)}
+.up-btn:hover{box-shadow:0 10px 24px rgba(0,118,191,.34);transform:translateY(-2px)}
+.task-open,.tm-addbtn,.dn-btn,.cp-navbtn,.th-dd-btn{transition:all .2s var(--ease)}
+.task-open:hover,.tm-addbtn:hover{box-shadow:0 4px 10px rgba(0,118,191,.25)}
+.dn-btn{border-width:1px;border-color:var(--outline);box-shadow:var(--e1)}
+.dn-btn:hover:not(:disabled){box-shadow:0 4px 12px rgba(0,118,191,.28)}
+.cp-seg{background:var(--surface-2);box-shadow:inset 0 1px 2px rgba(2,32,58,.05)}
+.cp-tab.a{background:linear-gradient(135deg,var(--primary),var(--primary-hover));box-shadow:0 2px 8px rgba(0,118,191,.3)}
+.tz-modebar{box-shadow:var(--e1)}
+.tz-mode.a{background:linear-gradient(135deg,var(--primary),var(--primary-hover));box-shadow:0 2px 8px rgba(0,118,191,.3)}
+.nr-filter{border-width:1px;transition:all .2s var(--ease)}
+.pr-tel,.nr-mini-tel{transition:all .2s var(--ease)}
+.pr-tel:hover{box-shadow:0 4px 10px rgba(0,118,191,.3)}
+.asg-chip{box-shadow:0 1px 3px rgba(2,32,58,.22);transition:transform .2s var(--ease),box-shadow .2s var(--ease)}
+.asg-chip:hover{transform:scale(1.12);box-shadow:0 3px 8px rgba(2,32,58,.28)}
+
+/* ── Eingaben: ruhige Ränder, deutlicher Fokus ── */
+.search-wrap input{border-color:var(--outline);box-shadow:var(--e1);transition:border .2s var(--ease),box-shadow .2s var(--ease)}
+.search-wrap input:focus{border-color:var(--primary);box-shadow:var(--ring)}
+.lf-ta:focus{border-color:var(--primary);box-shadow:var(--ring)}
+.cp-sel,.cp-date,.tm-input,.dn-sel,.asg-sel{border-color:var(--outline);transition:border .2s var(--ease),box-shadow .2s var(--ease)}
+.cp-sel:focus,.cp-date:focus,.tm-input:focus,.dn-sel:focus,.asg-sel:focus{border-color:var(--primary);box-shadow:var(--ring);outline:none}
+
+/* ── Blaue KPI-Kacheln & dunkle Abschluss-Karte: Licht + Tiefe ── */
+.tz-kpi{background:
+  radial-gradient(130% 170% at 0% 0%,rgba(255,255,255,.17),transparent 45%),
+  linear-gradient(150deg,var(--primary),var(--primary-hover));
+  box-shadow:0 10px 26px rgba(0,92,149,.25),inset 0 1px 0 rgba(255,255,255,.2)}
+.tz-abschluss{box-shadow:0 12px 30px rgba(15,23,42,.28),inset 0 1px 0 rgba(255,255,255,.07)}
+
+/* ── Upload-Screen ── */
+.drop{border-color:var(--outline);box-shadow:var(--e1);transition:all .3s var(--ease)}
+.drop:hover,.drop.dr{box-shadow:var(--e2);transform:translateY(-3px)}
+
+/* ── Dropdown-Menüs & Popovers: Elevation 3 ── */
+.th-dd-menu{box-shadow:var(--e3);border-color:var(--outline)}
+.info-i .info-pop{box-shadow:var(--e3)}
+
+/* ── Reduzierte Bewegung respektieren ── */
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{transition-duration:.01ms !important;animation-duration:.01ms !important}
+  .ac:hover,.pr:hover,.tc-card:hover,.rkpi:hover,.aufg-card:hover,.m-tab:hover,.drop:hover,.up-btn:hover{transform:none}
+}
 </style>
 </head>
 <body>
@@ -2477,15 +2606,19 @@ function renderOffene(){
     h += `</div>`;
   }
 
-  // Gruppe: noch offene Behandlungen
+  // Gruppe: noch offene Behandlungen — standardmäßig ausgeblendet (Wunsch Call/Chat 17.09.)
   if(grpOffen.length){
+    const showOhne = lsGet('cki_offene_show_ohne', false);
     h += `<div class="subgroup">
-      <div class="subgroup-h"><span class="miss">📞 NOCH OFFENE BEHANDLUNGEN</span> <span class="cnt">— Rezept noch nicht ausgeschöpft, kein Folgetermin geplant (${grpOffen.length})</span></div>
-      <div style="background:var(--accent-bg);border-radius:10px;padding:10px 12px;margin-bottom:8px;font-size:11px;color:var(--dark)">
+      <div class="subgroup-h"><span class="miss">📞 NOCH OFFENE BEHANDLUNGEN</span> <span class="cnt">— Rezept noch nicht ausgeschöpft, kein Folgetermin geplant (${grpOffen.length})</span>
+        <button class="task-open" style="margin-left:auto" onclick="lsSet('cki_offene_show_ohne',${showOhne?'false':'true'});renderOffene()">${showOhne?'ausblenden ▲':'einblenden ▼'}</button></div>`;
+    if(showOhne){
+      h += `<div style="background:var(--accent-bg);border-radius:10px;padding:10px 12px;margin-bottom:8px;font-size:11px;color:var(--dark)">
         <b style="color:var(--accent);font-family:Montserrat;font-weight:800">🎯 Aktion:</b>
         Diese Patienten haben noch Behandlungen frei, aber keinen weiteren Termin. Anrufen → neuen Termin vereinbaren → Rezept abschließen!
       </div>`;
-    grpOffen.forEach(r => h += renderKarteileiche(r, 'ohne'));
+      grpOffen.forEach(r => h += renderKarteileiche(r, 'ohne'));
+    }
     h += `</div>`;
   }
 

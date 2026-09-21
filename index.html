@@ -4402,11 +4402,23 @@ function renderAblehnungsReview(){
 // wurde, darf die Aufgabe nicht einfach verschwinden — „es kann ja sein, dass das das letzte Mal
 // ist und der spricht den Menschen einfach gar nicht an." Gilt für LV + DP, NICHT für
 // Rezeptgebühren (die erscheinen ohnehin jeden Tag neu).
+// Testphase (Chat 21.09.): Feature per Schalter aktivierbar. Beim Einschalten wird das
+// Startdatum gemerkt — gezählt wird NUR ab dann, damit Altfälle aus der Testzeit nie auflaufen.
+function altlastenOn(){ return lsGet('cki_altlasten_on', false); }
+function altlastenStart(){ return lsGet('cki_altlasten_start', ''); }
+function toggleAltlasten(){
+  const on = !altlastenOn();
+  lsSet('cki_altlasten_on', on);
+  if(on && !altlastenStart()) lsSet('cki_altlasten_start', localDateStrG(new Date()));
+  renderAufgaben();
+}
 function tageszielAltlasten(maxTage){
   const out = [];
   if(!DATA || !DATA.dates || !DATA.dates.length) return out;
+  if(!altlastenOn()) return out;
+  const start = altlastenStart();
   const heute = localDateStrG(new Date());
-  const tage = DATA.dates.filter(d=>d<heute).slice(-(maxTage||14));
+  const tage = DATA.dates.filter(d=>d<heute && (!start || d>=start)).slice(-(maxTage||14));
   if(!tage.length) return out;
   const keep = currentDate;
   try{
@@ -4442,11 +4454,21 @@ function tageszielAltlasten(maxTage){
   return out;
 }
 function renderTageszielAltlasten(){
+  const on = altlastenOn();
+  // Aus (Testphase): nur eine schmale Zeile mit Einschalter — nichts wird gescannt
+  if(!on){
+    return `<div class="tz-grp" style="display:flex;align-items:center;gap:10px">⏳ Nicht ausgefüllte Tagesziele
+      <span style="font-size:10px;font-weight:400;color:var(--muted)">aus · zum Go-Live einschalten, gezählt wird erst ab dann</span>
+      <button class="man-btn" style="margin-left:auto" onclick="toggleAltlasten()">einschalten</button></div>`;
+  }
   let all = [];
   try{ all = tageszielAltlasten(14); }catch(e){}
-  let h = `<div class="tz-grp">⏳ Nicht ausgefüllte Tagesziele (${all.length})</div>`;
+  const startLbl = altlastenStart() ? new Date(altlastenStart()+'T12:00:00').toLocaleDateString('de-DE') : '';
+  let h = `<div class="tz-grp" style="display:flex;align-items:center;gap:10px">⏳ Nicht ausgefüllte Tagesziele (${all.length})
+    ${startLbl?`<span style="font-size:10px;font-weight:400;color:var(--muted)">aktiv seit ${startLbl}</span>`:''}
+    <button class="man-btn" style="margin-left:auto;background:var(--border);color:var(--muted)" onclick="toggleAltlasten()">ausschalten</button></div>`;
   if(!all.length){
-    h += `<div class="empty" style="font-size:12px">Nichts offen — an den letzten Export-Tagen wurde überall der Weiterplan- bzw. Dauerplan-Status gesetzt.</div>`;
+    h += `<div class="empty" style="font-size:12px">Nichts offen — an den Export-Tagen seit Aktivierung wurde überall der Weiterplan- bzw. Dauerplan-Status gesetzt.</div>`;
     return h;
   }
   h += `<div style="font-size:10px;color:var(--muted);margin:-2px 0 8px">Patienten der letzten 14 Export-Tage, bei denen der Status am Tagesende <b>nicht ausgefüllt</b> wurde — hier nachtragen, ggf. Patient noch anrufen.</div>`;

@@ -97,6 +97,9 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--dark);min
 
 /* Date + Therapist tabs */
 .tabs{display:flex;gap:5px;margin-bottom:12px;flex-wrap:wrap;overflow-x:auto;padding-bottom:4px}
+/* Bugfix (Chat 21.09.): overflow-x:auto erzwingt overflow-y:auto → Therapeuten-Dropdown wurde
+   im Container abgeschnitten statt darüber zu schweben. Für die Therapeuten-Leiste aufheben. */
+#thTabs.tabs{overflow:visible}
 .tab{padding:7px 14px;border-radius:100px;border:2px solid var(--border);background:#fff;color:var(--muted);font-family:'Montserrat',sans-serif;font-size:11px;font-weight:700;cursor:pointer;transition:all .2s;white-space:nowrap}
 .tab:hover{border-color:var(--primary);color:var(--primary)}
 .tab.a{border-color:var(--primary);background:var(--primary-bg);color:var(--primary)}

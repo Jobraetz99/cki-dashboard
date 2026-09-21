@@ -320,8 +320,22 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--dark);min
 .tzh-sub{font-size:9px;color:rgba(255,255,255,.65);margin-top:2px}
 .tzh-blk{display:flex;align-items:center;gap:8px;font-size:11px;color:rgba(255,255,255,.85);margin:3px 0}
 .tzh-blk b{font-family:'Montserrat',sans-serif;font-weight:800;color:#fff}
-.tzh-blk-l{width:104px;font-weight:700;font-size:10px;color:rgba(255,255,255,.7)}
+.tzh-blk-l{min-width:150px;font-weight:700;font-size:10px;color:rgba(255,255,255,.7)}
+/* A2 (Call 18.09.): Kürzel LV/DP statt Emojis */
+.tzh-kzl{display:inline-block;padding:0 4px;border-radius:4px;background:rgba(255,255,255,.22);color:#fff;font-family:'Montserrat',sans-serif;font-weight:900;font-size:9px;letter-spacing:.03em;vertical-align:1px}
 .tzh-arzt{font-size:10px;color:rgba(255,255,255,.7);margin-top:6px;font-weight:600}
+/* A9 (Call 18.09.): Kontaktieren-Popup */
+#ktOverlay{position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px}
+.kt-box{background:var(--card,#fff);border-radius:18px;box-shadow:0 20px 60px rgba(0,0,0,.35);width:100%;max-width:340px;padding:16px}
+.kt-head{font-family:'Montserrat',sans-serif;font-weight:800;font-size:14px;color:var(--dark,#0f172a);display:flex;align-items:center;gap:8px;margin-bottom:12px}
+.kt-x{margin-left:auto;border:none;background:none;font-size:16px;cursor:pointer;color:var(--muted,#64748b)}
+.kt-btn{display:flex;align-items:center;gap:12px;padding:11px 12px;border-radius:12px;border:1px solid var(--border,#e2e8f0);margin-bottom:8px;text-decoration:none;color:var(--dark,#0f172a);transition:background .12s}
+.kt-btn:hover{background:var(--primary-bg,#eff6ff)}
+.kt-btn b{display:block;font-family:'Montserrat',sans-serif;font-size:13px}
+.kt-btn small{display:block;font-size:10px;color:var(--muted,#64748b)}
+.kt-ico{font-size:20px}
+.kt-off{opacity:.45;cursor:default}
+.kt-note{font-size:9.5px;color:var(--muted,#64748b);margin-top:4px}
 /* Ablehnungs-Review (Punkt 6, Call 17.09.) */
 .tz-sec{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:4px 14px;box-shadow:var(--shadow)}
 .tz-item{display:flex;gap:10px;padding:10px 0;border-bottom:1px solid var(--border)}
@@ -740,7 +754,7 @@ let currentTherapist = 'all';
 let selectedTherapists = null;
 let currentRezeptCat = 'nr';
 let currentNRFilter = 'all';
-let currentBlStFilter = 'alle';   // Punkt 8 (Call 15.09.): Status-Filter bei Blanko-Listen im Rezepte-Reiter
+let currentBlStFilter = 'offen';  // Punkt 8 (Call 15.09.) · A7 (Call 18.09.): Default = nur „offen" — fertige/in Bearbeitung per Filter
 let verlaufTab = 'tg';            // Punkt 11 (Call 15.09.): Rubrik im Verlauf-Reiter (tg/bo/sp)
 let currentOffeneFilter = 'w4';
 let currentFvoFilter = 'offen';
@@ -2111,7 +2125,7 @@ function renderRezepte(){
 function setRezeptCat(k){
   currentRezeptCat = k;
   currentNRFilter = 'all';
-  currentBlStFilter = 'alle';
+  currentBlStFilter = 'offen';   // A7 (Call 18.09.): standardmäßig nur offene anzeigen
   document.querySelectorAll('.rkpi').forEach(x=>x.classList.remove('active'));
   const el = document.getElementById('rk-'+k);
   if(el)el.classList.add('active');
@@ -2539,7 +2553,8 @@ function renderOffene(){
   // Dauerpatienten (Maske D) komplett raus — bei ihnen werden in Theorg keine Termine aufs Rezept geplant.
   // Rehasport/Anamnese raus. Blanko-VOs sind enthalten (echte Menge via getBlankoMax).
 
-  const WEEKS = { w2:14, w4:28, w6:42 };
+  // A8 (Call 18.09.): nur noch zwei Ansichten — seit 2 Wochen und seit 4 Wochen (1 Monat)
+  const WEEKS = { w2:14, w4:28 };
   if(!(currentOffeneFilter in WEEKS)) currentOffeneFilter = 'w4';
   const threshold = WEEKS[currentOffeneFilter];
 
@@ -2617,19 +2632,18 @@ function renderOffene(){
   rezepte = rezepte.filter(r=>!r.istDauer);
 
   // 5) Basis-Pool: gestartet, kein Zukunftstermin, Handlungsbedarf, letzter Termin bekannt
-  const basePool = rezepte.filter(r=>
+  // A8 (Call 18.09.): abgerechnete Rezepte erscheinen GAR NICHT mehr (vorher: doch, wenn rest>0)
+  const basePoolAll = rezepte.filter(r=>
     r.erbracht>0 && !r.hasFuture && r.tageSeitLetzterTermin!=null &&
-    (!r.istAbgerechnet || r.rest>0)
+    !r.istAbgerechnet
   );
+  // A8 (Call 18.09.): Uralt-Fälle fest raus — der bisherige 1-Monats-Filter ist jetzt immer aktiv
+  // (Patienten ohne aktiven Termin im letzten Monat werden nicht mehr angezeigt).
+  const basePool = basePoolAll.filter(r=>hasActiveTerminInLast60Days(r.rezeptNr, DATA.cells));
   const cntFor = t => basePool.filter(r=>r.tageSeitLetzterTermin>=t).length;
 
   // 6) Kandidaten nach gewähltem Schwellwert + zwei Anzeige-Gruppen
-  // Punkt 7 (Call 15.09.): 1-Monats-Filter optional anwenden
-  let basePoolFiltered = basePool;
-  if(cki_offene2MonatFilter){
-    basePoolFiltered = basePool.filter(r=>hasActiveTerminInLast60Days(r.rezeptNr, DATA.cells));
-  }
-  const kandidaten = basePoolFiltered.filter(r=>r.tageSeitLetzterTermin>=threshold);
+  const kandidaten = basePool.filter(r=>r.tageSeitLetzterTermin>=threshold);
   const grpFertig = kandidaten.filter(r=>r.erbracht>=r.echteMenge && !r.istAbgerechnet)
     .sort((a,b)=>(b.tageSeitLetzterTermin||0)-(a.tageSeitLetzterTermin||0));
   const grpOffen = kandidaten.filter(r=>r.rest>0)
@@ -2661,20 +2675,15 @@ function renderOffene(){
 
   h += `<div class="search-wrap"><input type="text" id="ofSearch" placeholder="🔍 Patient suchen..." oninput="filterOffeneSearch()"></div>`;
 
-  // Punkt 7 (Call 15.09.): 1-Monats-Filter Toggle (vorher 2 Monate)
-  h += `<div style="background:var(--primary-bg);border:1px solid var(--primary);border-radius:10px;padding:12px;margin-bottom:14px">
-    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;font-weight:700;color:var(--primary)">
-      <input type="checkbox" ${cki_offene2MonatFilter?'checked':''} onchange="cki_offene2MonatFilter=this.checked;localStorage.setItem('cki_offene2MonatFilter',this.checked);renderOffene()">
-      🚫 1-Monats-Filter (Altlasten ausblenden)
-    </label>
-    <div style="font-size:10px;color:var(--dark);margin-top:6px;margin-left:26px">Patienten ohne aktiven Termin seit >1 Monat ausgeblendet</div>
+  // A8 (Call 18.09.): 1-Monats-Filter ist jetzt fest aktiv (kein Toggle mehr) — nur Hinweis
+  h += `<div style="background:var(--primary-bg);border:1px solid var(--primary);border-radius:10px;padding:10px 12px;margin-bottom:14px;font-size:11px;color:var(--dark)">
+    🚫 <b style="color:var(--primary)">Altlasten fest ausgeblendet:</b> Patienten ohne aktiven Termin im letzten Monat und Rezepte mit Status „abgerechnet" erscheinen hier nicht mehr.
   </div>`;
 
   h += `<div class="nr-filters" style="margin-bottom:14px">`;
   [
     {f:'w2', l:'⏱️ seit 2 Wochen', t:14},
-    {f:'w4', l:'📅 seit 4 Wochen', t:28},
-    {f:'w6', l:'🗓️ seit 6 Wochen', t:42}
+    {f:'w4', l:'📅 seit 4 Wochen (1 Monat)', t:28}
   ].forEach(x=>{
     h += `<button class="nr-filter${currentOffeneFilter===x.f?' a':''}" onclick="setOffeneFilter('${x.f}')">${x.l} (${cntFor(x.t)})</button>`;
   });
@@ -4220,7 +4229,7 @@ function calcKap4Wochen(){
 
 // ═══════════════════════════════════════════════════════════
 // Navigation aus den Aufgaben-Kacheln in die jeweiligen Tabs
-function gotoOffene(f){ currentOffeneFilter=(f==='w2'||f==='w4'||f==='w6')?f:'w4'; switchView('offene'); }
+function gotoOffene(f){ currentOffeneFilter=(f==='w2'||f==='w4')?f:'w4'; switchView('offene'); }  // A8: nur noch 2/4 Wochen
 function gotoFolgeVO(){ currentFvoFilter='offen'; switchView('folgevo'); }
 
 // ── Abhak-Status (localStorage) ──
@@ -4238,9 +4247,12 @@ function getTpStatus(date, patKey){ return tpStatusAll()[date+'|'+patKey] || nul
 // Pflicht-Begründung einholen: leer und „Sonstiges" werden abgewiesen, Abbruch → null.
 function pflichtBegruendung(frage){
   for(;;){
-    let r = prompt('❗ Pflicht-Begründung: '+frage+'\n(Konkret bitte – „Sonstiges" gilt nicht.)');
+    let r = prompt('❗ Pflicht-Begründung: '+frage+'\n(Konkret bitte – „Sonstiges" und „austherapiert" gelten nicht.)');
     if(r===null) return null;
     r = r.trim();
+    // A3 (Call 18.09.): „austherapiert" ist keine gültige Begründung —
+    // „in der Physiotherapie ist nie ein Mensch austherapiert." (gilt für alle Ablehnungs-Typen)
+    if(/austherapiert|aus\s*therapiert/i.test(r)){ alert('„Austherapiert" gilt nicht als Begründung — in der Physiotherapie ist nie ein Mensch austherapiert. Bitte konkret begründen (z. B. was der Patient gesagt hat).'); continue; }
     if(r.length>=3 && !/^sonstige/i.test(r)) return r;
     alert('Ohne konkrete Begründung geht es nicht weiter.');
   }
@@ -4259,13 +4271,23 @@ function ablehnungDel(ts){
 }
 // ── Punkt 7/8 (Call 17.09.): händische Backoffice-Listen (Rezeptbestellungen, fehlende Unterschriften) ──
 function manList(k){ return lsGet(k, []); }
-function manSet(k, id, field, val){ const a=manList(k); const e=a.find(x=>x.id===id); if(e){ e[field]=val; lsSet(k,a); renderAufgaben(); } }
+function manSet(k, id, field, val){
+  const a=manList(k); const e=a.find(x=>x.id===id); if(!e) return;
+  // A5 (Call 18.09.): Ablehnung nie ohne Begründung — konsistent zu allen anderen Ablehnungs-Typen
+  if(field==='st' && val==='abgelehnt'){
+    const reason = pflichtBegruendung('Warum wurde die Rezeptbestellung ABGELEHNT?');
+    if(reason===null){ renderAufgaben(); return; }    // Abbruch → Auswahl zurücksetzen
+    e.reason = reason;
+    ablehnungLog('rezeptbestellung', id, e.name||'', reason);
+  }
+  e[field]=val; lsSet(k,a); renderAufgaben();
+}
 function manDel(k, id){ lsSet(k, manList(k).filter(x=>x.id!==id)); renderAufgaben(); }
-const RB_STATUS=[['offen','offen'],['angefragt','beim Arzt angefragt'],['eingetroffen','eingetroffen'],['erledigt','erledigt ✓']];
+const RB_STATUS=[['offen','offen'],['angefragt','beim Arzt angefragt'],['eingetroffen','eingetroffen'],['erledigt','erledigt ✓'],['abgelehnt','abgelehnt ✕']];
 const US_STATUS=[['offen','offen'],['angerufen','angerufen'],['erreicht','erreicht'],['nichterreicht','nicht erreicht']];
 function manStatusSel(k,id,cur,opts){
-  const done = cur==='erledigt'||cur==='erreicht';
-  const col = done?'var(--teal)':(cur==='offen'?'var(--accent)':'var(--amber)');
+  const done = cur==='erledigt'||cur==='erreicht'||cur==='abgelehnt';
+  const col = cur==='abgelehnt'?'var(--fire)':done?'var(--teal)':(cur==='offen'?'var(--accent)':'var(--amber)');
   let o=''; opts.forEach(([v,l])=>{ o+=`<option value="${v}"${v===cur?' selected':''}>${l}</option>`; });
   return `<select class="asg-sel" style="border-color:${col};color:${col};font-weight:700" onchange="manSet('${k}',${id},'st',this.value)">${o}</select>`;
 }
@@ -4277,15 +4299,15 @@ function rbAdd(){
   lsSet('cki_rezeptbest', all); renderAufgaben();
 }
 function usAdd(){
-  const n=document.getElementById('us-name'), b=document.getElementById('us-bis');
+  const n=document.getElementById('us-name'), b=document.getElementById('us-bis'), t=document.getElementById('us-tel');
   if(!n.value.trim()){ alert('Bitte Patientenname eingeben.'); return; }
   const all=manList('cki_unterschriften');
-  all.push({id:Date.now(), name:n.value.trim(), bis:b.value||'', st:'offen', by:getMe()||''});
+  all.push({id:Date.now(), name:n.value.trim(), bis:b.value||'', tel:(t&&t.value.trim())||'', st:'offen', by:getMe()||''});
   lsSet('cki_unterschriften', all); renderAufgaben();
 }
 function renderRezeptBestellungen(){
   const all=manList('cki_rezeptbest');
-  const offen=all.filter(e=>e.st!=='erledigt').length;
+  const offen=all.filter(e=>e.st!=='erledigt'&&e.st!=='abgelehnt').length;
   let h=`<div class="tz-grp">📦 Rezeptbestellungen nachhalten (${offen} offen)</div>
   <div class="man-add">
     <input class="man-in" id="rb-name" placeholder="Patient …">
@@ -4295,10 +4317,11 @@ function renderRezeptBestellungen(){
   if(all.length){
     h+=`<div class="tz-sec" style="display:block">`;
     all.forEach(e=>{
-      h+=`<div class="tz-item${e.st==='erledigt'?'" style="opacity:.5':''}">
+      h+=`<div class="tz-item${e.st==='erledigt'||e.st==='abgelehnt'?'" style="opacity:.5':''}">
         <div style="flex:1;min-width:0">
           <div style="font-weight:700;font-size:12px">${esc(e.name)}</div>
           ${e.arzt?`<div style="font-size:10px;color:var(--muted)">👨‍⚕️ ${esc(e.arzt)}</div>`:''}
+          ${e.st==='abgelehnt'&&e.reason?`<div style="font-size:10px;color:var(--fire)">📝 ${esc(e.reason)}</div>`:''}
         </div>
         ${manStatusSel('cki_rezeptbest',e.id,e.st,RB_STATUS)}
         <button class="man-x" onclick="manDel('cki_rezeptbest',${e.id})">✕</button>
@@ -4316,6 +4339,7 @@ function renderUnterschriften(){
   let h=`<div class="tz-grp">✍️ Fehlende Unterschriften nachhalten (${offen} offen)</div>
   <div class="man-add">
     <input class="man-in" id="us-name" placeholder="Patient …">
+    <input class="man-in" id="us-tel" placeholder="Telefon …" style="max-width:130px">
     <input class="man-in" id="us-bis" type="date" title="bis wann?">
     <button class="man-btn" onclick="usAdd()">+ hinzufügen</button>
   </div>`;
@@ -4323,16 +4347,19 @@ function renderUnterschriften(){
     h+=`<div class="tz-sec" style="display:block">`;
     all.forEach(e=>{
       const ueberfaellig = e.bis && e.bis<currentDate && e.st!=='erreicht';
-      h+=`<div class="tz-item${e.st==='erreicht'?'" style="opacity:.5':''}">
+      h+=`<div class="tz-item" style="flex-wrap:wrap${e.st==='erreicht'?';opacity:.5':''}">
         <div style="flex:1;min-width:0">
           <div style="font-weight:700;font-size:12px">${esc(e.name)}</div>
           <div style="font-size:10px;color:${ueberfaellig?'var(--fire)':'var(--muted)'};font-weight:${ueberfaellig?'700':'400'}">
             ${e.bis?`⏰ bis ${new Date(e.bis+'T12:00:00').toLocaleDateString('de-DE')}${ueberfaellig?' · überfällig!':''}`:'ohne Frist'}
           </div>
         </div>
+        ${e.tel?`<a href="tel:${esc(kontaktDigits(e.tel))}" class="pr-tel" title="Kontaktieren">📇 Kontaktieren</a>`:''}
         <input class="man-in" type="date" value="${esc(e.bis||'')}" style="max-width:130px" onchange="manSet('cki_unterschriften',${e.id},'bis',this.value)">
         ${manStatusSel('cki_unterschriften',e.id,e.st,US_STATUS)}
         <button class="man-x" onclick="manDel('cki_unterschriften',${e.id})">✕</button>
+        <input class="man-in" type="text" value="${esc(e.notiz||'')}" placeholder="📝 Notiz — warum/wieso, was gesagt wurde, wann er kommt …"
+          style="flex-basis:100%;margin-top:6px;font-size:11px" onchange="manSet('cki_unterschriften',${e.id},'notiz',this.value)">
       </div>`;
     });
     h+=`</div>`;
@@ -4345,7 +4372,8 @@ function renderUnterschriften(){
 // „Endgültig geprüft" durch die Leitung kommt erst mit Microsoft-Konten (echte Rechte-Trennung).
 function renderAblehnungsReview(){
   const typLabel = { weiterplan:'📞 nicht weiter geplant', dauerplan:'🎯 Dauerplan abgelehnt',
-    blanko_um:'📄 Blanko-Umstellung abgelehnt', blanko_pl:'💎 Blanko-Planung abgelehnt', folgevo:'🔄 Folge-VO abgelehnt' };
+    blanko_um:'📄 Blanko-Umstellung abgelehnt', blanko_pl:'💎 Blanko-Planung abgelehnt', folgevo:'🔄 Folge-VO abgelehnt',
+    rezeptbestellung:'📦 Rezeptbestellung abgelehnt' };
   const all = ablehnungen().slice().sort((x,y)=>y.ts-x.ts);
   let h = `<div class="tz-grp">🚫 Ablehnungen zur Prüfung (${all.length})</div>`;
   if(!all.length){
@@ -4366,6 +4394,77 @@ function renderAblehnungsReview(){
     h += `</div>`;
   }
   h += `<div style="font-size:10px;color:var(--muted);margin:6px 0 14px">„Endgültig geprüft" nur durch die Leitung kommt mit den Microsoft-Konten · Einträge werden pro Gerät gespeichert.</div>`;
+  return h;
+}
+
+// ── A4 (Call 18.09.): Nicht ausgefüllte Tagesziele vergangener Tage → Backoffice-Prüfliste ──
+// Wenn am Tagesende der Weiterplan-Status (LV: wp/nwp) oder der Dauerplan-Status NICHT gesetzt
+// wurde, darf die Aufgabe nicht einfach verschwinden — „es kann ja sein, dass das das letzte Mal
+// ist und der spricht den Menschen einfach gar nicht an." Gilt für LV + DP, NICHT für
+// Rezeptgebühren (die erscheinen ohnehin jeden Tag neu).
+function tageszielAltlasten(maxTage){
+  const out = [];
+  if(!DATA || !DATA.dates || !DATA.dates.length) return out;
+  const heute = localDateStrG(new Date());
+  const tage = DATA.dates.filter(d=>d<heute).slice(-(maxTage||14));
+  if(!tage.length) return out;
+  const keep = currentDate;
+  try{
+    tage.forEach(day=>{
+      currentDate = day;                              // headless wie notifBlockStats
+      const a = computeActionItems();
+      const byKey = {};
+      const push = (key,cat,id)=>{ if(key) (byKey[key]=byKey[key]||[]).push({cat:cat,id:id}); };
+      a.typB.forEach(r=>push(r.patKey,'ft','ft|'+r.rezeptNr));
+      a.folgeVO.forEach(r=>push(r.patKey,'fvo','fvo|'+r.rezeptNr));
+      const dauerKeys = dauerKandidatKeys();
+      const pat = {};
+      DATA.cells.forEach(c=>{
+        if(c.dateStr!==day || c.belArt!=='R' || !c.patNach || !c.termIdent || !c.belegt) return;
+        const k = c.patKey; if(!k) return;
+        if(!pat[k]) pat[k] = { key:k, name:(c.patVor+' '+c.patNach).trim() };
+      });
+      Object.values(pat).forEach(p=>{
+        const tasks = byKey[p.key]||[];
+        if(tasks.length){                             // LV: hatte an dem Tag eine Weiterplan-Aufgabe
+          const st = getTpStatus(day, p.key);
+          if(!st && !tasks.every(t=>taskDone(t.id)))
+            out.push({day:day, patKey:p.key, name:p.name, typ:'lv'});
+        }
+        if(dauerKeys.has(p.key)){                     // DP: war Dauerplan-Kandidat im Haus
+          if(!dpStatusSt(p.key) && !taskDone('dauer|'+p.key))
+            out.push({day:day, patKey:p.key, name:p.name, typ:'dp'});
+        }
+      });
+    });
+  } finally { currentDate = keep; }
+  out.sort((x,y)=> x.day<y.day?1:x.day>y.day?-1:x.name.localeCompare(y.name));
+  return out;
+}
+function renderTageszielAltlasten(){
+  let all = [];
+  try{ all = tageszielAltlasten(14); }catch(e){}
+  let h = `<div class="tz-grp">⏳ Nicht ausgefüllte Tagesziele (${all.length})</div>`;
+  if(!all.length){
+    h += `<div class="empty" style="font-size:12px">Nichts offen — an den letzten Export-Tagen wurde überall der Weiterplan- bzw. Dauerplan-Status gesetzt.</div>`;
+    return h;
+  }
+  h += `<div style="font-size:10px;color:var(--muted);margin:-2px 0 8px">Patienten der letzten 14 Export-Tage, bei denen der Status am Tagesende <b>nicht ausgefüllt</b> wurde — hier nachtragen, ggf. Patient noch anrufen.</div>`;
+  h += `<div class="tz-sec" style="display:block">`;
+  all.forEach(e=>{
+    const dLbl = new Date(e.day+'T12:00:00').toLocaleDateString('de-DE',{weekday:'short',day:'2-digit',month:'2-digit'});
+    h += `<div class="tz-item" style="align-items:center">
+      <div style="flex:1;min-width:0">
+        <div style="font-weight:700;font-size:12px">${esc(e.name)} <span style="font-size:10px;color:var(--fire);font-weight:800">${e.typ==='lv'?'LV nicht ausgefüllt':'DP nicht ausgefüllt'}</span></div>
+        <div style="font-size:10px;color:var(--muted)">📅 ${dLbl} · Status wurde am Tagesende nicht gesetzt</div>
+      </div>
+      ${e.typ==='lv'
+        ? `<button class="tps-btn wp" onclick="setTpStatus('${e.day}','${jsq(e.patKey)}','wp','${jsq(e.name)}')">✅ weiter geplant</button>
+           <button class="tps-btn nwp" onclick="setTpStatus('${e.day}','${jsq(e.patKey)}','nwp','${jsq(e.name)}')">🚫 nicht weiter geplant</button>`
+        : dpStatusSelect(e.patKey, e.name)}
+    </div>`;
+  });
+  h += `</div>`;
   return h;
 }
 
@@ -4457,6 +4556,66 @@ function toggleSec(key,def){ lsSet('cki_secopen_'+key, !secOpen(key,def)); rende
 function hhmm(d){ return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0'); }
 function jsq(s){ return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'"); }
 function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+// ── A9 (Call 18.09.): „Kontaktieren"-Popup überall statt nur 📞 ──────────────
+// Ein delegierter Klick-Listener fängt ALLE tel:-Links im Dashboard ab (Rezepte,
+// Lücken, offene Rezepte, Unterschriften, Tagesplan …) und öffnet ein Popup mit
+// 4 Wegen: Anruf (tel:), WhatsApp (wa.me), SMS (sms:), E-Mail (mailto:).
+// Automatischer Versand + Protokollierung kommen später über Simons Automations.
+function kontaktDigits(tel){ return String(tel||'').replace(/[^+\d]/g,''); }
+function kontaktWaNum(tel){
+  let d = String(tel||'').replace(/\D/g,'');
+  if(d.startsWith('00')) d = d.slice(2);
+  else if(d.startsWith('0')) d = '49'+d.slice(1);
+  return d;
+}
+// Name + E-Mail zur Nummer aus dem Export suchen (Nummern nur über Ziffern vergleichen)
+function kontaktInfoFor(tel){
+  const out = {name:'', mail:''};
+  try{
+    const norm = String(tel||'').replace(/\D/g,'');
+    if(!norm || !DATA || !DATA.cells) return out;
+    for(const c of DATA.cells){
+      if(!c.patMobil) continue;
+      if(String(c.patMobil).replace(/\D/g,'')===norm){
+        if(!out.name && c.patNach) out.name = ((c.patVor||'')+' '+c.patNach).trim();
+        if(!out.mail && c.patMail) out.mail = c.patMail;
+        if(out.name && out.mail) break;
+      }
+    }
+  }catch(e){}
+  return out;
+}
+function closeKontaktPopup(){ const el=document.getElementById('ktOverlay'); if(el) el.remove(); }
+function openKontaktPopup(tel){
+  closeKontaktPopup();
+  const info = kontaktInfoFor(tel);
+  const d = kontaktDigits(tel), wa = kontaktWaNum(tel);
+  const btn = (href, ico, ttl, sub)=>`<a class="kt-btn" href="${href}" target="${href.startsWith('http')?'_blank':'_self'}" onclick="closeKontaktPopup()">
+      <span class="kt-ico">${ico}</span><span><b>${ttl}</b><small>${esc(sub)}</small></span></a>`;
+  const ov = document.createElement('div');
+  ov.id = 'ktOverlay';
+  ov.onclick = e=>{ if(e.target===ov) closeKontaktPopup(); };
+  ov.innerHTML = `<div class="kt-box">
+    <div class="kt-head">📇 Kontaktieren${info.name?' · '+esc(info.name):''}
+      <button class="kt-x" onclick="closeKontaktPopup()">✕</button></div>
+    ${btn('tel:'+d,'📞','Anrufen',tel)}
+    ${btn('https://wa.me/'+wa,'💬','WhatsApp',tel)}
+    ${btn('sms:'+d,'✉️','SMS',tel)}
+    ${info.mail
+      ? btn('mailto:'+encodeURIComponent(info.mail),'📧','E-Mail',info.mail)
+      : `<div class="kt-btn kt-off"><span class="kt-ico">📧</span><span><b>E-Mail</b><small>keine E-Mail-Adresse im Export</small></span></div>`}
+    <div class="kt-note">Automatischer Versand + Protokollierung folgen mit der Automation-Ebene (Simon).</div>
+  </div>`;
+  document.body.appendChild(ov);
+}
+document.addEventListener('click', function(e){
+  const a = e.target && e.target.closest ? e.target.closest('a[href^="tel:"]') : null;
+  if(!a) return;
+  if(a.closest('#ktOverlay')) return;             // Buttons IM Popup normal durchlassen
+  e.preventDefault();
+  openKontaktPopup(a.getAttribute('href').slice(4));
+}, true);
 
 // ── Team & Verantwortliche (geteilt über SharePoint-Speicher) ──────────────
 const TEAM_PALETTE = ['#4f46e5','#0891b2','#059669','#d97706','#db2777','#7c3aed','#dc2626','#0d9488'];
@@ -4802,20 +4961,31 @@ function tageszielHeuteStats(a){
   });
   return {vl:vl, dp:dp, arzt:arzt};
 }
-// Tagesziel kompakt im blauen Kopf: 3 Zahlen nebeneinander (💶 Zuzahlung · 📞 weitergeplant · 🎯 Dauerplan),
+// Tagesziel kompakt im blauen Kopf: 3 Zahlen nebeneinander (💶 Zuzahlung · LV weitergeplant · DP Dauerplan),
 // darunter die drei Schichten (Vormittag/Mittag/Nachmittag), jeweils wieder in die drei Zahlen unterteilt.
+// A2 (Call 18.09.): statt Emojis die Kürzel LV (letzte/vorletzte → weitergeplant) und DP (Dauerplan); € bleibt.
 function tageszielUebersichtHTML(a){
   const s = tageszielHeuteStats(a);
   const cnt = o => o.done+'/'+o.tot;
   let h = `<div class="tzh">
     <div class="tzh-cell"><div class="tzh-num">–</div><div class="tzh-lbl">💶 Zuzahlung</div><div class="tzh-sub">wartet auf Export (Luis)</div></div>
-    <div class="tzh-cell"><div class="tzh-num">${cnt(s.vl)}</div><div class="tzh-lbl">📞 weitergeplant</div>${s.vl.abgelehnt?`<div class="tzh-sub">${s.vl.abgelehnt}× nicht (begründet)</div>`:''}</div>
-    <div class="tzh-cell"><div class="tzh-num">${cnt(s.dp)}</div><div class="tzh-lbl">🎯 Dauerplan angesprochen</div>${s.dp.abgelehnt?`<div class="tzh-sub">${s.dp.abgelehnt}× nicht (begründet)</div>`:''}</div>
+    <div class="tzh-cell"><div class="tzh-num">${cnt(s.vl)}</div><div class="tzh-lbl"><span class="tzh-kzl">LV</span> weitergeplant</div>${s.vl.abgelehnt?`<div class="tzh-sub">${s.vl.abgelehnt}× nicht (begründet)</div>`:''}</div>
+    <div class="tzh-cell"><div class="tzh-num">${cnt(s.dp)}</div><div class="tzh-lbl"><span class="tzh-kzl">DP</span> Dauerplan angesprochen</div>${s.dp.abgelehnt?`<div class="tzh-sub">${s.dp.abgelehnt}× nicht (begründet)</div>`:''}</div>
   </div>`;
-  const BLK = [['vm','🌅 Vormittag'],['mi','☀️ Mittag'],['nm','🌆 Nachmittag']];
-  const rows = BLK.filter(b=>s.vl.blk[b[0]][1]+s.dp.blk[b[0]][1]>0).map(b=>{
-    const v=s.vl.blk[b[0]], d=s.dp.blk[b[0]];
-    return `<div class="tzh-blk"><span class="tzh-blk-l">${b[1]}</span> 💶 – · 📞 <b>${v[0]}/${v[1]}</b> · 🎯 <b>${d[0]}/${d[1]}</b></div>`;
+  // A1 (Call 18.09.): Schichtzeiten von–bis + zugewiesene Person(en) direkt daneben
+  // (z. B. „Vormittag 07:30–11:30 · Johannes"). Namen aus der Tages-Zuweisungs-Matrix (TG + BO).
+  const rows = TZ_BLOCKS.filter(b=>{
+    const hasTasks = s.vl.blk[b.key][1]+s.dp.blk[b.key][1]>0;
+    const hasWer = currentDate && (getAssignmentMatrixByArea(currentDate,'tg',b.key).length || getAssignmentMatrixByArea(currentDate,'bo',b.key).length);
+    return hasTasks || hasWer;
+  }).map(b=>{
+    const v=s.vl.blk[b.key], d=s.dp.blk[b.key];
+    const wer = currentDate ? getAssignmentMatrixByArea(currentDate,'tg',b.key)
+      .concat(getAssignmentMatrixByArea(currentDate,'bo',b.key).filter(n=>!getAssignmentMatrixByArea(currentDate,'tg',b.key).includes(n))) : [];
+    const werTxt = wer.length ? ' · <b>'+wer.map(esc).join(', ')+'</b>'
+      : ' · <span style="color:rgba(255,255,255,.55)">niemand zugewiesen</span>';
+    return `<div class="tzh-blk"><span class="tzh-blk-l">${b.ico} ${b.ttl} <span style="font-weight:400">${b.von}–${b.bis}</span></span>`+
+      `<span>💶 – · <span class="tzh-kzl">LV</span> <b>${v[0]}/${v[1]}</b> · <span class="tzh-kzl">DP</span> <b>${d[0]}/${d[1]}</b>${werTxt}</span></div>`;
   }).join('');
   if(rows) h += `<div style="margin-bottom:6px">${rows}</div>`;
   return h;
@@ -5171,13 +5341,13 @@ function buildAufgabenSections(a){
         main:esc(r.name),
         tdef: r.nextTermin ? timeBlockOfHour(r.nextTermin.getHours() + r.nextTermin.getMinutes()/60) : undefined,
         sub:`Serie fertig · Arzt: ${r.arzt?esc(r.arzt):'?'}${voDat(r.rezDatum)}` })) },
-    { key:'blum', ico:'📄', color:'var(--purple)', ttl:'Auf Blanko-VO umstellen', go:"switchView('rezepte')",
+    { key:'blum', ico:'📄', color:'var(--purple)', ttl:'Rezeptänderungen nachhalten · auf Blanko-VO umstellen', go:"switchView('rezepte')",
       items: blUm.map(p=>({
         id:'blum|'+p.rezeptNr,
         main:esc(p.name),
         sub:`${p.heilmittel?esc(p.heilmittel):''}${p.icd?' · '+esc(p.icd):''}${voDat(p.rezDatum)} · beim Arzt Umstellung anstoßen`,
         statusSel: blStatusSelect('um',p.rezeptNr,p.name) })) },
-    { key:'blpl', ico:'💎', color:'var(--accent)', ttl:'Blanko-VO zu Ende planen', go:"switchView('rezepte')",
+    { key:'blpl', ico:'📄', color:'var(--accent)', ttl:'Rezeptänderungen nachhalten · Blanko-VO zu Ende planen', go:"switchView('rezepte')",
       items: blPl.map(p=>({
         id:'blpl|'+p.rezeptNr,
         main:esc(p.name),
@@ -5290,6 +5460,8 @@ function renderAufgaben(){
 
     // ── Punkt 6 (Call 17.09.): Ablehnungs-Review nur im Backoffice ──
     if(tzArea==='bo') h += renderAblehnungsReview();
+    // ── A4 (Call 18.09.): nicht ausgefüllte Tagesziele vergangener Tage nachhalten ──
+    if(tzArea==='bo') h += renderTageszielAltlasten();
 
     // Bereichs-spezifische Modebar
     h += tzAreaBar();

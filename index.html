@@ -241,6 +241,11 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--dark);min
 .gap-detail-t{font-family:'Montserrat',sans-serif;font-size:12px;font-weight:800;color:var(--accent)}
 .nr-mini{display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--card);border-radius:10px;margin-bottom:4px;border:1px solid var(--border);flex-wrap:wrap}
 .nr-mini-log{flex-basis:100%;display:flex;gap:6px;align-items:center;margin-top:4px} /* Punkt A2 (Call 21.09.) */
+/* Punkt 2 (Call 23.09.): Patienten-Notiz in Aktionslisten */
+.pat-notiz{flex-basis:100%;display:flex;gap:6px;align-items:center;margin-top:5px;font-size:11px}
+.pn-inp{flex:1;min-width:0;font-size:10px;padding:4px 8px;border:1px solid var(--border);border-radius:8px;background:var(--card);color:var(--dark);font-family:inherit}
+.pn-inp:focus{outline:none;border-color:var(--primary)}
+.pn-meta{font-size:9px;color:var(--muted);white-space:nowrap;flex-shrink:0}
 .nr-mini-rank{font-family:'Montserrat',sans-serif;font-size:13px;font-weight:900;color:var(--accent);width:20px;text-align:center}
 .nr-mini-body{flex:1;min-width:0}
 .nr-mini-n{font-family:'Montserrat',sans-serif;font-size:12px;font-weight:800}
@@ -760,6 +765,7 @@ let currentRezeptCat = 'nr';
 let currentNRFilter = 'all';
 let currentBlStFilter = 'offen';  // Punkt 8 (Call 15.09.) · A7 (Call 18.09.): Default = nur „offen" — fertige/in Bearbeitung per Filter
 let verlaufTab = 'tg';            // Punkt 11 (Call 15.09.): Rubrik im Verlauf-Reiter (tg/bo/sp)
+let verlaufPerson = '';           // Punkt 4 (Call 23.09.): Mitarbeiter-Filter im Verlauf ('' = alle)
 let currentOffeneFilter = 'w4';
 let currentFvoFilter = 'offen';
 let currentPotFilter = 'alle';
@@ -850,23 +856,25 @@ const KAT_NAME    = { WS:'Wirbelsäule', EX:'Extremitäten/Gelenke', LY:'Lymphab
 // Diagnosegruppe = erste 2 Buchstaben des Indikationsschlüssels (z.B. "WSa" → "WS")
 function diagnosegruppe(ind){ const m=String(ind||'').toUpperCase().match(/^([A-Z]{2})/); return m?m[1]:''; }
 function icd3Steller(icd){ return String(icd||'').replace(/[^A-Za-z0-9].*/,'').slice(0,3); }
-// Doing-Status je Verordnungsfall (lokal gespeichert)
-function getFallStatus(key){ return lsGet('cki_fall_'+key, 'offen'); }
-function cycleFallStatus(key){
-  const order=['offen','doing','erledigt'];
-  // 'abgelehnt' ist nicht Teil des Zyklus → indexOf -1 → nächster Klick startet wieder bei 'offen'
-  const next=order[(order.indexOf(getFallStatus(key))+1)%order.length];
-  lsSet('cki_fall_'+key, next);
+// Status je Verordnungsfall (lokal gespeichert)
+// Punkt 3 (Call 23.09.): volle Status-Palette analog Potenzial-Dauer statt offen/doing/erledigt.
+// Alte Werte werden beim Lesen migriert: doing → ib (in Bearbeitung), erledigt → verplant.
+const FVO_STATUS = [['offen','🔴 offen'],['ang','💬 angesprochen'],['ib','🟡 in Bearbeitung'],['verplant','✅ Folgerezept verplant'],['abgelehnt','🚫 abgelehnt ✕']];
+function getFallStatus(key){
+  const st = lsGet('cki_fall_'+key, 'offen');
+  return st==='doing' ? 'ib' : st==='erledigt' ? 'verplant' : st;
+}
+function setFallStatus(key, st, name){
+  if(st==='abgelehnt'){
+    const reason = pflichtBegruendung('Warum wurde die Folge-Verordnung ABGELEHNT?');
+    if(reason===null){ if(currentView==='folgevo') renderFolgeVO(); return; }   // Abbruch → Auswahl zurücksetzen
+    ablehnungLog('folgevo', key, name||'', reason);
+  }
+  lsSet('cki_fall_'+key, st||'offen');
   if(currentView==='folgevo') renderFolgeVO();
 }
-// Punkt 4/5 (Call 17.09.): Folge-VO abgelehnt → Pflicht-Begründung + Ablehnungs-Register
-function rejectFallStatus(key,name){
-  const reason = pflichtBegruendung('Warum wurde die Folge-Verordnung ABGELEHNT?');
-  if(reason===null) return;
-  ablehnungLog('folgevo', key, name, reason);
-  lsSet('cki_fall_'+key, 'abgelehnt');
-  if(currentView==='folgevo') renderFolgeVO();
-}
+// Kompatibilität (alte Aufrufe): Ablehnung über den zentralen Setter
+function rejectFallStatus(key,name){ setFallStatus(key,'abgelehnt',name); }
 
 // Heilmittel-Dauern
 const HM_DAUER = {
@@ -1587,6 +1595,13 @@ function renderLuecken(){
   h += `<div class="focus-banner">🔁 <b>BVB gegen Dauerplan prüfen:</b> Patienten mit Maske D (Dauerplan) tauchen nicht mehr in den Nachrücker-/Potenzial-Listen auf – für sie ist der Folgetermin bereits fest gebucht. Für Lücken nur Patienten <i>ohne</i> Dauerplan anrufen.</div>`;
   h += leitfadenBox('luecken','📞 Telefonleitfaden · Lücken / Nachrücker','Text folgt – z.B. Gesprächsleitfaden für Nachrücker-Anruf bei kurzfristiger Lücke …');
 
+  // Punkt 1 (Call 23.09.): per Deep-Link aus dem Tagesziel gekommen? → Rück-Link zeigen
+  const dl = lueckenDeepLink; lueckenDeepLink = null;
+  let dlGap = null;
+  if(dl){
+    h = `<div style="margin-bottom:10px"><button class="task-open" style="font-size:11px;padding:8px 14px" onclick="switchView('aufgaben')">⬅️ zurück zum Tagesziel</button></div>` + h;
+  }
+
   if(analysis.totalGapMin>0){
     h += `<div class="st">⚡ Lücken<span class="sub">→ Klick für Nachrücker-Vorschläge</span></div>`;
     let gapIdx = 0;
@@ -1597,7 +1612,11 @@ function renderLuecken(){
         const icon = g.min>=60?'🔴':g.min>=40?'🟡':'🟢';
         const gapId = 'gap-'+gapIdx++;
         const gapStartISO = g.start.toISOString();
-        h += `<div class="ac" onclick="showGapNR('${gapId}',${Math.round(g.min)},'${t.name.replace(/'/g,"\\'")}','${gapStartISO}')">
+        // Deep-Link-Treffer merken: Therapeut + Startzeit identifizieren die Lücke
+        if(dl && dl.therapist===t.name && hhmm(g.start)===dl.start){
+          dlGap = { gapId: gapId, min: Math.round(g.min), thName: t.name, iso: gapStartISO };
+        }
+        h += `<div class="ac"${dlGap&&dlGap.gapId===gapId?' style="box-shadow:0 0 0 2px var(--accent)"':''} onclick="showGapNR('${gapId}',${Math.round(g.min)},'${t.name.replace(/'/g,"\\'")}','${gapStartISO}')">
           <span style="font-size:16px">${icon}</span>
           <div class="ac-b">
             <div class="ac-t">${t.name} — ${Math.round(g.min)} min</div>
@@ -1619,8 +1638,15 @@ function renderLuecken(){
   h += `<div class="tg">`;
   analysis.therapists.forEach(t=>{ h += renderTherapistCard(t); });
   h += `</div>`;
-  
+
   document.getElementById('content').innerHTML = h;
+
+  // Punkt 1 (Call 23.09.): Deep-Link — Nachrücker-Liste der Ziel-Lücke direkt öffnen + hinscrollen
+  if(dlGap){
+    showGapNR(dlGap.gapId, dlGap.min, dlGap.thName, dlGap.iso);
+    const el = document.getElementById(dlGap.gapId);
+    if(el && el.scrollIntoView){ try{ el.scrollIntoView({behavior:'smooth', block:'center'}); }catch(_e){ el.scrollIntoView(); } }
+  }
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -2822,6 +2848,7 @@ function renderRezeptRow(r, type, cat){
         ${r.therapist?'<br>👤 '+r.therapist:''}
       </div>
       <div class="progress-mini"><div class="progress-mini-f" style="width:${pct}%;background:${c}"></div></div>
+      ${patNotizField(r.patKey, r.name)}
     </div>
     ${statusSel}
     <div class="pr-t">${next}</div>
@@ -3713,7 +3740,7 @@ function renderPotential(){
     const age = p.geb ? Math.floor((Date.now()-new Date(p.geb).getTime())/(365.25*86400000)) : null;
     const tel = p.mobil ? `<a class="pr-tel" href="tel:${p.mobil.replace(/[^+\d]/g,'')}">📞 ${p.mobil}</a>` : '';
     const chips = p.dauerCats.map(c=>`<span class="cat-chip" style="background:${catColor[c]||'var(--muted)'}">${c}</span>`).join('');
-    h += `<div class="ac" style="border-left-color:var(--primary);cursor:pointer" data-name="${esc(p.name).toLowerCase()}" data-lf-sel="${esc(p.name)}" onclick="selectLeitfadenPatient('${jsq(p.name)}','${jsq(p.mobil||'')}','${jsq(p.therapist||'')}','')">
+    h += `<div class="ac" style="border-left-color:var(--primary);cursor:pointer;flex-wrap:wrap" data-name="${esc(p.name).toLowerCase()}" data-lf-sel="${esc(p.name)}" onclick="selectLeitfadenPatient('${jsq(p.name)}','${jsq(p.mobil||'')}','${jsq(p.therapist||'')}','')">
       <span style="font-size:16px">🎯</span>
       <div class="ac-b">
         <div class="ac-t">${esc(p.name)}${age?' · '+age+'J':''}</div>
@@ -3721,6 +3748,7 @@ function renderPotential(){
       </div>
       ${tel}
       ${dpStatusSelect(p.patKey, p.name)}
+      ${patNotizField(p.patKey, p.name)}
     </div>`;
   });
   h += `</div>`;
@@ -3901,7 +3929,8 @@ function renderFolgeVO(){
   });
   h += `</div>`;
 
-  const statusMeta = {offen:{l:'🔴 Offen',c:'var(--accent)',bg:'var(--accent-bg)'}, doing:{l:'🟡 In Arbeit',c:'var(--amber)',bg:'var(--amber-bg)'}, erledigt:{l:'🟢 Erledigt',c:'var(--teal)',bg:'var(--teal-bg)'}, abgelehnt:{l:'🚫 Abgelehnt',c:'var(--fire)',bg:'var(--fire-bg)'}};
+  // Punkt 3 (Call 23.09.): Status-Palette analog Potenzial-Dauer
+  const statusMeta = {offen:{l:'🔴 offen',c:'var(--accent)',bg:'var(--accent-bg)'}, ang:{l:'💬 angesprochen',c:'var(--primary)',bg:'var(--primary-bg, #f3e8ff)'}, ib:{l:'🟡 in Bearbeitung',c:'var(--amber)',bg:'var(--amber-bg)'}, verplant:{l:'✅ Folgerezept verplant',c:'var(--teal)',bg:'var(--teal-bg)'}, abgelehnt:{l:'🚫 abgelehnt',c:'var(--fire)',bg:'var(--fire-bg)'}};
   // Handlungs-Badge (nächster Schritt) je Fall
   const handlungMeta = {
     folgevo:{l:'🎫 Folge-VO holen', c:'var(--primary)'},
@@ -3961,8 +3990,8 @@ function renderFolgeVO(){
         ${mitte}
       </div>
       ${tel}
-      <button class="pr-tel" style="background:${sm.bg};color:${sm.c};border:none;cursor:pointer" onclick="event.stopPropagation();cycleFallStatus('${jsq(f.key)}')">${sm.l} ⟳</button>
-      ${f.status!=='abgelehnt'?`<button class="pr-tel" title="Folge-VO abgelehnt (Pflicht-Begründung)" style="background:var(--fire-bg);color:var(--fire);border:none;cursor:pointer" onclick="event.stopPropagation();rejectFallStatus('${jsq(f.key)}','${jsq(f.name)}')">🚫</button>`:''}
+      <select onclick="event.stopPropagation()" onchange="setFallStatus('${jsq(f.key)}',this.value,'${jsq(f.name)}')" style="font-size:10px;font-weight:700;padding:4px 6px;border:none;border-radius:100px;cursor:pointer;background:${sm.bg};color:${sm.c}">${FVO_STATUS.map(([v,l])=>`<option value="${v}"${f.status===v?' selected':''}>${l}</option>`).join('')}</select>
+      ${patNotizField(f.patKey, f.name)}
     </div>`;
   };
 
@@ -3999,7 +4028,8 @@ function computeKpiSnapshot(){
   const potentialOffen = bewertbar.filter(f=>f.restBeh>0);
   const erst1 = potentialOffen.filter(f=>f.anzRez===1);
   const ausgeschoepft = bewertbar.filter(f=>f.restBeh<=0);
-  let erledigt=0; faelle.forEach(f=>{ if(getFallStatus(f.key)==='erledigt') erledigt++; });
+  // Punkt 3 (Call 23.09.): Status-Umbenennung erledigt→verplant; getFallStatus migriert alte Werte.
+  let erledigt=0; faelle.forEach(f=>{ if(getFallStatus(f.key)==='verplant') erledigt++; });
   // Punkt 11 (Call 15.09.): Blanko-Rezeptänderungen mitschreiben (z.B. "10 von 16 umgestellt")
   let blUmGesamt=0, blUmAng=0, blUmAbg=0, blUmIb=0, blPlGesamt=0, blPlFertig=0, blPlIb=0;
   try{
@@ -4062,6 +4092,9 @@ function recordTagesHist(date, o){
   const h=getTagesHist();
   h[date]={ done:o.done||0, total:o.total||0, tgDone:o.tgDone||0, tgTotal:o.tgTotal||0, boDone:o.boDone||0, boTotal:o.boTotal||0,
     pct: o.total>0?Math.round(o.done/o.total*100):100, ts:new Date().toISOString() };
+  // Punkt 4 (Call 23.09.): Stand PRO PERSON mitschreiben (Basis: Zuweisung des Tages).
+  // Rückwirkend gibt es diese Daten nicht — der Personen-Filter greift ab Einführung.
+  if(o.pers && Object.keys(o.pers).length) h[date].pers = o.pers;
   lsSet('cki_tz_hist', h);
 }
 function clearKpiHistorie(){
@@ -4098,6 +4131,7 @@ function verlaufChart(hist, metrics, opts){
     <svg viewBox="0 0 ${W} ${H}" width="100%" style="max-width:100%;height:auto;display:block">${grid}${paths}${xlab}</svg>`;
 }
 function setVerlaufTab(t){ verlaufTab = (t==='bo'||t==='sp') ? t : 'tg'; renderVerlauf(); }
+function setVerlaufPerson(n){ verlaufPerson = n||''; renderVerlauf(); }   // Punkt 4 (Call 23.09.)
 function renderVerlauf(){
   const hist=getKpiHistorie();
   const dates=Object.keys(hist).sort();
@@ -4147,6 +4181,49 @@ function renderVerlauf(){
     if(tzN===0){
       h += `<div class="empty">Noch keine Tagesziel-Daten. Sobald im Tagesziel-Reiter Aufgaben abgehakt werden, wird der Stand hier pro Tag automatisch festgehalten.</div>`;
     } else {
+      // ── Punkt 4 (Call 23.09.): Filter nach Mitarbeiter ──
+      // Personen aus allen Snapshots einsammeln (nur Tage seit Einführung tragen 'pers')
+      const persSet = new Set();
+      tzDates.forEach(d=>{ const p=tzh[d].pers; if(p) Object.keys(p).forEach(nm=>persSet.add(nm)); });
+      const persNames = [...persSet].sort((a,b)=>a.localeCompare(b,'de'));
+      if(verlaufPerson && !persSet.has(verlaufPerson)) verlaufPerson = '';
+      if(persNames.length){
+        const pBtn = (v,lbl)=>`<button class="nr-filter${verlaufPerson===v?' a':''}" style="${verlaufPerson===v?'background:var(--teal);color:#fff;border-color:var(--teal);':''}font-weight:700" onclick="setVerlaufPerson('${jsq(v)}')">${esc(lbl)}</button>`;
+        h += `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px">
+          <span style="font-size:11px;font-weight:700;color:var(--muted)">👤 Mitarbeiter:</span>
+          ${pBtn('','Alle')}${persNames.map(nm=>pBtn(nm,nm)).join('')}
+        </div>`;
+      }
+      if(verlaufPerson){
+        // abgeleitete Historie: nur die Aufgaben, die dieser Person zugewiesen waren
+        const ph = {};
+        tzDates.forEach(d=>{ const p=tzh[d].pers && tzh[d].pers[verlaufPerson];
+          if(p) ph[d] = { done:p.done, total:p.total, pct: p.total>0?Math.round(p.done/p.total*100):100 }; });
+        const phDates = Object.keys(ph).sort();
+        h += `<div style="font-size:10px;color:var(--muted);margin:-6px 0 10px">ℹ️ Personen-Daten werden seit Einführung des Filters (23.09.2026) mitgeschrieben — ältere Tage enthalten keine Aufteilung nach Mitarbeitern und fehlen hier. Gezählt werden die Aufgaben, die ${esc(verlaufPerson)} am jeweiligen Tag zugewiesen waren.</div>`;
+        if(!phDates.length){
+          h += `<div class="empty">Für ${esc(verlaufPerson)} liegen noch keine Tages-Snapshots vor.</div>`;
+        } else {
+          h += card(`Tagesziel-Erfüllung (%) · ${esc(verlaufPerson)}`, 'Anteil der erledigten Aufgaben an den dieser Person zugewiesenen Aufgaben.',
+            verlaufChart(ph, [{key:'pct', label:'erledigt %', color:'var(--teal)'}], {yMax:100, suffix:'%'}));
+          h += card(`Aufgaben pro Tag · ${esc(verlaufPerson)}`, 'Zugewiesene gegen erledigte Aufgaben.',
+            verlaufChart(ph, [
+              {key:'total', label:'zugewiesen', color:'var(--amber)'},
+              {key:'done', label:'erledigt', color:'var(--teal)'}
+            ]));
+          const pRows = phDates.slice().reverse().map(d=>{ const s=ph[d];
+            return `<tr>
+              <td style="padding:6px 8px;font-weight:700">${fmtDE(d)}</td>
+              <td style="padding:6px 8px;text-align:right;color:var(--teal);font-weight:700">${s.done} / ${s.total}</td>
+              <td style="padding:6px 8px;text-align:right;font-weight:700">${s.pct}%</td>
+            </tr>`; }).join('');
+          h += `<div class="ausl-card" style="padding:8px 6px;overflow-x:auto">
+            <table style="width:100%;border-collapse:collapse;font-size:11px">
+              <thead><tr style="border-bottom:2px solid var(--border);color:var(--muted)">
+                <th style="padding:6px 8px;text-align:left">Tag</th><th style="padding:6px 8px;text-align:right">Erledigt (zugewiesen)</th><th style="padding:6px 8px;text-align:right">Quote</th>
+              </tr></thead><tbody>${pRows}</tbody></table></div>`;
+        }
+      } else {
       h += card('Tagesziel-Erfüllung (%)', 'Wie viel Prozent der Tagesaufgaben (Tagesgeschäft + Backoffice) am jeweiligen Tag erledigt wurden.',
         verlaufChart(tzh, [{key:'pct', label:'erledigt %', color:'var(--primary)'}], {yMax:100, suffix:'%'}));
       h += card('Erledigte Aufgaben pro Tag', 'Erledigte gegen die insgesamt anstehenden Aufgaben – getrennt nach Tagesgeschäft und Backoffice.',
@@ -4157,18 +4234,21 @@ function renderVerlauf(){
           {key:'boDone', label:'davon Backoffice', color:'var(--accent)'}
         ]));
       const tzRows = tzDates.slice().reverse().map(d=>{ const s=tzh[d];
+        const persTxt = s.pers ? Object.keys(s.pers).sort((a,b)=>a.localeCompare(b,'de')).map(nm=>`${esc(nm)} ${s.pers[nm].done}/${s.pers[nm].total}`).join(' · ') : '–';
         return `<tr>
           <td style="padding:6px 8px;font-weight:700">${fmtDE(d)}</td>
           <td style="padding:6px 8px;text-align:right;color:var(--primary);font-weight:700">${s.done} / ${s.total}</td>
           <td style="padding:6px 8px;text-align:right">${s.tgDone} / ${s.tgTotal}</td>
           <td style="padding:6px 8px;text-align:right">${s.boDone} / ${s.boTotal}</td>
           <td style="padding:6px 8px;text-align:right;font-weight:700">${s.pct}%</td>
+          <td style="padding:6px 8px;text-align:right;font-size:10px;color:var(--muted)">${persTxt}</td>
         </tr>`; }).join('');
       h += `<div class="ausl-card" style="padding:8px 6px;overflow-x:auto">
         <table style="width:100%;border-collapse:collapse;font-size:11px">
           <thead><tr style="border-bottom:2px solid var(--border);color:var(--muted)">
-            <th style="padding:6px 8px;text-align:left">Tag</th><th style="padding:6px 8px;text-align:right">Erledigt</th><th style="padding:6px 8px;text-align:right">Tagesgeschäft</th><th style="padding:6px 8px;text-align:right">Backoffice</th><th style="padding:6px 8px;text-align:right">Quote</th>
+            <th style="padding:6px 8px;text-align:left">Tag</th><th style="padding:6px 8px;text-align:right">Erledigt</th><th style="padding:6px 8px;text-align:right">Tagesgeschäft</th><th style="padding:6px 8px;text-align:right">Backoffice</th><th style="padding:6px 8px;text-align:right">Quote</th><th style="padding:6px 8px;text-align:right">je Mitarbeiter</th>
           </tr></thead><tbody>${tzRows}</tbody></table></div>`;
+      }
     }
   } else if(verlaufTab==='bo'){
     // ═══ Rubrik Backoffice: Rezeptänderungen (Blanko) + Rezept-Kennzahlen ═══
@@ -4261,6 +4341,16 @@ function calcKap4Wochen(){
 // Navigation aus den Aufgaben-Kacheln in die jeweiligen Tabs
 function gotoOffene(f){ currentOffeneFilter=(f==='w2'||f==='w4')?f:'w4'; switchView('offene'); }  // A8: nur noch 2/4 Wochen
 function gotoFolgeVO(){ currentFvoFilter='offen'; switchView('folgevo'); }
+// ── Punkt 1 (Call 23.09.): Deep-Link Tagesziel → konkrete Lücke im Lücken-Tab ──
+//    Springt zum richtigen Tag, öffnet die Nachrücker-Liste der Lücke und scrollt hin.
+//    Rücksprung über den „zurück zum Tagesziel"-Balken, den renderLuecken dann zeigt.
+let lueckenDeepLink = null;
+function gotoLuecke(dateStr, therapist, startHHMM){
+  if(DATA && DATA.dates.includes(dateStr)) currentDate = dateStr;
+  if(selectedTherapists!==null) selectedTherapists.add(therapist);   // Therapeut darf nicht weggefiltert sein
+  lueckenDeepLink = { therapist: therapist, start: startHHMM };
+  switchView('luecken');
+}
 
 // ── Abhak-Status (localStorage) ──
 function taskDone(id){ return lsGet('cki_check_'+id, false); }
@@ -4357,6 +4447,26 @@ function rejectFvoFromTagesplan(patKey, name, taskId){
   }catch(_e){ /* Analyse nicht möglich → Register-Eintrag reicht */ }
   if(taskId && !taskDone(taskId)){ toggleTask(taskId); return; }   // toggleTask rendert neu
   renderAufgaben();
+}
+
+// ── Punkt 2 (Call 23.09.): Notiz je PATIENT — sichtbar in allen Aktionslisten ──
+//    Gespeichert pro patKey (cki_patnotiz), nicht pro Liste: dieselbe Notiz erscheint
+//    bei Blanko umstellen, Blanko zu Ende planen, BVB-Potenzial, untertaktet,
+//    Potenzial-Dauer und Folge-VO — überall, wo der Patient auftaucht.
+function patNotizAll(){ return lsGet('cki_patnotiz', {}); }
+function patNotizGet(patKey){ return patNotizAll()[patKey] || null; }
+function patNotizSet(patKey, txt){
+  const all = patNotizAll();
+  txt = String(txt||'').trim();
+  if(!txt){ delete all[patKey]; }
+  else { all[patKey] = { txt, ts: Date.now(), by: getMe()||'' }; }
+  lsSet('cki_patnotiz', all);
+}
+function patNotizField(patKey, name){
+  if(!patKey) return '';
+  const e = patNotizGet(patKey);
+  const meta = e && e.ts ? `<span class="pn-meta">${esc(e.by||'?')} · ${new Date(e.ts).toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit'})}</span>` : '';
+  return `<span class="pat-notiz" onclick="event.stopPropagation()">📝<input class="pn-inp" type="text" placeholder="Notiz …" value="${esc(e?e.txt:'')}" onchange="patNotizSet('${jsq(patKey)}',this.value)" title="Notiz zu ${esc(name||'')} — überall sichtbar, wo der Patient auftaucht">${meta}</span>`;
 }
 const RB_STATUS=[['offen','offen'],['angefragt','beim Arzt angefragt'],['eingetroffen','eingetroffen'],['erledigt','erledigt ✓'],['abgelehnt','abgelehnt ✕']];
 const US_STATUS=[['offen','offen'],['angerufen','angerufen'],['erreicht','erreicht'],['nichterreicht','nicht erreicht']];
@@ -5201,6 +5311,8 @@ function buildTagesplan(a, rez){
         ${ds==='ang'||ds==='ib'?`<span class="tps-reason">${ds==='ang'?'💬 angesprochen':'🟡 in Bearbeitung'}</span>`:''}
       </div>`;
     }
+    // Punkt 2 (Call 23.09.): Patienten-Notiz auch im Tagesplan
+    h += patNotizField(p.key, p.name);
     h += `</div>`;
     if(p.mobil) h += `<a class="tp-tel" href="tel:${esc(String(p.mobil).replace(/\s+/g,''))}" title="anrufen">📞 ${esc(p.mobil)}</a>`;
     h += `</div>`;
@@ -5416,13 +5528,15 @@ function buildAufgabenSections(a){
         id:'gap|'+currentDate+'|'+g.therapist+'|'+hhmm(g.start),
         main:esc(g.therapist)+' · '+hhmm(g.start)+'–'+hhmm(g.end),
         tdef:timeBlockOfHour(gapHourOf(g)),
-        sub:Math.round(g.min)+' min frei · Nachrücker anrufen' })) },
+        sub:Math.round(g.min)+' min frei · Nachrücker anrufen',
+        link:`<button class="task-open" onclick="event.stopPropagation();gotoLuecke('${currentDate}','${jsq(g.therapist)}','${hhmm(g.start)}')" title="Lücke im Lücken-Tab öffnen — Nachrücker-Liste klappt direkt auf">⚡ Nachrücker →</button>` })) },
     { key:'gapMorgen', ico:'📅', color:'#0891b2', ttl:'Lücken morgen schließen'+(morgenStr?' · '+morgenLabel:''), go:"switchView('luecken')",
       items: (morgenStr?gapsMorgen:[]).map(g=>({
         id:'gap|'+morgenStr+'|'+g.therapist+'|'+hhmm(g.start),
         main:esc(g.therapist)+' · '+hhmm(g.start)+'–'+hhmm(g.end),
         tdef:timeBlockOfHour(gapHourOf(g)),
-        sub:Math.round(g.min)+' min frei · vorab Nachrücker organisieren' })) },
+        sub:Math.round(g.min)+' min frei · vorab Nachrücker organisieren',
+        link:`<button class="task-open" onclick="event.stopPropagation();gotoLuecke('${morgenStr}','${jsq(g.therapist)}','${hhmm(g.start)}')" title="Lücke im Lücken-Tab öffnen — Nachrücker-Liste klappt direkt auf">⚡ Nachrücker →</button>` })) },
     { key:'abr', ico:'💰', color:'var(--fire)', ttl:'Rezepte abrechnen', go:"gotoOffene('abr')",
       items: a.typA.map(r=>({
         id:'abr|'+r.rezeptNr,
@@ -5440,19 +5554,22 @@ function buildAufgabenSections(a){
         id:'fvo|'+r.rezeptNr,
         main:esc(r.name),
         tdef: r.nextTermin ? timeBlockOfHour(r.nextTermin.getHours() + r.nextTermin.getMinutes()/60) : undefined,
-        sub:`Serie fertig · Arzt: ${r.arzt?esc(r.arzt):'?'}${voDat(r.rezDatum)}` })) },
+        sub:`Serie fertig · Arzt: ${r.arzt?esc(r.arzt):'?'}${voDat(r.rezDatum)}`,
+        notiz: patNotizField(r.patKey, r.name) })) },
     { key:'blum', ico:'📄', color:'var(--purple)', ttl:'Rezeptänderungen nachhalten · auf Blanko-VO umstellen', go:"switchView('rezepte')",
       items: blUm.map(p=>({
         id:'blum|'+p.rezeptNr,
         main:esc(p.name),
         sub:`${p.heilmittel?esc(p.heilmittel):''}${p.icd?' · '+esc(p.icd):''}${voDat(p.rezDatum)} · beim Arzt Umstellung anstoßen`,
-        statusSel: blStatusSelect('um',p.rezeptNr,p.name) })) },
+        statusSel: blStatusSelect('um',p.rezeptNr,p.name),
+        notiz: patNotizField(p.patKey, p.name) })) },
     { key:'blpl', ico:'📄', color:'var(--accent)', ttl:'Rezeptänderungen nachhalten · Blanko-VO zu Ende planen', go:"switchView('rezepte')",
       items: blPl.map(p=>({
         id:'blpl|'+p.rezeptNr,
         main:esc(p.name),
         sub:`${p.blankoVerplant!=null?p.blankoVerplant+' von '+p.blankoZiel+' verplant':''}${p.tageUebrig!=null?' · noch '+p.tageUebrig+' Tage gültig':''}${voDat(p.rezDatum)}`,
-        statusSel: blStatusSelect('pl',p.rezeptNr,p.name) })) },
+        statusSel: blStatusSelect('pl',p.rezeptNr,p.name),
+        notiz: patNotizField(p.patKey, p.name) })) },
     { key:'kap', ico:'📊', color:'var(--primary)', ttl:'Kapazität 4 Wochen im Voraus bereinigen · Ziel 87 %', go:"switchView('controlling')",
       items: kapItems }
   ];
@@ -5489,9 +5606,12 @@ function renderAufgaben(){
 
   // ── Punkt 4: Getrennte Fortschrittsbalken (Gesamt, TG, BO) ──
   let total=0, done=0, tgTotal=0, tgDone=0, boTotal=0, boDone=0;
+  const persAgg = {};   // Punkt 4 (Call 23.09.): Stand je zugewiesener Person
   allSections.forEach(s=>s.items.forEach(it=>{
     const isDone = taskDone(it.id);
     total++; if(isDone) done++;
+    const who = effectiveAssignee(it.id, s.key, it.tdef);
+    if(who){ const pa = persAgg[who] = persAgg[who]||{done:0,total:0}; pa.total++; if(isDone) pa.done++; }
     // Tagesgeschäft: std_tg, gaps, ft, fvo
     if(s.key==='std_tg'||s.key==='gapHeute'||s.key==='gapMorgen'||s.key==='ft'||s.key==='fvo'){
       tgTotal++; if(isDone) tgDone++;
@@ -5503,7 +5623,7 @@ function renderAufgaben(){
   }));
   const pct = total>0 ? Math.round(done/total*100) : 100;
   // Punkt 11: Tagesziel-Stand historisieren (nur in der "Alle"-Ansicht, sonst sind die Zähler gefiltert)
-  if(tzArea==='alle') recordTagesHist(currentDate, {done,total,tgDone,tgTotal,boDone,boTotal});
+  if(tzArea==='alle') recordTagesHist(currentDate, {done,total,tgDone,tgTotal,boDone,boTotal,pers:persAgg});
   const tgPct = tgTotal>0 ? Math.round(tgDone/tgTotal*100) : 100;
   const boPct = boTotal>0 ? Math.round(boDone/boTotal*100) : 100;
   const allDone = total>0 && done===total;
@@ -5612,8 +5732,9 @@ function renderAufgaben(){
           const d = taskDone(it.id);
           h += `<div class="task${d?' done':''}"${it.statusSel?'':` onclick="toggleTask('${jsq(it.id)}')"`}>
             <div class="task-cb">${d?'✓':''}</div>
-            <div class="task-body"><div class="task-main">${it.main}</div><div class="task-sub">${it.sub}</div></div>
+            <div class="task-body"><div class="task-main">${it.main}</div><div class="task-sub">${it.sub}</div>${it.notiz||''}</div>
             ${it.statusSel||''}
+            ${it.link||''}
             ${it.tdef?'<span style="font-size:9px;color:var(--muted)">'+TZ_TIMES[it.tdef]+'</span>':''}
             ${assigneeChip(it.id,s.key,it.tdef)}
           </div>`;
@@ -5769,8 +5890,9 @@ function renderAufgaben(){
       const d = taskDone(it.id);
       h += `<div class="task${d?' done':''}"${it.statusSel?'':` onclick="toggleTask('${jsq(it.id)}')"`}>
         <div class="task-cb">${d?'✓':''}</div>
-        <div class="task-body"><div class="task-main">${it.main}</div><div class="task-sub">${it.sub}</div></div>
+        <div class="task-body"><div class="task-main">${it.main}</div><div class="task-sub">${it.sub}</div>${it.notiz||''}</div>
         ${it.statusSel||''}
+        ${it.link||''}
         ${timeChip(it.id,s.key,it.tdef)}
         ${areaChip(it.id,s.key)}
         ${assigneeChip(it.id,s.key,it.tdef)}

@@ -1,0 +1,142 @@
+# CKI-Dashboard — Architektur & Entwickler-Doku
+
+Stand: 23.09.2026 · Datei: `index.html` (≈ 6.100 Zeilen, Single-File) · Autor: Johannes Brätz (Brätz Motion Group UG)
+
+Dieses Dokument richtet sich an Entwickler, die das Dashboard warten oder erweitern (Onboarding Simon Nagel). Es beschreibt die bewussten Architektur-Entscheidungen, den Datenfluss, die komplette localStorage-Registry und die bekannten Baustellen.
+
+---
+
+## 1 · Grundidee: bewusst eine einzige Datei
+
+Das gesamte Dashboard (CSS, HTML, JavaScript, Logo) lebt in **einer HTML-Datei ohne Build-Schritt, ohne Framework, ohne Abhängigkeiten**. Das ist kein Unfall, sondern Absicht:
+
+- **Deploy = Datei kopieren.** Die Datei wird als `index.html` in dieses Repo gelegt (GitHub Pages). Kein npm, kein Bundler, keine CI nötig.
+- **Läuft überall offline-fähig.** Praxis-Rechner brauchen nur einen Browser. Keine Server-Komponente, keine Installation.
+- **Datenschutz by design.** Die Datei selbst enthält **keine Patientendaten**. Alle Daten kommen zur Laufzeit aus dem lokal hochgeladenen THEORG-Export und bleiben im Browser (localStorage). Deshalb kann das Repo public sein.
+
+Konsequenz: Vanilla JS, globale Funktionen, Rendering per Template-Strings (`innerHTML`). Wer hier React-Gewohnheiten mitbringt: bitte erst Abschnitt 6 (Konventionen) lesen.
+
+## 2 · Datenfluss
+
+```
+THEORG → „Statistik und Export → Controlling Leistungsdaten“, Format 140 oder 141
+       → CSV (windows-1252, Semikolon-getrennt)
+       → Upload im Dashboard (Drag&Drop / Dateiauswahl)
+       → parseCSV() → parseData(rows, '140'|'141')   → globales DATA-Objekt
+       → renderDashboard() → View-Renderer je Tab
+```
+
+- **`DATA`** hält u. a. `cells` (alle Termin-/Rezeptzeilen mit `patKey`, `rezeptNr`, `start`, `therapist` …), `dates` (alle Exporttage) und abgeleitete Mengen (`dauerPats` …).
+- **`patKey`** = `nachname|vorname|geburtsdatum-ts` (lowercase) — die patientenstabile ID über alle Views (`patKeyFor()`).
+- **Verordnungsfall** = Patient + ICD-3-Steller; Rezepte mit > 6 Monaten Lücke starten einen neuen Fall (`computeVerordnungsfaelle()`).
+- **Stichtag-Prinzip:** Der Export hinkt der Echtzeit hinterher. Viele Auswertungen rechnen deshalb nicht mit „heute“, sondern mit dem spätesten wahrgenommenen Termin als Stichtag. Exporte sollten mit **Enddatum in der Zukunft** gezogen werden, sonst fehlen gebuchte Folgetermine.
+- **Verordnungsmenge ist unzuverlässig** (Sentinelwerte 100/1000/10000). Ausschöpfung wird daher immer über echte Termine (erbracht + geplant) gerechnet, nie über das Mengen-Feld.
+- Beim Laden eines Exports wird automatisch ein **KPI-Schnappschuss** (nur Zahlen, keine Personendaten) in die lokale Historie geschrieben → Verlauf-Tab.
+
+## 3 · Struktur der Datei (Sektions-Banner im Code)
+
+Die Datei ist durch `═══`-Banner in Sektionen geteilt; Suche nach dem Banner-Titel führt direkt hin:
+
+| Sektion | Inhalt |
+|---|---|
+| STATE & CONFIG | globale `let`/`const`, `CONFIG`, Kataloge (KAT_*), Heilmittel-Dauern, `lsGet`/`lsSet` |
+| FILE UPLOAD / PARSE EXCEL | CSV-Einlesen (windows-1252!), `parseData` für Format 140/141 |
+| MAIN RENDERING | `renderDashboard()`, Tab-Navigation, Browser-Notifications |
+| VIEW: LÜCKEN | Tageslücken je Therapeut, Nachrücker-Popup (`showGapNR`) inkl. Status/Notiz je Kandidat (`cki_nrlog`) |
+| DAY ANALYSIS / REZEPT ANALYSIS | `getDayCells()`, `analyzeRezepteFull()` (Badges, Scores, Nachrücker-Pool) |
+| VIEW: REZEPTE / OFFENE REZEPTE | Rezeptlisten, Karteileichen-Logik (Altlasten fest ausgeblendet, 2-/4-Wochen-Filter) |
+| VIEW: CONTROLLING | Wochen-/Monats-Charts, Kapazitäts-Chart mit 87-%-Ziellinie (`ctrlKapazitaetChart`) |
+| REZEPT-SAMMLUNG / PATIENTEN-AGGREGATION | geteilte Datenbasis für Potential-Dauer + Folge-VO |
+| VIEW: POTENTIAL-DAUER / FOLGE-VERORDNUNG | Dauerplan-Status (`cki_dpst`), Verordnungsfälle, Fall-Status (`cki_fall_*`) |
+| VIEW: VERLAUF | KPI-Historie, Export/Import der Historie als JSON |
+| VIEW: AUFGABEN | Tages-Cockpit: Tagesziel-Übersicht, Aufgabenliste/Tagesplan, Backoffice-Reiter (Rezeptbestellungen, Unterschriften, Ablehnungs-Review, Altlasten-Scanner) |
+| ZUWEISUNG MATRIX | Personen je Bereich (TG/BO) und Zeitblock (VM/MI/NM), `cki_asg_*` |
+| SHAREPOINT / MICROSOFT-LOGIN | vorbereitete Entra-ID/Graph-Anbindung (inaktiv, braucht einmalige Tenant-Freigabe) |
+
+Änderungen sind im Code als `// Punkt X (Call TT.MM.)` kommentiert — jede Zeile ist so auf den beauftragenden Call rückführbar.
+
+## 4 · localStorage-Registry (Prefix `cki_`)
+
+Alle persistenten Arbeitsdaten laufen über `lsGet(key, fallback)` / `lsSet(key, val)` (JSON-serialisiert). **Pro Gerät + Browser** — es gibt (noch) keinen Team-Sync, siehe Abschnitt 7.
+
+**Status-Systeme**
+| Key | Inhalt |
+|---|---|
+| `cki_tpstatus` | Tagesplan-Status je `datum\|patKey`: `wp` (weiter geplant) / `nwp` (mit Pflicht-Begründung) |
+| `cki_dpst` | Dauerplan-Status je patKey: `ang`/`ib`/`ja`/`nein` (nein mit Begründung) |
+| `cki_fall_<fallKey>` | Doing-Status je Verordnungsfall: `offen`/`doing`/`erledigt`/`abgelehnt` |
+| `cki_blst_<rezeptNr>` | Blanko-VO-Status (umstellen / zu Ende planen) |
+| `cki_prstatus_<…>` | Status je Rezept in den Rezept-Listen |
+| `cki_ablehnungen` | zentrales Ablehnungs-Register: `{typ, ref, name, reason, ts, by}`; Typen: weiterplan, dauerplan, blanko_um, blanko_pl, folgevo, rezeptbestellung, nachruecker |
+| `cki_nrlog` | Nachrücker-Log je Patient (lowercase Name): `{st, notiz, reason?, ts, by}` |
+
+**Aufgaben & Zuweisungen**
+| Key | Inhalt |
+|---|---|
+| `cki_check_<taskId>` | erledigt-Haken je Aufgabe (`toggleTask`/`taskDone`) |
+| `cki_asg_YYYYMMDD_{tg\|bo}_{vm\|mi\|nm}` | **aktuelle** Zuweisungs-Matrix: JSON-Array von Namen |
+| `cki_catassign_` / `cki_catarea_` / `cki_cattime_` | Aufgabenkategorie → Person/Bereich/Zeitblock (Vorbelegung) |
+| `cki_assign_` / `cki_doing_` / `cki_time_` | Einzel-Overrides je Aufgabe |
+| `cki_slot_*`, `cki_parea_*`, `cki_area_*` | ⚠️ **LEGACY** — Vorgänger der asg-Matrix, nur noch lesend referenziert. Nicht weiterverwenden! (siehe Abschnitt 8) |
+
+**Händische Listen (Backoffice)**
+| Key | Inhalt |
+|---|---|
+| `cki_rezeptbest` | Rezeptbestellungen nachhalten (`manList`-Familie), Status inkl. `abgelehnt` |
+| `cki_unterschriften` | fehlende Unterschriften: Name, Tel, Notiz, Status |
+| `cki_rezepte_taxieren_` | manuelle Taxier-Aufgabe |
+
+**Feature-Schalter & UI-Zustand**
+| Key | Inhalt |
+|---|---|
+| `cki_altlasten_on` / `cki_altlasten_start` | Tagesziel-Altlasten-Scanner: default AUS; beim Einschalten wird das Startdatum gesetzt, gescannt wird nur ab da (verhindert Altlasten-Flut aus der Testphase) |
+| `cki_me` / `cki_team` | angemeldete Person / Teamliste |
+| `cki_notif_on` / `cki_notif_sent` / `cki_gap_snapshot` | Browser-Benachrichtigungen (Lücken) |
+| `cki_kpi_hist` / `cki_tz_hist` | Kennzahlen-Historie (Verlauf-Tab) / Tagesziel-Historie |
+| `cki_tzmode`, `cki_tzarea`, `cki_secopen_*`, `cki_offene*`, `cki_hideDauer`, `cki_leitfaden_*`, `cki_rezept_group_*` | UI-Zustand (aktiver Modus, aufgeklappte Sektionen, Filter) |
+
+**Regel für neue Features:** neuer Key ⇒ hier in die Registry eintragen. Keys, die auf **historischen** Status aufsetzen, brauchen einen Ein/Aus-Schalter mit Startdatum (Muster: Altlasten-Scanner) — sonst erschlägt das Feature den Nutzer beim ersten Öffnen mit Alt-Einträgen.
+
+## 5 · Test-Suite
+
+27 JSDOM-basierte Suiten (`test1.js` … `test26.js` + Syntax-Check) laufen mit Node gegen die Produktions-HTML:
+
+```js
+const dom = new JSDOM(html, {runScripts:'dangerously', url:'https://localhost/', pretendToBeVisual:true});
+w.alert = ()=>{}; w.prompt = ()=>promptAnswers.shift();   // Pflicht-Begründungen mocken
+w.parseData(w.parseCSV(csvText), '140');  w.renderDashboard();
+setTimeout(()=>{ /* asserts */ }, 800);
+```
+
+⚠️ **Die Tests liegen bewusst NICHT in diesem (öffentlichen) Repo**, weil die Fixture `sample.csv` ein echter THEORG-Export mit Patientendaten ist. Weitergabe nur direkt. Vor jedem Deploy laufen: Syntax-Check + alle Suiten.
+
+## 6 · Konventionen & Stolperfallen
+
+1. **Top-level `let`/`const` liegen NICHT auf `window`** (`currentDate`, `RB_STATUS`, `TZ_BLOCKS` …). In Tests via `w.eval('currentDate')` zugreifen; nur `function`-Deklarationen sind als `w.xyz` erreichbar.
+2. **Pflicht-Begründung:** Jede Ablehnung läuft über `pflichtBegruendung(frage)` — weist leer, „Sonstiges“ und „austherapiert“ ab — und wird per `ablehnungLog(typ, ref, name, reason)` ins zentrale Register geschrieben (Backoffice-Review). Keine Ablehnung ohne diesen Pfad einbauen.
+3. **Headless-Datum-Swap:** Auswertungen über andere Tage (Notifications, Altlasten-Scanner) tauschen `currentDate` temporär, rufen die normalen Analysefunktionen und stellen das Datum im `finally` zurück. Muster: `notifBlockStats` / `tageszielAltlasten`.
+4. **CSS-Falle:** `overflow-x:auto` erzwingt `overflow-y:auto` → absolute Dropdowns werden geclippt. Deshalb `#thTabs.tabs{overflow:visible}`. Bei neuen Dropdowns in scrollenden Containern daran denken.
+5. **Escaping:** `esc()` für HTML, `jsq()` für Strings in Inline-Handlern. Patientennamen können Apostrophe enthalten.
+6. **Encoding:** THEORG liefert windows-1252 — beim Einlesen nie als UTF-8 dekodieren.
+7. **Zeitblöcke:** `TZ_BLOCKS` = VM 07:30–11:30 · Mittag 11:30–16:30 · NM 16:30–20:30. Zuordnung über `timeBlockOfHour()`.
+
+## 7 · Speicher & Schnittstellen (Roadmap)
+
+- **Heute:** localStorage pro Gerät. Historie-Export/-Import als JSON existiert für den Verlauf-Tab.
+- **Geplant Stufe 1:** `exportAllData()` — Voll-Export aller `cki_`-Keys + Metadaten als eine JSON-Datei mit dokumentiertem Schema (Backup, Gerätewechsel, und Lesequelle für externe Automatisierung).
+- **Geplant Stufe 2:** SharePoint-Sync über Microsoft Graph. Die Anbindung (Entra-ID-Login, Graph-Reads) ist im Code vorbereitet (Sektion SHAREPOINT), inaktiv bis zur einmaligen Admin-Freigabe im M365-Tenant der Praxis.
+- Externe Systeme lesen **nicht** direkt localStorage, sondern immer die Export-JSON (Stufe 1) bzw. die SharePoint-Datei (Stufe 2).
+
+## 8 · Bekannte technische Schulden (ehrliche Liste)
+
+1. **Rezept-Aggregation 3× vorhanden:** `analyzeRezepteFull()`, der Builder in `renderOffene()` und `collectRezepte()` aggregieren ähnlich, aber nicht identisch. Konsolidierung auf einen gemeinsamen Builder ist geplant (größter Einzelposten, braucht vollen Regressionslauf).
+2. **Legacy-Zuweisungs-Keys:** `cki_slot_*`, `cki_area_*`/`cki_parea_*` sind durch die `cki_asg_*`-Matrix ersetzt, werden aber noch lesend referenziert. Entfernung braucht eine Migrations-Routine (vorhandene Zuweisungen auf Praxis-Rechnern nicht verlieren).
+3. **Registry nur als Doku:** Die Key-Registry (Abschnitt 4) existiert nur hier, nicht als zentrale Struktur im Code.
+
+Änderungen an 1–3 bitte nicht „nebenbei“ — jeweils als eigenes Paket mit Regressionslauf.
+
+## 9 · Deploy
+
+1. Lokal testen (Syntax + Suiten).
+2. Datei als `index.html` in dieses Repo committen (`main`).
+3. GitHub Pages liefert aus; danach Kurz-Check am Praxis-Rechner (insb. Dropdowns, Upload, ein Klick durch alle Tabs).

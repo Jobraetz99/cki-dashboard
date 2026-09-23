@@ -239,7 +239,8 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--dark);min
 .gap-detail{margin:6px 0 12px;padding:14px;background:var(--accent-bg);border-radius:14px;border:1px solid rgba(227,6,19,.12)}
 .gap-detail-h{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
 .gap-detail-t{font-family:'Montserrat',sans-serif;font-size:12px;font-weight:800;color:var(--accent)}
-.nr-mini{display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--card);border-radius:10px;margin-bottom:4px;border:1px solid var(--border)}
+.nr-mini{display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--card);border-radius:10px;margin-bottom:4px;border:1px solid var(--border);flex-wrap:wrap}
+.nr-mini-log{flex-basis:100%;display:flex;gap:6px;align-items:center;margin-top:4px} /* Punkt A2 (Call 21.09.) */
 .nr-mini-rank{font-family:'Montserrat',sans-serif;font-size:13px;font-weight:900;color:var(--accent);width:20px;text-align:center}
 .nr-mini-body{flex:1;min-width:0}
 .nr-mini-n{font-family:'Montserrat',sans-serif;font-size:12px;font-weight:800}
@@ -2533,6 +2534,18 @@ function showGapNR(gapId, gapMin, thName, gapStartISO){
       <div class="nr-mini-bs">${badgesHtml}</div>
       ${p.mobil ? `<a href="tel:${p.mobil}" class="nr-mini-tel" onclick="event.stopPropagation();selectLeitfadenPatient('${pName}','${pTel}','${jsq(thName)}','${gapStart}')">📞</a>` : ''}
       <div class="nr-mini-score">${p.finalScore}pt</div>
+      ${(()=>{  // Punkt A2 (Call 21.09.): Status + Notiz je Kandidat (bleibt am Patienten, auch für künftige Lücken)
+        const log = nrLogGet(p.name) || {};
+        const tail = `,'${gapId}',${gapMin},'${jsq(thName)}','${jsq(gapStartISO||'')}'`;
+        const opts = NR_STATUS.map(([v,l])=>`<option value="${v}"${(log.st||'')===v?' selected':''}>${l}</option>`).join('');
+        const meta = log.ts ? `<span style="font-size:9px;color:var(--muted);white-space:nowrap">zuletzt ${new Date(log.ts).toLocaleDateString('de-DE')}${log.by?' · '+esc(log.by):''}</span>` : '';
+        return `<div class="nr-mini-log" onclick="event.stopPropagation()">
+          <select onchange="nrLogSet('${pName}','st',this.value${tail})" style="font-size:10px;padding:2px 4px;border:1px solid var(--border);border-radius:6px;background:#fff;color:${log.st==='abgelehnt'?'var(--fire)':log.st==='kommt'?'var(--teal)':'var(--dark)'}">${opts}</select>
+          <input value="${esc(log.notiz||'')}" placeholder="📝 Notiz — erreicht? was gesagt? wann kann er …" onchange="nrLogSet('${pName}','notiz',this.value${tail})" style="flex:1;min-width:0;font-size:10px;padding:3px 6px;border:1px solid var(--border);border-radius:6px">
+          ${meta}
+          ${log.st==='abgelehnt'&&log.reason?`<span style="font-size:9px;color:var(--fire);white-space:nowrap" title="${esc(log.reason)}">📝 ${esc(String(log.reason).slice(0,28))}${String(log.reason).length>28?'…':''}</span>`:''}
+        </div>`;
+      })()}
     </div>`;
   });
   
@@ -3060,9 +3073,23 @@ function ctrlKapazitaetChart(data){
       const zDiffH = Math.round((v-target)*CONFIG.slotMin/60);
       const zDiffLab = `${zDiffH>0?'+':zDiffH<0?'−':''}${Math.abs(zDiffH)} h`;
       const zPct = target>0 ? Math.round(v/target*100) : 0;
-      const yBase = isToday ? y-16 : y-5;
-      pctlab+=`<text x="${Xc(i).toFixed(1)}" y="${yBase.toFixed(1)}" text-anchor="middle" font-size="9" font-weight="800" fill="var(--primary,#7c3aed)" style="pointer-events:none">🎯 ${zDiffLab}</text>`;
-      pctlab+=`<text x="${Xc(i).toFixed(1)}" y="${(yBase-10).toFixed(1)}" text-anchor="middle" font-size="8" font-weight="700" fill="var(--primary,#7c3aed)" opacity=".85" style="pointer-events:none">${zPct}% v. Ziel</text>`;
+      // Punkt A1 (Call 21.09.): Labels kollidierten mit den Linien-Beschriftungen
+      // („🎯 Ziel 87 % · X h" / „Max. Kapazität"), wenn die Balkenspitze nahe einer
+      // Linie lag. Lösung: bei genügend hohem Balken wandern die Labels IN den Balken
+      // (weiß); nur bei kurzen Balken bleiben sie darüber – und weichen dann den
+      // Text-Bändern der beiden Linien nach oben aus.
+      if(hgt>=34){
+        pctlab+=`<text x="${Xc(i).toFixed(1)}" y="${(y+14).toFixed(1)}" text-anchor="middle" font-size="8" font-weight="700" fill="#fff" opacity=".9" style="pointer-events:none">${zPct}% v. Ziel</text>`;
+        pctlab+=`<text x="${Xc(i).toFixed(1)}" y="${(y+26).toFixed(1)}" text-anchor="middle" font-size="9" font-weight="800" fill="#fff" style="pointer-events:none">🎯 ${zDiffLab}</text>`;
+      }else{
+        let yBase = isToday ? y-16 : y-5;
+        const tyL=Y(target), myL=Y(refMax);
+        for(const band of [[tyL+2,tyL+16],[myL-16,myL-2]]){   // Text-Bänder der Ziel-/Max-Linie
+          if(yBase-18<band[1] && yBase>band[0]) yBase=Math.min(yBase, band[0]-4);
+        }
+        pctlab+=`<text x="${Xc(i).toFixed(1)}" y="${yBase.toFixed(1)}" text-anchor="middle" font-size="9" font-weight="800" fill="var(--primary,#7c3aed)" style="pointer-events:none">🎯 ${zDiffLab}</text>`;
+        pctlab+=`<text x="${Xc(i).toFixed(1)}" y="${(yBase-10).toFixed(1)}" text-anchor="middle" font-size="8" font-weight="700" fill="var(--primary,#7c3aed)" opacity=".85" style="pointer-events:none">${zPct}% v. Ziel</text>`;
+      }
     }
     if(isToday){ pctlab+=`<text x="${Xc(i).toFixed(1)}" y="${(y-5).toFixed(1)}" text-anchor="middle" font-size="9" font-weight="800" fill="var(--dark,#0f172a)" style="pointer-events:none">📍heute</text>`; }
     if(i%showEvery===0 || i===n-1 || isToday){ xlab+=`<text x="${Xc(i).toFixed(1)}" y="${H-padB+16}" text-anchor="middle" font-size="8.5" font-weight="${isToday?'800':'400'}" fill="${isToday?'var(--dark,#0f172a)':'var(--muted,#94a3b8)'}">${w.replace(/^\d{4}-/,'')}</text>`; }
@@ -4286,6 +4313,51 @@ function manSet(k, id, field, val){
   e[field]=val; lsSet(k,a); renderAufgaben();
 }
 function manDel(k, id){ lsSet(k, manList(k).filter(x=>x.id!==id)); renderAufgaben(); }
+
+// ── Punkt A2 (Call 21.09.): Notiz + Status je Nachrücker-Kandidat in den Lücken ──
+//    Gespeichert PRO PATIENT (nicht pro Lücke), damit die Info bei der nächsten Lücke
+//    wieder da ist („gestern nicht erreicht", „kommt nur vormittags" …).
+const NR_STATUS = [['','– Status –'],['kommt','✅ eingeplant / kommt'],['nichterr','📵 nicht erreicht'],['spaeter','⏳ später erneut versuchen'],['abgelehnt','🚫 abgelehnt ✕']];
+function nrLogAll(){ return lsGet('cki_nrlog', {}); }
+function nrLogGet(name){ return nrLogAll()[String(name||'').toLowerCase()] || null; }
+function nrLogSet(name, field, val, gapId, gapMin, thName, gapStartISO){
+  const all = nrLogAll(); const k = String(name||'').toLowerCase();
+  const e = all[k] || {};
+  if(field==='st' && val==='abgelehnt'){
+    const reason = pflichtBegruendung('Warum lehnt der Patient das Nachrücken ab?');
+    if(reason===null){ nrGapRefresh(gapId,gapMin,thName,gapStartISO); return; }   // Abbruch → Auswahl zurücksetzen
+    e.reason = reason;
+    ablehnungLog('nachruecker', '', name, reason);
+  }
+  e[field] = val;
+  e.ts = Date.now(); e.by = getMe()||'';
+  if(!e.st && !e.notiz) delete all[k]; else all[k] = e;
+  lsSet('cki_nrlog', all);
+  if(field==='st') nrGapRefresh(gapId,gapMin,thName,gapStartISO);
+}
+function nrGapRefresh(gapId, gapMin, thName, gapStartISO){
+  const el = gapId && document.getElementById(gapId);
+  if(!el) return;
+  el.innerHTML = '';
+  showGapNR(gapId, gapMin, thName, gapStartISO);
+}
+
+// ── Punkt A3 (Call 21.09.): Folge-VO-Ablehnung auch aus dem Tagesplan heraus ──
+//    Gleiche Wirkung wie der 🚫-Button im Folge-VO-Reiter: Pflicht-Begründung,
+//    Eintrag ins Ablehnungs-Register UND Fall-Status 'abgelehnt' (offene Fälle des
+//    Patienten aus der Verordnungsfall-Analyse), Aufgabe wird abgehakt.
+function rejectFvoFromTagesplan(patKey, name, taskId){
+  const reason = pflichtBegruendung('Warum wurde die Folge-Verordnung ABGELEHNT?');
+  if(reason===null) return;
+  ablehnungLog('folgevo', taskId||patKey, name, reason);
+  try{
+    computeVerordnungsfaelle().faelle
+      .filter(f=>f.patKey===patKey && handlungsstatus(f)!=='fertig')
+      .forEach(f=>lsSet('cki_fall_'+f.key, 'abgelehnt'));
+  }catch(_e){ /* Analyse nicht möglich → Register-Eintrag reicht */ }
+  if(taskId && !taskDone(taskId)){ toggleTask(taskId); return; }   // toggleTask rendert neu
+  renderAufgaben();
+}
 const RB_STATUS=[['offen','offen'],['angefragt','beim Arzt angefragt'],['eingetroffen','eingetroffen'],['erledigt','erledigt ✓'],['abgelehnt','abgelehnt ✕']];
 const US_STATUS=[['offen','offen'],['angerufen','angerufen'],['erreicht','erreicht'],['nichterreicht','nicht erreicht']];
 function manStatusSel(k,id,cur,opts){
@@ -4376,7 +4448,7 @@ function renderUnterschriften(){
 function renderAblehnungsReview(){
   const typLabel = { weiterplan:'📞 nicht weiter geplant', dauerplan:'🎯 Dauerplan abgelehnt',
     blanko_um:'📄 Blanko-Umstellung abgelehnt', blanko_pl:'💎 Blanko-Planung abgelehnt', folgevo:'🔄 Folge-VO abgelehnt',
-    rezeptbestellung:'📦 Rezeptbestellung abgelehnt' };
+    rezeptbestellung:'📦 Rezeptbestellung abgelehnt', nachruecker:'⚡ Nachrücken abgelehnt' };
   const all = ablehnungen().slice().sort((x,y)=>y.ts-x.ts);
   let h = `<div class="tz-grp">🚫 Ablehnungen zur Prüfung (${all.length})</div>`;
   if(!all.length){
@@ -5110,9 +5182,12 @@ function buildTagesplan(a, rez){
     // ── Punkt 2 (Call 17.09.): Weiterplan-Status für Patienten mit V/L-Aufgabe ──
     if(p.tasks.some(t=>t.cat==='ft'||t.cat==='fvo')){
       const isWp = tpst && tpst.st==='wp', isNwp = tpst && tpst.st==='nwp';
+      // Punkt A3 (Call 21.09.): Folge-VO-Ablehnung auch direkt im Tagesplan dokumentieren
+      const fvoTask = p.tasks.find(t=>t.cat==='fvo');
       h += `<div class="tp-status">
         <button class="tps-btn wp${isWp?' a':''}" onclick="setTpStatus('${day}','${jsq(p.key)}',${isWp?'null':"'wp'"},'${jsq(p.name)}')">✅ weiter geplant</button>
         <button class="tps-btn nwp${isNwp?' a':''}" onclick="setTpStatus('${day}','${jsq(p.key)}',${isNwp?'null':"'nwp'"},'${jsq(p.name)}')">🚫 nicht weiter geplant</button>
+        ${fvoTask&&!taskDone(fvoTask.id)?`<button class="tps-btn nwp" title="Folge-VO abgelehnt (Pflicht-Begründung, landet im Ablehnungs-Review)" onclick="rejectFvoFromTagesplan('${jsq(p.key)}','${jsq(p.name)}','${jsq(fvoTask.id)}')">🔄🚫 VO abgelehnt</button>`:''}
         ${isNwp&&tpst.reason?`<span class="tps-reason">📝 ${esc(tpst.reason)}${tpst.by?' · '+esc(tpst.by):''}</span>`:''}
       </div>`;
     }

@@ -242,7 +242,10 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--dark);min
 .nr-mini{display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--card);border-radius:10px;margin-bottom:4px;border:1px solid var(--border);flex-wrap:wrap}
 .nr-mini-log{flex-basis:100%;display:flex;gap:6px;align-items:center;margin-top:4px} /* Punkt A2 (Call 21.09.) */
 /* Punkt 2 (Call 23.09.): Patienten-Notiz in Aktionslisten */
-.pat-notiz{flex-basis:100%;display:flex;gap:6px;align-items:center;margin-top:5px;font-size:11px}
+.pat-notiz{flex-basis:100%;display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:5px;font-size:11px}
+.ph-btn{flex-shrink:0;font-size:10px;font-weight:700;padding:3px 8px;border:1px solid var(--amber);border-radius:8px;background:var(--amber-bg);color:var(--amber);cursor:pointer;font-family:inherit}
+.ph-box{flex-basis:100%;font-size:11px;line-height:1.5;padding:8px 10px;border:1px solid var(--amber);border-radius:8px;background:var(--amber-bg);color:var(--dark);white-space:pre-wrap;word-break:break-word}
+.zz-badge{flex-shrink:0;font-size:10px;font-weight:800;padding:3px 8px;border-radius:8px;background:var(--fire);color:#fff;white-space:nowrap}
 .pn-inp{flex:1;min-width:0;font-size:10px;padding:4px 8px;border:1px solid var(--border);border-radius:8px;background:var(--card);color:var(--dark);font-family:inherit}
 .pn-inp:focus{outline:none;border-color:var(--primary)}
 .pn-meta{font-size:9px;color:var(--muted);white-space:nowrap;flex-shrink:0}
@@ -769,6 +772,7 @@ let verlaufPerson = '';           // Punkt 4 (Call 23.09.): Mitarbeiter-Filter i
 let currentOffeneFilter = 'w4';
 let currentFvoFilter = 'offen';
 let currentPotFilter = 'alle';
+let potTab = 'kand';   // Reiter in „Potenzial Dauer": 'kand' = Kandidaten ohne Maske D, 'dnf' = Dauerpatienten ohne Zukunftstermin
 let cki_offene2MonatFilter = localStorage.getItem("cki_offene2MonatFilter") !== "false";  // Punkt 7 (Call 15.09.): 1-Monats-Filter an/aus
 // ── Controlling: Zeitraum-Selektor ──
 let ctrlMode = 'zeitraum';          // 'heute' | 'woche' | 'monat' | 'zeitraum'
@@ -1082,8 +1086,13 @@ function parseCSV(text){
   const rows = [];
   lines.forEach(line=>{
     if(!line.trim())return;
-    // THEORG-CSV: Werte mit ; getrennt, ohne Quoting
-    const fields = line.split(';');
+    // THEORG-CSV: Werte mit ; getrennt. Altes Format 140: ohne Quoting.
+    // Neues Format (156/179 Spalten, ab 09/2026): JEDES Feld in "…" —
+    // umschließende Anführungszeichen entfernen (Semikolons kommen in den
+    // Feldern nicht vor, daher bleibt der einfache Split korrekt).
+    const fields = line.split(';').map(f=>
+      f.length>=2 && f.charCodeAt(0)===34 && f.charCodeAt(f.length-1)===34 ? f.slice(1,-1) : f
+    );
     rows.push(fields);
   });
   return rows;
@@ -1136,28 +1145,35 @@ function parseData(rows, sheetName){
   
   // Spalten-Indexe — sowohl für Format 141 (Excel) als auch 140 (CSV)
   // KEY: "azFlag" (Spalte 2 in 140, Spalte 4 in 141) = Auswertung als Arbeitszeit
+  // Neues Format (SatztypFormat, Satztyp "156", 179 Spalten, ab 09/2026):
+  // Indizes gegen die echte Kopfzeile des Exports 26801_20260928 verifiziert.
+  // wahrgenommen: PT-Spalte (20) ist im neuen Export IMMER leer, gefüllt ist RT (29).
   const COL = isV141 ? {
     bezeichnung:3, azFlag:4,
     datum:5, uhrzeit:6, dauer:7, belegt:8, belArt:9,
-    ptKuerzel:15, ptLangtext:16, ptWahrgenommen:20,
+    ptKuerzel:15, ptLangtext:16, ptWahrgenommen:29,
     terminIdent:32, dtr:33, maNach:35, maVor:36,
     pNach:41, pVor:42, pGeb:43, pTel1:48, pTel2:49, pMobil:50, pMail:51,
-    artVerord:85, hausbesuch:86, indikation:90,
+    hinweis:52, wiedervorlage:53,
+    artVerord:86, hausbesuch:87, indikation:91,
     rezNrKomplett:81, rezDatum:84, icd:92, diagnose:93, menge1:95, leistung1:96, freq1:97,
-    kasse:122, rezWert:131, zuzahlung:132,
-    bearbStatus:131, quittungNr:135, rechnungNr:136, abrechnungsdatum:137,
-    artzNach:161
+    kasse:122, befreit:126, rezWert:133, zuzahlung:134, anzahlung:135,
+    bearbStatus:132, quittungNr:136, rechnungNr:137, abrechnungsdatum:138,
+    artzNach:161, lizenz:166, team:167,
+    atAusgefallen:171, atAbsage:172, atAbsagedatum:175
   } : {
     bezeichnung:1, azFlag:2,
     datum:3, uhrzeit:4, dauer:5, belegt:6, belArt:7,
     ptKuerzel:11, ptLangtext:12, ptWahrgenommen:19,
     terminIdent:20, dtr:21, maNach:23, maVor:24,
     pNach:29, pVor:30, pGeb:31, pTel1:36, pTel2:37, pMobil:38, pMail:39,
+    hinweis:40, wiedervorlage:41,
     artVerord:73, hausbesuch:74, indikation:78,
     rezNrKomplett:69, rezDatum:71, icd:79, diagnose:80, menge1:82, leistung1:83, freq1:84,
-    kasse:110, rezWert:119, zuzahlung:120,
+    kasse:110, befreit:112, rezWert:119, zuzahlung:120, anzahlung:121,
     bearbStatus:118, quittungNr:122, rechnungNr:123, abrechnungsdatum:124,
-    artzNach:145
+    artzNach:145, lizenz:148
+    // atAusgefallen/atAbsage/atAbsagedatum/team: im alten Format nicht vorhanden → undefined → leer
   };
   
   // Lokales Datum-String "YYYY-MM-DD" (nicht via toISOString — sonst Zeitzonenbug!)
@@ -1230,6 +1246,15 @@ function parseData(rows, sheetName){
       rechnungNr: r[COL.rechnungNr]||'',
       abrechnungsdatum: r[COL.abrechnungsdatum] ? parseDate(r[COL.abrechnungsdatum]) : null,
       arzt: r[COL.artzNach]||'',
+      // Neue Felder (nur im neuen Export gefüllt; im alten Format teils vorhanden, teils leer)
+      patHinweis: (r[COL.hinweis]||'').toString().trim(),
+      wiedervorlage: (r[COL.wiedervorlage]||'').toString().trim(),
+      zuzahlung: r[COL.zuzahlung] ? (parseFloat(String(r[COL.zuzahlung]).replace(/\./g,'').replace(',','.'))||0) : null,
+      anzahlung: r[COL.anzahlung] ? (parseFloat(String(r[COL.anzahlung]).replace(/\./g,'').replace(',','.'))||0) : null,
+      befreit: r[COL.befreit]==='J',
+      atAusgefallen: r[COL.atAusgefallen]==='J',
+      atAbsage: (r[COL.atAbsage]||'').toString().trim(),
+      atAbsagedatum: r[COL.atAbsagedatum] ? parseDate(r[COL.atAbsagedatum]) : null,
       kasse: (r[COL.kasse]||'').toString().trim(),
       hausbesuch: (r[COL.hausbesuch]||'').toString().trim()==='1',
       indikation: (r[COL.indikation]||'').toString().trim(),
@@ -1248,7 +1273,40 @@ function parseData(rows, sheetName){
   const dauerPats = new Set();
   cells.forEach(c=>{ if(c.dauertermin && c.patKey) dauerPats.add(c.patKey); });
 
-  DATA = {cells, dates, therapists, dauerPats};
+  // ── THEORG-Patientenhinweise (neuer Export: "Anzuzeigender Hinweis" + Wiedervorlage) ──
+  // patKey → {hinweis, wv} — erster nicht-leerer Wert je Patient gewinnt.
+  const patHinweise = {};
+  cells.forEach(c=>{
+    if(!c.patKey || (!c.patHinweis && !c.wiedervorlage)) return;
+    const e = patHinweise[c.patKey] = patHinweise[c.patKey] || {hinweis:'', wv:''};
+    if(!e.hinweis && c.patHinweis) e.hinweis = c.patHinweis;
+    if(!e.wv && c.wiedervorlage) e.wv = c.wiedervorlage;
+  });
+
+  // ── Offene Zuzahlung je Patient (neuer Export) ──
+  // Je Rezept: Zuzahlung (Soll) vs. Anzahlung (bereits gezahlt); befreit=J → nichts fällig.
+  // offen = Zuzahlung − Anzahlung, summiert über alle Rezepte des Patienten.
+  const hatZuzahlungsdaten = cells.some(c=>c.zuzahlung!==null);
+  const zzRez = {};
+  cells.forEach(c=>{
+    if(!c.patKey || !c.rezeptNr || c.zuzahlung===null) return;
+    const k = c.patKey+'|'+c.rezeptNr;
+    const e = zzRez[k] = zzRez[k] || {patKey:c.patKey, rezeptNr:c.rezeptNr, zz:0, anz:0, befreit:false};
+    if(c.zuzahlung>e.zz) e.zz = c.zuzahlung;
+    if(c.anzahlung!==null && c.anzahlung>e.anz) e.anz = c.anzahlung;
+    if(c.befreit) e.befreit = true;
+  });
+  const zzOffen = {};
+  Object.values(zzRez).forEach(e=>{
+    if(e.befreit || e.zz<=0) return;
+    const offen = Math.round((e.zz - e.anz)*100)/100;
+    if(offen<=0.005) return;
+    const p = zzOffen[e.patKey] = zzOffen[e.patKey] || {betrag:0, rezepte:[]};
+    p.betrag = Math.round((p.betrag+offen)*100)/100;
+    p.rezepte.push({rezeptNr:e.rezeptNr, offen:offen, soll:e.zz});
+  });
+
+  DATA = {cells, dates, therapists, dauerPats, patHinweise, zzOffen, hatZuzahlungsdaten};
   
   // Heute lokal (nicht UTC!)
   const today = localDateStr(new Date());
@@ -3669,6 +3727,42 @@ function leitfadenBox(key, titel, platzhalter){
 // VIEW: POTENTIAL-DAUER
 // ═══════════════════════════════════════════════════════════
 function setPotFilter(f){ currentPotFilter=f; renderPotential(); }
+function setPotTab(t){ potTab=t; renderPotential(); }
+// ── Reiter „Dauerpatienten ohne Termin": Patienten MIT Maske D, die ab heute
+//    keinen gebuchten Termin mehr haben (Dauerplan faktisch ausgelaufen).
+//    „ab heute" = kein Termin an einem Tag nach heute; ein Termin heute zählt
+//    nicht als Zukunft (dann steht der Patient heute zum letzten Mal im Plan).
+function dauerOhneZukunft(){
+  const heute = new Date(); heute.setHours(23,59,59,999);
+  const hT = heute.getTime();
+  let maxAll=null, potStich=null;
+  DATA.cells.forEach(c=>{
+    if(!c.start) return;
+    if(!maxAll || c.start>maxAll) maxAll=c.start;
+    if(c.belegt && (!potStich||c.start>potStich)) potStich=c.start;
+  });
+  const hatZukunft = !!(maxAll && maxAll.getTime() > hT);   // Export enthält überhaupt Zukunftstermine?
+  const DREI_WOCHEN=21*86400000;
+  const stT=(potStich||new Date()).getTime();
+  const list=[]; let inaktiv=0;
+  collectPatienten().forEach(p=>{
+    if(!p.istDauer) return;                                  // nur Maske D
+    if(p.lastPlan && p.lastPlan.getTime() > hT) return;      // hat noch Zukunftstermin → alles gut
+    // Aktiv-Filter wie bei den Kandidaten: letzter wahrgenommener Termin ≤ 3 Wochen vor Stichtag
+    if(!(p.lastBelegt && (stT - p.lastBelegt.getTime()) <= DREI_WOCHEN)){ inaktiv++; return; }
+    list.push(p);
+  });
+  // Wer am längsten ohne Termin ist, steht oben
+  list.sort((a,b)=>(a.lastPlan?a.lastPlan.getTime():0)-(b.lastPlan?b.lastPlan.getTime():0) || a.name.localeCompare(b.name));
+  return { list, inaktiv, hatZukunft };
+}
+function potTabBar(nKand, nDnf){
+  const btn=(t,lbl)=>`<button class="nr-filter${potTab===t?' a':''}" style="font-weight:800" onclick="setPotTab('${t}')">${lbl}</button>`;
+  return `<div class="nr-filters" style="margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid var(--border)">
+    ${btn('kand', '🎯 Kandidaten ohne Maske D ('+nKand+')')}
+    ${btn('dnf', '⚠️ Dauerpatienten ohne Termin ('+nDnf+')')}
+  </div>`;
+}
 function renderPotential(){
   // Patienten mit Dauer-geeigneter Behandlungsart/Diagnose, die NOCH KEINE Maske D haben.
   // Logik: geeignete Behandlungsart + noch keine D-Maske = Potenzial Dauer.
@@ -3699,6 +3793,10 @@ function renderPotential(){
   kandidaten.forEach(p=>p.dauerCats.forEach(c=>catCount[c]=(catCount[c]||0)+1));
   const CATS = ['LHB','BVB','Blanko','Privat','MLD 45','MLD 60','KG ZNS','Hausbesuch'];
 
+  // Reiter „Dauerpatienten ohne Termin" (Maske D, kein Zukunftstermin ab heute)
+  const dnf = dauerOhneZukunft();
+  if(potTab==='dnf'){ renderDauerOhneTermin(dnf, kandidaten.length); return; }
+
   let h = `<div class="summary">
     <h2>🎯 Potenzial Dauer · Kandidaten für einen Dauerplan</h2>
     <div class="sg">
@@ -3708,6 +3806,8 @@ function renderPotential(){
       <div class="si"><div class="si-l">📋 LHB/BVB</div><div class="si-v">${(catCount['LHB']||0)+(catCount['BVB']||0)}</div><div class="si-s">langfr. Versorgungsbedarf</div></div>
     </div>
   </div>`;
+
+  h += potTabBar(kandidaten.length, dnf.list.length);
 
   h += `<div style="background:var(--primary-bg,#eef2ff);border:1px solid var(--primary);border-radius:12px;padding:12px 14px;margin-bottom:14px;font-size:11px;color:var(--dark)">
     <b style="color:var(--primary);font-family:Montserrat;font-weight:800">ℹ️ Logik:</b>
@@ -3759,6 +3859,56 @@ function filterPotSearch(){
   document.querySelectorAll('#potList .ac').forEach(el=>{
     el.style.display = (el.getAttribute('data-name')||'').includes(q) ? '' : 'none';
   });
+}
+
+// Reiter 2 in „Potenzial Dauer": Dauerpatienten (Maske D) OHNE gebuchten Termin ab heute.
+// Das sind Bestandspatienten, deren Dauerplan faktisch ausgelaufen ist → anrufen & neu einplanen.
+function renderDauerOhneTermin(dnf, nKand){
+  const heuteStr = new Date().toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'numeric'});
+  let h = `<div class="summary">
+    <h2>⚠️ Dauerpatienten ohne Termin · Dauerplan ausgelaufen?</h2>
+    <div class="sg">
+      <div class="si"><div class="si-l">Ohne Zukunftstermin</div><div class="si-v">${dnf.list.length}</div><div class="si-s">Maske D, kein Termin nach heute</div></div>
+      <div class="si"><div class="si-l">Stichtag</div><div class="si-v" style="font-size:16px">${heuteStr}</div><div class="si-s">heute</div></div>
+      <div class="si"><div class="si-l">Länger raus</div><div class="si-v">${dnf.inaktiv}</div><div class="si-s">&gt; 3 Wochen ohne Termin, ausgeblendet</div></div>
+    </div>
+  </div>`;
+  h += potTabBar(nKand, dnf.list.length);
+  if(!dnf.hatZukunft){
+    h += `<div style="background:var(--amber-bg);border:1px solid var(--amber);border-radius:12px;padding:14px;font-size:12px;color:var(--dark)">
+      <b style="color:var(--amber);font-family:Montserrat;font-weight:800">⚠️ Export enthält keine Zukunftstermine</b><br>
+      Dieser Reiter braucht die geplanten Termine, sonst sieht jeder Dauerpatient so aus, als hätte er keinen Folgetermin.
+      Bitte in Theorg mit Enddatum in der Zukunft exportieren (z. B. bis 31.12.) und die Datei neu laden.</div>`;
+    document.getElementById('content').innerHTML = h; return;
+  }
+  h += `<div style="background:var(--primary-bg,#eef2ff);border:1px solid var(--primary);border-radius:12px;padding:12px 14px;margin-bottom:14px;font-size:11px;color:var(--dark)">
+    <b style="color:var(--primary);font-family:Montserrat;font-weight:800">ℹ️ Logik:</b>
+    Angezeigt werden Patienten <b>mit Maske D</b> (Dauerplan), die <b>ab heute keinen gebuchten Termin</b> mehr haben — ein Termin heute zählt dabei nicht als Zukunft. Bei ihnen ist der Dauerplan faktisch ausgelaufen: anrufen und die nächsten Termine fest einplanen.
+    <br><b style="color:var(--primary)">Aktiv-Filter:</b> Es zählen nur Patienten, deren letzter wahrgenommener Termin höchstens <b>3 Wochen</b> zurückliegt (${dnf.inaktiv} ausgeblendet). Sortiert: wer am längsten ohne Termin ist, steht oben.</div>`;
+  h += leitfadenBox('potential', 'Dauerplan verlängern', 'z.B.: „Frau/Herr … , Ihr Dauerplan ist ausgelaufen – ich würde gerne direkt die nächsten Termine mit Ihnen festmachen …"');
+  if(!dnf.list.length){
+    h += `<div class="empty" style="background:var(--teal-bg);border:1px solid var(--teal);color:var(--teal)"><b>🎉 Alle aktiven Dauerpatienten haben gebuchte Zukunftstermine</b></div>`;
+    document.getElementById('content').innerHTML = h; return;
+  }
+  h += `<div class="search-wrap"><input type="text" id="potSearch" placeholder="🔍 Patient suchen..." oninput="filterPotSearch()"></div>`;
+  h += `<div class="ausl-card" style="padding:8px" id="potList">`;
+  dnf.list.forEach(p=>{
+    const age = p.geb ? Math.floor((Date.now()-new Date(p.geb).getTime())/(365.25*86400000)) : null;
+    const tel = p.mobil ? `<a class="pr-tel" href="tel:${p.mobil.replace(/[^+\d]/g,'')}">📞 ${p.mobil}</a>` : '';
+    const lt = p.lastPlan ? p.lastPlan.toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'numeric'}) : '—';
+    const tage = p.lastPlan ? Math.max(0, Math.floor((Date.now()-p.lastPlan.getTime())/86400000)) : null;
+    h += `<div class="ac" style="border-left-color:var(--amber);cursor:pointer;flex-wrap:wrap" data-name="${esc(p.name).toLowerCase()}" data-lf-sel="${esc(p.name)}" onclick="selectLeitfadenPatient('${jsq(p.name)}','${jsq(p.mobil||'')}','${jsq(p.therapist||'')}','')">
+      <span style="font-size:16px">⚠️</span>
+      <div class="ac-b">
+        <div class="ac-t">${esc(p.name)}${age?' · '+age+'J':''}</div>
+        <div class="ac-s">letzter Termin: <b>${lt}</b>${tage!==null?(tage===0?' · heute':' · vor '+tage+' Tag'+(tage!==1?'en':'')):''}${p.therapist?' · '+esc(p.therapist):''}${p.kasse?' · '+esc(p.kasse):''}</div>
+      </div>
+      ${tel}
+      ${patNotizField(p.patKey, p.name)}
+    </div>`;
+  });
+  h += `</div>`;
+  document.getElementById('content').innerHTML = h;
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -4466,7 +4616,41 @@ function patNotizField(patKey, name){
   if(!patKey) return '';
   const e = patNotizGet(patKey);
   const meta = e && e.ts ? `<span class="pn-meta">${esc(e.by||'?')} · ${new Date(e.ts).toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit'})}</span>` : '';
-  return `<span class="pat-notiz" onclick="event.stopPropagation()">📝<input class="pn-inp" type="text" placeholder="Notiz …" value="${esc(e?e.txt:'')}" onchange="patNotizSet('${jsq(patKey)}',this.value)" title="Notiz zu ${esc(name||'')} — überall sichtbar, wo der Patient auftaucht">${meta}</span>`;
+  return `<span class="pat-notiz" onclick="event.stopPropagation()">📝<input class="pn-inp" type="text" placeholder="Notiz …" value="${esc(e?e.txt:'')}" onchange="patNotizSet('${jsq(patKey)}',this.value)" title="Notiz zu ${esc(name||'')} — überall sichtbar, wo der Patient auftaucht">${meta}${patHinweisBtn(patKey)}</span>`;
+}
+
+// ── THEORG-Patientenhinweis: 📌-Button überall, wo der Patient auftaucht ──
+// Erscheint nur, wenn der Export einen "Anzuzeigenden Hinweis" oder eine
+// Wiedervorlage-Info für den Patienten enthält. Klick klappt den Text auf.
+let phCtr = 0;
+function patHinweisBtn(patKey){
+  const e = DATA && DATA.patHinweise ? DATA.patHinweise[patKey] : null;
+  if(!e || (!e.hinweis && !e.wv)) return '';
+  const id = 'ph_'+(++phCtr);
+  let box = '';
+  if(e.hinweis) box += `<div><b>📌 Hinweis (THEORG):</b> ${esc(e.hinweis)}</div>`;
+  if(e.wv)      box += `<div><b>🔔 Wiedervorlage:</b> ${esc(e.wv)}</div>`;
+  return `<button class="ph-btn" onclick="event.stopPropagation();togglePatHinweis('${id}')" title="THEORG-Patientenhinweis anzeigen">📌 Hinweis</button>`+
+         `<span class="ph-box" id="${id}" style="display:none">${box}</span>`;
+}
+function togglePatHinweis(id){
+  const el = document.getElementById(id);
+  if(el) el.style.display = (el.style.display==='none' ? 'block' : 'none');
+}
+
+// ── Offene Zuzahlung eines Patienten (aus dem neuen Export) ──
+function zzOffenFor(patKey){
+  return (DATA && DATA.zzOffen && DATA.zzOffen[patKey]) || null;
+}
+function euroFmt(x){ return (Math.round(x*100)/100).toLocaleString('de-DE',{minimumFractionDigits:2,maximumFractionDigits:2})+' €'; }
+// Lokales Kassiert-Häkchen (bis der nächste Export die Anzahlung nachzieht)
+function zzKassiert(patKey){ return !!lsGet('cki_zz_kassiert', {})[patKey]; }
+function toggleZzKassiert(patKey){
+  const all = lsGet('cki_zz_kassiert', {});
+  if(all[patKey]) delete all[patKey];
+  else all[patKey] = { ts: Date.now(), by: getMe()||'' };
+  lsSet('cki_zz_kassiert', all);
+  renderAufgaben();
 }
 const RB_STATUS=[['offen','offen'],['angefragt','beim Arzt angefragt'],['eingetroffen','eingetroffen'],['erledigt','erledigt ✓'],['abgelehnt','abgelehnt ✕']];
 const US_STATUS=[['offen','offen'],['angerufen','angerufen'],['erreicht','erreicht'],['nichterreicht','nicht erreicht']];
@@ -5171,11 +5355,44 @@ function tageszielHeuteStats(a){
 // Tagesziel kompakt im blauen Kopf: 3 Zahlen nebeneinander (💶 Zuzahlung · LV weitergeplant · DP Dauerplan),
 // darunter die drei Schichten (Vormittag/Mittag/Nachmittag), jeweils wieder in die drei Zahlen unterteilt.
 // A2 (Call 18.09.): statt Emojis die Kürzel LV (letzte/vorletzte → weitergeplant) und DP (Dauerplan); € bleibt.
+// 💶 Zuzahlung heute: Patienten mit Termin am gewählten Tag und offener Zuzahlung
+// (Soll − Anzahlung > 0, nicht befreit). Kassiert-Häkchen lokal, bis der nächste
+// Export die Anzahlung nachzieht. Nur mit neuem Export-Format verfügbar.
+function zuzahlungHeute(){
+  if(!DATA || !DATA.hatZuzahlungsdaten) return null;
+  const day = currentDate;
+  const pats = {};
+  DATA.cells.forEach(c=>{
+    if(c.dateStr!==day || c.belArt!=='R' || !c.patNach || !c.termIdent || !c.belegt) return;
+    const k = c.patKey; if(!k) return;
+    const zz = zzOffenFor(k); if(!zz) return;
+    let p = pats[k];
+    if(!p) p = pats[k] = { key:k, name:(c.patVor+' '+c.patNach).trim(), start:c.start, therapist:c.therapist||'', betrag:zz.betrag, nRez:zz.rezepte.length };
+    if(c.start<p.start) p.start = c.start;
+  });
+  const list = Object.values(pats).sort((a,b)=>a.start-b.start || a.name.localeCompare(b.name));
+  return { list, offen: list.filter(p=>!zzKassiert(p.key)) };
+}
 function tageszielUebersichtHTML(a){
   const s = tageszielHeuteStats(a);
   const cnt = o => o.done+'/'+o.tot;
+  // 💶-Zelle: echt mit neuem Export, sonst Platzhalter
+  const zh = zuzahlungHeute();
+  let zzCell, zzBlk = null;
+  if(!zh){
+    zzCell = `<div class="tzh-cell"><div class="tzh-num">–</div><div class="tzh-lbl">💶 Zuzahlung</div><div class="tzh-sub">im alten Export nicht enthalten</div></div>`;
+  } else {
+    const done = zh.list.filter(p=>zzKassiert(p.key)).length;
+    const sumOffen = zh.offen.reduce((s,p)=>s+p.betrag,0);
+    zzCell = `<div class="tzh-cell"><div class="tzh-num">${done}/${zh.list.length}</div><div class="tzh-lbl">💶 Zuzahlung kassiert</div>${sumOffen>0?`<div class="tzh-sub">${euroFmt(sumOffen)} heute noch offen</div>`:''}</div>`;
+    zzBlk = {vm:[0,0], mi:[0,0], nm:[0,0]};
+    zh.list.forEach(p=>{
+      const bk = timeBlockOfHour(p.start.getHours()+p.start.getMinutes()/60);
+      zzBlk[bk][1]++; if(zzKassiert(p.key)) zzBlk[bk][0]++;
+    });
+  }
   let h = `<div class="tzh">
-    <div class="tzh-cell"><div class="tzh-num">–</div><div class="tzh-lbl">💶 Zuzahlung</div><div class="tzh-sub">wartet auf Export (Luis)</div></div>
+    ${zzCell}
     <div class="tzh-cell"><div class="tzh-num">${cnt(s.vl)}</div><div class="tzh-lbl"><span class="tzh-kzl">LV</span> weitergeplant</div>${s.vl.abgelehnt?`<div class="tzh-sub">${s.vl.abgelehnt}× nicht (begründet)</div>`:''}</div>
     <div class="tzh-cell"><div class="tzh-num">${cnt(s.dp)}</div><div class="tzh-lbl"><span class="tzh-kzl">DP</span> Dauerplan angesprochen</div>${s.dp.abgelehnt?`<div class="tzh-sub">${s.dp.abgelehnt}× nicht (begründet)</div>`:''}</div>
   </div>`;
@@ -5192,9 +5409,30 @@ function tageszielUebersichtHTML(a){
     const werTxt = wer.length ? ' · <b>'+wer.map(esc).join(', ')+'</b>'
       : ' · <span style="color:rgba(255,255,255,.55)">niemand zugewiesen</span>';
     return `<div class="tzh-blk"><span class="tzh-blk-l">${b.ico} ${b.ttl} <span style="font-weight:400">${b.von}–${b.bis}</span></span>`+
-      `<span>💶 – · <span class="tzh-kzl">LV</span> <b>${v[0]}/${v[1]}</b> · <span class="tzh-kzl">DP</span> <b>${d[0]}/${d[1]}</b>${werTxt}</span></div>`;
+      `<span>💶 ${zzBlk?`<b>${zzBlk[b.key][0]}/${zzBlk[b.key][1]}</b>`:'–'} · <span class="tzh-kzl">LV</span> <b>${v[0]}/${v[1]}</b> · <span class="tzh-kzl">DP</span> <b>${d[0]}/${d[1]}</b>${werTxt}</span></div>`;
   }).join('');
   if(rows) h += `<div style="margin-bottom:6px">${rows}</div>`;
+  // 💶-Liste: wer kommt heute und hat noch nicht bezahlt?
+  if(zh && zh.list.length){
+    h += `<div class="ausl-card" style="padding:10px;margin-bottom:10px">
+      <div style="font-family:Montserrat;font-weight:800;font-size:12px;margin-bottom:6px">💶 Zuzahlung heute fällig · ${zh.offen.length} von ${zh.list.length} offen</div>`;
+    zh.list.forEach(p=>{
+      const k = zzKassiert(p.key);
+      h += `<div class="ac" style="border-left-color:${k?'var(--teal)':'var(--fire)'};flex-wrap:wrap${k?';opacity:.55':''}">
+        <span style="font-size:14px">${k?'✅':'💶'}</span>
+        <div class="ac-b">
+          <div class="ac-t">${hhmm(p.start)} · ${esc(p.name)}</div>
+          <div class="ac-s">${p.nRez} Rezept${p.nRez!==1?'e':''}${p.therapist?' · '+esc(p.therapist):''}</div>
+        </div>
+        <span class="zz-badge">${euroFmt(p.betrag)}</span>
+        <button class="tps-btn${k?' a':''}" onclick="toggleZzKassiert('${jsq(p.key)}')">${k?'kassiert ✓':'kassiert?'}</button>
+        ${patNotizField(p.key, p.name)}
+      </div>`;
+    });
+    h += `</div>`;
+  } else if(zh){
+    h += `<div style="font-size:11px;color:rgba(255,255,255,.7);margin-bottom:8px">💶 Heute keine offenen Zuzahlungen bei Patienten mit Termin.</div>`;
+  }
   return h;
 }
 
@@ -5274,7 +5512,7 @@ function buildTagesplan(a, rez){
     h += `<div class="tp-card${tpst?(tpst.st==='wp'?' tps-wp':' tps-nwp'):''}">
       <div class="tp-time">${hhmm(p.start)}</div>
       <div class="tp-main">
-        <div class="tp-pat">${esc(p.name)}${p.therapist?`<span class="tp-th"> · ${esc(p.therapist)}</span>`:''}</div>
+        <div class="tp-pat">${esc(p.name)}${p.therapist?`<span class="tp-th"> · ${esc(p.therapist)}</span>`:''}${(()=>{const z=zzOffenFor(p.key);return z&&!zzKassiert(p.key)?` <span class="zz-badge" title="Offene Zuzahlung — heute kassieren">💶 ${euroFmt(z.betrag)} offen</span>`:'';})()}</div>
         ${leist?`<div class="tp-leist">${esc(leist)}</div>`:''}
         <div class="tp-tasks">`;
     const pTdef = timeBlockOfHour(p.start.getHours()+p.start.getMinutes()/60);

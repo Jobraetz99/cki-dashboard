@@ -1081,19 +1081,40 @@ function handleFile(file){
 }
 
 // Simpler CSV-Parser für THEORG-Format (Trennzeichen ;, keine Quotes nötig in dem Format)
+// Eine CSV-Zeile quote-bewusst splitten (Okt 2026):
+// THEORG quotet Felder, die Semikolons enthalten (z. B. Diagnose „Koxarthrose; Gonarthrose"),
+// AUCH im alten 140er-Format. Der frühere blinde split(';') hat solche Zeilen um 1–3 Spalten
+// verschoben → Rezeptwert rutschte in die Zuzahlungs-Spalte. Regeln: '"' zählt nur am
+// Feldanfang als Quote; '""' im gequoteten Feld = ein '"'.
+function splitCsvLine(line){
+  const out=[]; const n=line.length; let i=0;
+  for(;;){
+    if(i<n && line.charCodeAt(i)===34){           // gequotetes Feld
+      let v=''; i++;
+      while(i<n){
+        if(line.charCodeAt(i)===34){
+          if(i+1<n && line.charCodeAt(i+1)===34){ v+='"'; i+=2; }
+          else { i++; break; }
+        } else { v+=line[i++]; }
+      }
+      out.push(v);
+      while(i<n && line.charCodeAt(i)!==59) i++;  // bis zum nächsten ;
+    } else {                                      // ungequotetes Feld
+      const j=line.indexOf(';',i);
+      if(j===-1){ out.push(line.slice(i)); return out; }
+      out.push(line.slice(i,j)); i=j;
+    }
+    if(i>=n) return out;
+    i++;                                          // das ; überspringen
+    if(i===n){ out.push(''); return out; }
+  }
+}
 function parseCSV(text){
   const lines = text.split(/\r?\n/);
   const rows = [];
   lines.forEach(line=>{
     if(!line.trim())return;
-    // THEORG-CSV: Werte mit ; getrennt. Altes Format 140: ohne Quoting.
-    // Neues Format (156/179 Spalten, ab 09/2026): JEDES Feld in "…" —
-    // umschließende Anführungszeichen entfernen (Semikolons kommen in den
-    // Feldern nicht vor, daher bleibt der einfache Split korrekt).
-    const fields = line.split(';').map(f=>
-      f.length>=2 && f.charCodeAt(0)===34 && f.charCodeAt(f.length-1)===34 ? f.slice(1,-1) : f
-    );
-    rows.push(fields);
+    rows.push(splitCsvLine(line));
   });
   return rows;
 }
@@ -1507,7 +1528,7 @@ function renderMainTabs(){
   h += `<button class="m-tab${currentView==='rezepte'?' a':''}" onclick="switchView('rezepte')">📋 Rezepte</button>`;
   h += `<button class="m-tab${currentView==='offene'?' a':''}" onclick="switchView('offene')">💰 Offene Rezepte</button>`;
   h += `<button class="m-tab${currentView==='potential'?' a':''}" onclick="switchView('potential')">🎯 Potential-Dauer</button>`;
-  h += `<button class="m-tab${currentView==='folgevo'?' a':''}" onclick="switchView('folgevo')">🔄 Folge-VO</button>`;
+  h += `<button class="m-tab${currentView==='folgevo'?' a':''}" onclick="switchView('folgevo')">🔄 Passive Patienten</button>`;
   h += `<button class="m-tab${currentView==='verlauf'?' a':''}" onclick="switchView('verlauf')">📈 Verlauf</button>`;
   h += `<button class="m-tab${currentView==='controlling'?' a':''}" onclick="switchView('controlling')">📊 Controlling</button>`;
   // Punkt 19: 🔔-Schalter für Browser-Benachrichtigungen
@@ -2007,6 +2028,16 @@ function analyzeRezepteFull(cellsForDay, allCells, opts){
   // Score-Logik
   const cats = {bvb:[], blanko:[], blankopot:[], bvbpot:[], untertaktet:[], nr:[], all:[]};
 
+  // Patienten mit AKTIVER Blanko-VO (VO-Datum < 112 Tage / 16 Wochen her).
+  // Hintergrund (Okt 2026): Bei Terminvereinbarung wird oft ein Pro-forma-Rezept angelegt;
+  // kommt der Patient dann mit einer echten Blanko-VO und das Proforma bleibt stehen,
+  // würde das Proforma fälschlich "Auf Blanko-VO umstellen" auslösen.
+  const aktiveBlankoPats = new Set();
+  Object.values(rezeptMap).forEach(p=>{
+    if(isBlankoHM(p.heilmittel) && p.rezDatum && (refT - p.rezDatum.getTime()) < 112*86400000)
+      aktiveBlankoPats.add(p.patKey||patKeyFor(p));
+  });
+
   let dauerAusgeblendet = 0;
   Object.values(rezeptMap).forEach(p=>{
     // Maske D: Patienten mit Dauerplan aus der Planungs-Ansicht ausblenden
@@ -2062,10 +2093,11 @@ function analyzeRezepteFull(cellsForDay, allCells, opts){
       score += 2;
     }
     
-    // 💊 BLANKO = "Auf Blanko umstellen!" 
+    // 💊 BLANKO = "Auf Blanko umstellen!"
     //   → Schulter-Patienten mit normalem Rezept (noch kein BV)
     //   → Aktion: Beim Arzt Umstellung auf Blanko anstoßen
-    if(isShoulder(p.icd) && !isBlankoHM(p.heilmittel)){
+    //   NICHT wenn der Patient bereits eine aktive Blanko-VO hat (Proforma-Fall, Okt 2026)
+    if(isShoulder(p.icd) && !isBlankoHM(p.heilmittel) && !aktiveBlankoPats.has(p.patKey||patKeyFor(p))){
       isBlanko = true;
       tags.blanko = true;
       // (Push in cats.blanko passiert unten zentral – vorher doppelt = Dopplungen in der Liste)
@@ -3143,8 +3175,10 @@ function ctrlKapazitaetChart(data){
     const dev = refMax>0 ? (v-refMax)/refMax*100 : 0;   // Abweichung von der maximalen Kapazität in %
     const adev = Math.abs(dev);
     const diffH = Math.round((v-refMax)*CONFIG.slotMin/60);              // Defizit zur Max-Kapazität in Stunden
-    const col = adev<=gT ? 'var(--teal)' : adev<=gE ? 'var(--amber)' : 'var(--accent)';
-    const ampel = adev<=gT ? `beobachten (bis ${gT}%)` : adev<=gE ? `handeln (${gT}–${gE}%)` : `🚨 Notstand (über ${gE}%)`;
+    // Ampel (Okt 2026, Wunsch Chaled): Rot NUR unterhalb des 87%-Ziels.
+    // Über der Ziellinie ist die KW „richtig" → grün nahe Max (bis gT%), sonst gelb.
+    const col = adev<=gT ? 'var(--teal)' : v>=target ? 'var(--amber)' : 'var(--accent)';
+    const ampel = adev<=gT ? `beobachten (bis ${gT}% unter Max)` : v>=target ? `über ${TARGET_PCT}%-Ziel · handeln` : `🚨 unter ${TARGET_PCT}%-Ziel`;
     const richtung = diffH<0 ? `⏱️ es fehlen ${-diffH} h zur Max-Kapazität` : 'volle Kapazität erreicht';
     const zielPct = refMax>0 ? Math.round(v/refMax*100) : 0;                       // Auslastung der Max-Kapazität in %
     const fehlZielH = v<target ? Math.round((target-v)*CONFIG.slotMin/60) : 0;     // fehlende Stunden zum 87%-Ziel
@@ -3206,8 +3240,8 @@ function ctrlKapazitaetChart(data){
   }
   const legend = `<div style="margin-bottom:6px;font-size:11px;color:var(--dark);display:flex;gap:14px;flex-wrap:wrap;align-items:center">
       <span style="display:inline-flex;align-items:center;gap:5px">${dot('var(--teal)')}bis ${gT}% unter Max → beobachten</span>
-      <span style="display:inline-flex;align-items:center;gap:5px">${dot('var(--amber)')}${gT}–${gE}% → handeln</span>
-      <span style="display:inline-flex;align-items:center;gap:5px">${dot('var(--accent)')}über ${gE}% → Notstand</span>
+      <span style="display:inline-flex;align-items:center;gap:5px">${dot('var(--amber)')}über ${TARGET_PCT}%-Ziel → handeln</span>
+      <span style="display:inline-flex;align-items:center;gap:5px">${dot('var(--accent)')}unter ${TARGET_PCT}%-Ziel → Notstand</span>
       <span style="display:inline-flex;align-items:center;gap:5px;font-weight:800;color:var(--accent)">Σ Defizit zur Max-Kapazität: ${defSumH} h</span>
       <span style="display:inline-flex;align-items:center;gap:5px;font-weight:800;color:var(--primary)">🎯 ${wksUnterZiel>0 ? wksUnterZiel+' KW unter '+TARGET_PCT+'%-Ziel · es fehlen '+zielFehlSumH+' h' : 'alle KW über dem '+TARGET_PCT+'%-Ziel'}</span>
       ${selInfo || '<span style="color:var(--muted)">💡 Balken anklicken für die genauen Zahlen (inkl. fehlender Stunden zum 87%-Ziel)</span>'}
@@ -3340,14 +3374,18 @@ function renderControlling(){
     const rec = abwByTh[c.therapist] = abwByTh[c.therapist] || {urlaub:new Set(),fortbildung:new Set(),krank:new Set()};
     rec[k].add(c.dateStr);
   });
-  const abwRows = Object.entries(abwByTh).map(([name,r])=>{
+  // Okt 2026 (Wunsch Chaled): IMMER alle Mitarbeiter zeigen, die im Zeitraum im
+  // Terminplan stehen (Arbeitszeit AZ=J) – auch ohne einen einzigen Fehltag.
+  const alleMA = new Set([...Object.keys(abwByTh), ...Object.keys(workByTh2)]);
+  const abwRows = [...alleMA].map(name=>{
+    const r = abwByTh[name] || {urlaub:new Set(),fortbildung:new Set(),krank:new Set()};
     const u=r.urlaub.size, f=r.fortbildung.size, k=r.krank.size;
     // Gearbeitete Tage = Tage mit Arbeitszeit, die kein reiner Abwesenheitstag sind
     // (Tag mit Arbeitszeit UND Abwesenheit zählt als gearbeitet – Teil-Abwesenheit)
     const abwDays = new Set([...r.urlaub, ...r.fortbildung, ...r.krank]);
     let gearb = 0; (workByTh2[name]||new Set()).forEach(d=>{ if(!abwDays.has(d)) gearb++; });
     return {name, urlaub:u, fortbildung:f, krank:k, total:u+f+k, gearb};
-  }).filter(r=>r.total>0).sort((a,b)=>b.total-a.total);
+  }).sort((a,b)=> b.total-a.total || a.name.localeCompare(b.name));
   abwRows.forEach(r=>{ catTotal.urlaub+=r.urlaub; catTotal.fortbildung+=r.fortbildung; catTotal.krank+=r.krank; });
   const abwTotal = catTotal.urlaub + catTotal.fortbildung + catTotal.krank;
   // Gearbeitete Tage über ALLE Mitarbeiter mit Arbeitszeit im Zeitraum (auch ohne Abwesenheit)
@@ -3361,13 +3399,13 @@ function renderControlling(){
 
   const hPerDay = CONFIG.tagesSollStd;                 // Stunden je Abwesenheitstag
   const toH = tage => (tage*hPerDay).toFixed(0);       // Tage → Stunden
-  const abwInfo = `<b>Abwesenheiten & gearbeitete Tage pro Mitarbeiter</b><br>Gezählt werden Tage mit einer Abwesenheits-Bezeichnung in THEORG, aufgeschlüsselt nach <b>Urlaub</b>, <b>Fortbildung</b> und <b>Krank</b>. Der Balken zeigt je Mitarbeiter die Zusammensetzung.<br><b>💼 Gearbeitet</b> = Tage mit erfasster Arbeitszeit (AZ=J), die kein reiner Abwesenheitstag sind. Tage mit Arbeitszeit <u>und</u> Abwesenheit (Teil-Abwesenheit) zählen als gearbeitet.<br><b>Fehlquote</b> = Fehltage ÷ (Fehltage + gearbeitete Tage).<br>⚠️ Stunden = Tage × ${hPerDay} h — <b>pauschale ${hPerDay}h-Annahme</b> für alle Mitarbeiter. Die tatsächlichen Stunden je Tag sind individuell verschieden; exakt wird das erst mit Mitarbeiterstammdaten aus dem Export.`;
+  const abwInfo = `<b>Abwesenheiten & gearbeitete Tage pro Mitarbeiter</b><br>Gezählt werden Tage mit einer Abwesenheits-Bezeichnung in THEORG, aufgeschlüsselt nach <b>Urlaub</b>, <b>Fortbildung</b> und <b>Krank</b>. Der Balken zeigt je Mitarbeiter die Zusammensetzung. Gezeigt werden <b>alle</b> Mitarbeiter, die im Zeitraum im Terminplan stehen – auch ohne Fehltage.<br><b>💼 Gearbeitet</b> = Tage mit erfasster Arbeitszeit (AZ=J), die kein reiner Abwesenheitstag sind. Tage mit Arbeitszeit <u>und</u> Abwesenheit (Teil-Abwesenheit) zählen als gearbeitet.<br><b>Fehlquote</b> = Fehltage ÷ (Fehltage + gearbeitete Tage).<br>⚠️ Stunden = Tage × ${hPerDay} h — <b>pauschale ${hPerDay}h-Annahme</b> für alle Mitarbeiter. Die tatsächlichen Stunden je Tag sind individuell verschieden; exakt wird das erst mit Mitarbeiterstammdaten aus dem Export.`;
   h += `<div class="st">🏖️ Abwesenheiten & gearbeitete Tage <span class="sub">Urlaub · Fortbildung · Krank · 💼 Gearbeitet · Stunden = ${hPerDay}h-Annahme</span> ${infoI(abwInfo)}</div>`;
   h += `<div class="sg" style="margin-bottom:14px">
     <div class="si"><div class="si-l">🏖️ Urlaub</div><div class="si-v">${catTotal.urlaub} T</div><div class="si-s">${toH(catTotal.urlaub)} h gesamt*</div></div>
     <div class="si"><div class="si-l">🎓 Fortbildung</div><div class="si-v">${catTotal.fortbildung} T</div><div class="si-s">${toH(catTotal.fortbildung)} h gesamt*</div></div>
     <div class="si"><div class="si-l">🤒 Krank</div><div class="si-v">${catTotal.krank} T</div><div class="si-s">${toH(catTotal.krank)} h gesamt*</div></div>
-    <div class="si"><div class="si-l">Fehltage gesamt</div><div class="si-v">${abwTotal} T</div><div class="si-s">${toH(abwTotal)} h* · ${abwRows.length} MA</div></div>
+    <div class="si"><div class="si-l">Fehltage gesamt</div><div class="si-v">${abwTotal} T</div><div class="si-s">${toH(abwTotal)} h* · ${abwRows.filter(r=>r.total>0).length} von ${abwRows.length} MA</div></div>
     <div class="si"><div class="si-l">💼 Gearbeitet</div><div class="si-v">${workTotal} T</div><div class="si-s">${toH(workTotal)} h* · ${workMA} MA · Quote ${(workTotal+abwTotal)>0?Math.round(abwTotal/(workTotal+abwTotal)*100):0}% Fehl</div></div>
   </div>
   <div style="font-size:11px;color:var(--muted);margin:-8px 0 14px">*Stunden = Tage × ${hPerDay} h (pauschale Annahme, individuelle Arbeitszeiten folgen mit Stammdaten)</div>`;
@@ -3395,24 +3433,25 @@ function renderControlling(){
     });
     h += `</div>`;
   } else {
-    h += `<div class="empty" style="margin-bottom:16px">Keine Abwesenheiten im gewählten Zeitraum.</div>`;
+    h += `<div class="empty" style="margin-bottom:16px">Keine Arbeitszeit- oder Abwesenheitsdaten im gewählten Zeitraum.</div>`;
   }
 
   // ═══ KW-Kapazität vs. maximale Kapazität ═══
   const kd = ctrlKapazitaetData();
-  // Ampel-Zählung nach Abweichung von der Max-Kapazität (grün/gelb/rot)
+  // Ampel-Zählung (Okt 2026): Rot NUR unter dem 87%-Ziel; über Ziel = gelb; nahe Max = grün
   let ampGruen=0, ampGelb=0, ampRot=0;
+  const kdTarget = kd.refMax*0.87;
   kd.cap.forEach(v=>{ const ad = kd.refMax>0?Math.abs((v-kd.refMax)/kd.refMax*100):0;
-    if(ad<=CONFIG.ampelGruen) ampGruen++; else if(ad<=CONFIG.ampelGelb) ampGelb++; else ampRot++; });
-  const kapInfo = `<b>Verfügbare Kapazität pro KW</b><br>Je KW = alle bezahlten Arbeitszeit-Slots (AZ=J) aller Mitarbeiter, umgerechnet in Termine à ${CONFIG.slotMin} min bzw. Stunden.<br><b>Referenz = maximale Kapazität</b>: die höchste KW-Kapazität über <u>alle</u> Wochen im Export (angeschnittene Rand-KW ausgeklammert) — sie bleibt auch bei gefiltertem Zeitraum stabil.<br><b>Anzeige</b> folgt dem Zeitraum-Selektor oben: es werden nur die Kalenderwochen des gewählten Zeitraums gezeigt.<br><b>Ampel</b> nach Abweichung von der Max-Kapazität: bis ${CONFIG.ampelGruen}% beobachten (grün), ${CONFIG.ampelGruen}–${CONFIG.ampelGelb}% handeln (gelb), über ${CONFIG.ampelGelb}% Notstand (rot).<br><b>🎯 87%-Ziel</b> (lila Linie): Ziel-Auslastung = 87 % der Max-Kapazität. Klick auf einen Balken zeigt, wie viele <u>Stunden</u> zur Ziellinie fehlen.`;
+    if(ad<=CONFIG.ampelGruen) ampGruen++; else if(v>=kdTarget) ampGelb++; else ampRot++; });
+  const kapInfo = `<b>Verfügbare Kapazität pro KW</b><br>Je KW = alle bezahlten Arbeitszeit-Slots (AZ=J) aller Mitarbeiter, umgerechnet in Termine à ${CONFIG.slotMin} min bzw. Stunden.<br><b>Referenz = maximale Kapazität</b>: die höchste KW-Kapazität über <u>alle</u> Wochen im Export (angeschnittene Rand-KW ausgeklammert) — sie bleibt auch bei gefiltertem Zeitraum stabil.<br><b>Anzeige</b> folgt dem Zeitraum-Selektor oben: es werden nur die Kalenderwochen des gewählten Zeitraums gezeigt.<br><b>Ampel</b>: bis ${CONFIG.ampelGruen}% unter Max beobachten (grün); über dem 87%-Ziel, aber weiter unter Max → handeln (gelb); <u>unter dem 87%-Ziel</u> → Notstand (rot). Rot gibt es also nur, wenn das Ziel verfehlt wird.<br><b>🎯 87%-Ziel</b> (lila Linie): Ziel-Auslastung = 87 % der Max-Kapazität. Klick auf einen Balken zeigt, wie viele <u>Stunden</u> zur Ziellinie fehlen.`;
   const kdUnterZiel = kd.cap.filter(v=> v < kd.refMax*0.87).length;
   h += `<div class="st">🗓️ Verfügbare Kapazität pro KW <span class="sub">in Stunden · Ampel vs. Max-Kapazität · 🎯 87%-Ziel</span> ${infoI(kapInfo)}</div>`;
   h += `<div class="sg" style="margin-bottom:12px">
     <div class="si"><div class="si-l">Max. Kapazität</div><div class="si-v">${kd.refMaxH} h</div><div class="si-s">pro Woche</div></div>
     <div class="si"><div class="si-l">🎯 Ziel 87 %</div><div class="si-v">${Math.round(kd.refMaxH*0.87)} h</div><div class="si-s">${kdUnterZiel>0 ? kdUnterZiel+' KW unter Ziel' : 'alle KW im Ziel'}</div></div>
     <div class="si"><div class="si-l">🟢 beobachten</div><div class="si-v">${ampGruen}</div><div class="si-s">bis ${CONFIG.ampelGruen}% unter Max</div></div>
-    <div class="si"><div class="si-l">🟡 handeln</div><div class="si-v">${ampGelb}</div><div class="si-s">${CONFIG.ampelGruen}–${CONFIG.ampelGelb}% unter Max</div></div>
-    <div class="si"><div class="si-l">🔴 Notstand</div><div class="si-v">${ampRot}</div><div class="si-s">über ${CONFIG.ampelGelb}% unter Max</div></div>
+    <div class="si"><div class="si-l">🟡 handeln</div><div class="si-v">${ampGelb}</div><div class="si-s">über 87%-Ziel, unter Max</div></div>
+    <div class="si"><div class="si-l">🔴 Notstand</div><div class="si-v">${ampRot}</div><div class="si-s">unter 87%-Ziel</div></div>
   </div>`;
   h += `<div class="ausl-card" style="margin-bottom:16px">${ctrlKapazitaetChart(kd)}</div>`;
 
@@ -3555,12 +3594,17 @@ function patDauerKategorien(p){
   if(hm.some(x=>/MLD\s*-?\s*45/i.test(x))) cats.add('MLD 45');
   if(hm.some(x=>/KG\s*ZNS/i.test(x))) cats.add('KG ZNS');
   if(hm.some(x=>isBlankoHM(x))) cats.add('Blanko');
-  [...p.icds].forEach(icd=>{
-    const b = findBVB(icd);
-    if(b) cats.add(b.t==='LVB' ? 'LHB' : 'BVB');
-    if(findBVBAge70(icd, p.geb)) cats.add('BVB');
-  });
+  // BVB/LVB bewusst KEIN Dauerplan-Kriterium mehr (Wunsch Chaled, Okt 2026):
+  // langfristiger Versorgungsbedarf heißt nicht automatisch Dauerplan-Kandidat.
   return [...cats];
+}
+
+// THEORG-Hinweis "Kein Dauerplan" → Patient aus Potential-Dauer ausschließen (Okt 2026).
+// Prüft Hinweis + Wiedervorlage aus dem Export, tolerant bei Schreibweise (kein/keinen Dauerplan).
+function dauerplanPerHinweisAbgelehnt(patKey){
+  const e = DATA && DATA.patHinweise ? DATA.patHinweise[patKey] : null;
+  if(!e) return false;
+  return /kein\w*\s+dauerplan/i.test((e.hinweis||'')+' '+(e.wv||''));
 }
 
 // Quartals-Helfer (fortlaufende Quartalsnummer, für Folge-VO-Logik)
@@ -3683,7 +3727,7 @@ function fallbackCopy(text){
 
 // ── Punkt 9 (Call 17.09.): Ansprache direkt im Tagesplan ──
 // Öffnet den jeweiligen Telefonleitfaden als Fenster, fertig ausgefüllt mit Patient/Therapeut/Uhrzeit.
-const LF_TITEL = { potential:'Dauerplan anbieten', folgevo:'Folge-VO ansprechen', rezepte:'Folgetermin vereinbaren', offene:'Zuzahlung / erste Behandlung', luecken:'Lücke füllen' };
+const LF_TITEL = { potential:'Dauerplan anbieten', folgevo:'Folge-VO ansprechen', rezepte:'Rezept zu Ende planen', offene:'Zuzahlung / erste Behandlung', luecken:'Lücke füllen' };
 let lfModalText = '';
 function showAnsprache(key, patName, therapist, time){
   const saveSel = leitfadenSel;
@@ -3774,8 +3818,10 @@ function renderPotential(){
   const DREI_WOCHEN=21*86400000;
   const kandidaten = [];
   let inaktivRaus = 0;
+  let hinweisRaus = 0;
   collectPatienten().forEach(p=>{
     if(p.istDauer) return;              // hat schon einen Dauerplan → kein Potenzial mehr
+    if(dauerplanPerHinweisAbgelehnt(p.patKey)){ hinweisRaus++; return; }  // THEORG-Hinweis "Kein Dauerplan"
     const cats = patDauerKategorien(p);
     if(!cats.length) return;
     // Punkt 9 (Call 15.09.): nur aktive Patienten – letzter Termin ≤ 3 Wochen her ODER Zukunftstermin gebucht
@@ -3791,7 +3837,7 @@ function renderPotential(){
 
   const catCount = {};
   kandidaten.forEach(p=>p.dauerCats.forEach(c=>catCount[c]=(catCount[c]||0)+1));
-  const CATS = ['LHB','BVB','Blanko','Privat','MLD 45','MLD 60','KG ZNS','Hausbesuch'];
+  const CATS = ['Blanko','Privat','MLD 45','MLD 60','KG ZNS','Hausbesuch'];
 
   // Reiter „Dauerpatienten ohne Termin" (Maske D, kein Zukunftstermin ab heute)
   const dnf = dauerOhneZukunft();
@@ -3803,7 +3849,7 @@ function renderPotential(){
       <div class="si"><div class="si-l">Kandidaten</div><div class="si-v">${kandidaten.length}</div><div class="si-s">geeignet, noch keine Maske D</div></div>
       <div class="si"><div class="si-l">🧠 KG ZNS</div><div class="si-v">${catCount['KG ZNS']||0}</div><div class="si-s">neurolog. Dauerpotenzial</div></div>
       <div class="si"><div class="si-l">💧 MLD 45/60</div><div class="si-v">${(catCount['MLD 45']||0)+(catCount['MLD 60']||0)}</div><div class="si-s">Lymphdrainage-Dauer</div></div>
-      <div class="si"><div class="si-l">📋 LHB/BVB</div><div class="si-v">${(catCount['LHB']||0)+(catCount['BVB']||0)}</div><div class="si-s">langfr. Versorgungsbedarf</div></div>
+      <div class="si"><div class="si-l">💠 Blanko</div><div class="si-v">${catCount['Blanko']||0}</div><div class="si-s">Blanko-Verordnung</div></div>
     </div>
   </div>`;
 
@@ -3811,8 +3857,9 @@ function renderPotential(){
 
   h += `<div style="background:var(--primary-bg,#eef2ff);border:1px solid var(--primary);border-radius:12px;padding:12px 14px;margin-bottom:14px;font-size:11px;color:var(--dark)">
     <b style="color:var(--primary);font-family:Montserrat;font-weight:800">ℹ️ Logik:</b>
-    Angezeigt werden Patienten mit einer für einen Dauerplan geeigneten Behandlungsart oder Diagnose (LHB, BVB, Blanko, Privat, MLD 45/60, KG ZNS, Hausbesuch), die <b>noch keine Maske D</b> besitzen. Sobald ein Patient die Maske D erhält, verschwindet er automatisch aus dieser Liste.
+    Angezeigt werden Patienten mit einer für einen Dauerplan geeigneten Behandlungsart (Blanko, Privat, MLD 45/60, KG ZNS, Hausbesuch), die <b>noch keine Maske D</b> besitzen. Sobald ein Patient die Maske D erhält, verschwindet er automatisch aus dieser Liste. BVB/LVB allein zählt <b>nicht</b> als Dauerplan-Kriterium.
     <br><b style="color:var(--primary)">Aktiv-Filter:</b> Es zählen nur Patienten, die <b>in den letzten 3 Wochen</b> einen Termin hatten oder einen gebuchten Zukunftstermin haben – wer länger raus ist, ist meist nicht mehr in Behandlung (${inaktivRaus} ausgeblendet).
+    <br><b style="color:var(--primary)">Hinweis-Ausschluss:</b> Steht im THEORG-Patientenhinweis „Kein Dauerplan", wird der Patient hier nicht angezeigt${hinweisRaus?` (${hinweisRaus} ausgeblendet)`:''}.
     <br><b>Tipp:</b> Patient anklicken → Name wird unten in den Telefonleitfaden eingesetzt.</div>`;
 
   h += leitfadenBox('potential', 'Dauerplan anbieten', 'z.B.: „Frau/Herr … , da Sie regelmäßig zu uns kommen, können wir einen Dauerplan einrichten – dann sind Ihre Termine langfristig gesichert …"');
@@ -4025,6 +4072,7 @@ function handlungsstatus(f){
 }
 
 function renderFolgeVO(){
+  if(currentFvoFilter==='voll') currentFvoFilter='offen';   // "Ausgeschöpft" ausgeblendet (Okt 2026)
   const {stichtag, faelle, hatZukunftsdaten} = computeVerordnungsfaelle();
   const fmtDE = d => d ? d.toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'numeric'}) : '–';
   const fmtShort = d => d ? d.toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit'}) : '–';
@@ -4045,12 +4093,11 @@ function renderFolgeVO(){
   bvbFaelle.sort((a,b)=> (b.lastRez-a.lastRez));
 
   let h = `<div class="summary">
-    <h2>🎯 Folge-VO · Handlungssteps je Verordnungsfall</h2>
+    <h2>🎯 Passive Patienten · Folge-VO-Handlungssteps je Verordnungsfall</h2>
     <div class="sg">
       <div class="si"><div class="si-l">Offene Verordnungsfälle</div><div class="si-v">${bewertbar.length}</div><div class="si-s">mit Katalog-Zuordnung</div></div>
       <div class="si"><div class="si-l">🎫 Potential offen</div><div class="si-v">${folgevo.length}</div><div class="si-s">orient. Menge nicht erreicht</div></div>
       <div class="si"><div class="si-l">📇 Erst 1 VO</div><div class="si-v">${erst1.length}</div><div class="si-s">größtes ungenutztes Potential</div></div>
-      <div class="si"><div class="si-l">✅ Ausgeschöpft</div><div class="si-v">${fertig.length}</div><div class="si-s">nichts zu tun</div></div>
     </div>
   </div>`;
 
@@ -4071,7 +4118,6 @@ function renderFolgeVO(){
   [
     {f:'erst1', l:'📇 Erst 1 VO',        c:erst1.length},
     {f:'offen', l:'🎫 Potential offen',   c:folgevo.length},
-    {f:'voll',  l:'✅ Ausgeschöpft',       c:fertig.length},
     {f:'bvb',   l:'♾️ BVB / LVB',        c:bvbFaelle.length},
     {f:'ohne',  l:'❔ Ohne Diagnosegruppe',c:ohneKatalog.length}
   ].forEach(x=>{
@@ -4148,7 +4194,6 @@ function renderFolgeVO(){
   let liste, mode;
   if(currentFvoFilter==='bvb'){ liste=bvbFaelle; mode='bvb'; }
   else if(currentFvoFilter==='erst1'){ liste=erst1; mode='pot'; }
-  else if(currentFvoFilter==='voll'){ liste=fertig; mode='pot'; }
   else if(currentFvoFilter==='ohne'){ liste=ohneKatalog; mode='ohne'; }
   else { liste=folgevo; mode='pot'; }
 
@@ -4903,17 +4948,21 @@ function dpStatusSelect(patKey, name){
 
 // ── Punkt 6a (Call 15.09.): Blanko-Aufgaben mit eigenem Status statt einfachem Haken ──
 //   'um' = Auf Blanko-VO umstellen:  offen → in Bearbeitung → angepasst ✓ | abgelehnt ✓
-//   'pl' = Blanko-VO zu Ende planen: offen → in Bearbeitung → fertig ✓
+//   'pl' = Blanko-VO zu Ende planen: offen → in Bearbeitung → fertig ✓ | abgelehnt ✕
+//   (Okt 2026, Wunsch Chaled: 'pl' bekommt dieselben Optionen wie „Rezept ändern",
+//    inkl. Pflicht-Begründung bei Ablehnung)
 const BL_STATUS = {
   um: [['','offen'],['ib','in Bearbeitung'],['ang','angepasst ✓'],['abg','abgelehnt ✕']],
-  pl: [['','offen'],['ib','in Bearbeitung'],['fertig','fertig ✓']]
+  pl: [['','offen'],['ib','in Bearbeitung'],['fertig','fertig ✓'],['abg','abgelehnt ✕']]
 };
-const BL_DONE = { um:['ang','abg'], pl:['fertig'] };
+const BL_DONE = { um:['ang','abg'], pl:['fertig','abg'] };
 function getBlStatus(type,nr){ const v=lsGet('cki_blst_'+type+'_'+nr,''); return BL_STATUS[type].some(o=>o[0]===v)?v:''; }
 function setBlStatus(type,nr,v,name){
   // Punkt 4/5 (Call 17.09.): Ablehnung nie ohne Begründung
   if(v==='abg'){
-    const reason = pflichtBegruendung('Warum wurde die Rezeptänderung ABGELEHNT?');
+    const reason = pflichtBegruendung(type==='pl'
+      ? 'Warum wurde das Zu-Ende-Planen der Blanko-VO ABGELEHNT?'
+      : 'Warum wurde die Rezeptänderung ABGELEHNT?');
     if(reason===null){ // Abbruch → Auswahl zurücksetzen (Neu-Render stellt alten Wert wieder her)
       if(currentView==='rezepte'){ showRezeptDetail(currentRezeptCat); }
       else if(currentView==='verlauf'){ renderVerlauf(); }
@@ -5023,7 +5072,7 @@ let tzArea = lsGet('cki_tzarea','alle');                  // 'alle' | 'tg' | 'bo
 function setTzArea(a){ tzArea=(a==='tg'||a==='bo')?a:'alle'; lsSet('cki_tzarea',tzArea); renderAufgaben(); }
 // Voreinstellung je Kategorie (per Dropdown jederzeit änderbar)
 const TZ_AREA_DEFAULTS = { std_tg:'tg', std_bo:'bo', std_sp:'tg', std_fs:'tg', std_ss:'tg',
-  gapHeute:'tg', gapMorgen:'tg', abr:'bo', ft:'tg', fvo:'bo', dauer:'tg',
+  gapHeute:'tg', gapMorgen:'tg', abr:'bo', ft:'bo', fvo:'bo', dauer:'tg',
   blum:'bo', blpl:'bo', kap:'bo' };
 // Punkt 5 (Call 15.09.): Lücken-Kategorien sind IMMER Tagesgeschäft (nicht umstellbar)
 const TZ_AREA_LOCKED = { gapHeute:'tg', gapMorgen:'tg' };
@@ -5084,6 +5133,39 @@ function addTeamMember(){
   team.push({n:name}); saveTeam(team); renderAufgaben();
 }
 function removeTeamMember(name){ saveTeam(getTeam().filter(m=>m.n!==name)); renderAufgaben(); }
+// ── Okt 2026: Mitarbeiter-Geburtstage (nicht im Export → manuell am Team-Chip pflegen) ──
+function setTeamGeb(name){
+  const team=getTeam(); const m=team.find(x=>x.n===name); if(!m) return;
+  let v=prompt('🎂 Geburtstag von '+name+' im Format TT.MM. (leer lassen = entfernen):', m.geb||'');
+  if(v===null) return;
+  v=v.trim();
+  if(!v){ delete m.geb; }
+  else{
+    const mm=v.match(/^(\d{1,2})\.(\d{1,2})\.?$/);
+    if(!mm || +mm[1]<1 || +mm[1]>31 || +mm[2]<1 || +mm[2]>12){ alert('Bitte im Format TT.MM. eingeben, z. B. 24.06.'); return; }
+    m.geb=String(+mm[1]).padStart(2,'0')+'.'+String(+mm[2]).padStart(2,'0')+'.';
+  }
+  saveTeam(team); renderAufgaben();
+}
+// Geburtstage relativ zu dateStr: {heute:[Namen], demnaechst:[{n,geb,in}], gepflegt:N}
+function teamGeburtstage(dateStr, tageVoraus){
+  const out={heute:[], demnaechst:[], gepflegt:0};
+  const base=new Date(dateStr+'T12:00:00'); if(isNaN(base)) return out;
+  const msDay=86400000;
+  getTeam().forEach(m=>{
+    if(!m.geb) return;
+    const mm=String(m.geb).match(/^(\d{2})\.(\d{2})\./); if(!mm) return;
+    out.gepflegt++;
+    const d=+mm[1], mo=+mm[2];
+    let next=new Date(base.getFullYear(), mo-1, d, 12);
+    let diff=Math.round((next-base)/msDay);
+    if(diff<0){ next=new Date(base.getFullYear()+1, mo-1, d, 12); diff=Math.round((next-base)/msDay); }
+    if(diff===0) out.heute.push(m.n);
+    else if(diff<=(tageVoraus||14)) out.demnaechst.push({n:m.n, geb:m.geb, in:diff});
+  });
+  out.demnaechst.sort((a,b)=>a.in-b.in);
+  return out;
+}
 
 // ══════════════════════════════════════════════════════════════════════════════
 // UMBAU 1: ZUWEISUNG MATRIX (TG/BO · VM/MI/NM) ────────────────────────────────
@@ -5182,7 +5264,7 @@ function countUnassignedTasksByArea(sections, area){
 
   sections.forEach(s=>{
     // Standard-Aufgaben + Bereichs-spezifische Aufgaben
-    if(s.key.startsWith('std_'+area) || (area==='tg'&&(s.key==='gapHeute'||s.key==='gapMorgen'||s.key==='ft'||s.key==='fvo')) || (area==='bo'&&s.key==='abr')){
+    if(s.key.startsWith('std_'+area) || (area==='tg'&&(s.key==='gapHeute'||s.key==='gapMorgen'||s.key==='fvo')) || (area==='bo'&&(s.key==='abr'||s.key==='ft'))){
       s.items.forEach(it=>{
         // Zeitblock dieser Aufgabe ableiten
         const tdef = effectiveTime(it.id, s.key, it.tdef);
@@ -5304,6 +5386,7 @@ function dauerKandidatKeys(){
   try{
     collectPatienten().forEach(p=>{
       if(p.istDauer) return;
+      if(dauerplanPerHinweisAbgelehnt(p.patKey)) return;   // THEORG-Hinweis "Kein Dauerplan"
       const cats = patDauerKategorien(p);
       if(cats.length) map.set(p.patKey, cats);
     });
@@ -5355,6 +5438,25 @@ function tageszielHeuteStats(a){
 // Tagesziel kompakt im blauen Kopf: 3 Zahlen nebeneinander (💶 Zuzahlung · LV weitergeplant · DP Dauerplan),
 // darunter die drei Schichten (Vormittag/Mittag/Nachmittag), jeweils wieder in die drei Zahlen unterteilt.
 // A2 (Call 18.09.): statt Emojis die Kürzel LV (letzte/vorletzte → weitergeplant) und DP (Dauerplan); € bleibt.
+// 🏠 Hausbesuche des Tages: belegte Termine mit THEORG-Hausbesuch-Flag am gewählten Tag.
+// Dedupe je Patient+Uhrzeit, sortiert nach Startzeit. Für die Aufgabe "HB Akten kontrollieren".
+function hausbesucheHeute(){
+  if(!DATA) return [];
+  // Eine HB-Behandlung = mehrere 10-Minuten-Zellen → pro PATIENT zusammenfassen (früheste Startzeit).
+  const byPat = {};
+  DATA.cells.forEach(c=>{
+    if(c.dateStr!==currentDate || !c.belegt || !c.hausbesuch || !c.patName || c.excluded) return;
+    const k = c.patKey||c.patName;
+    if(!byPat[k] || c.start < byPat[k].start){
+      const hh = String(c.start.getHours()).padStart(2,'0'), mm = String(c.start.getMinutes()).padStart(2,'0');
+      byPat[k] = {name:c.patName, patKey:c.patKey, time:hh+':'+mm, therapist:c.therapist||'', start:c.start};
+    }
+  });
+  const out = Object.values(byPat);
+  out.sort((a,b)=>a.start-b.start);
+  return out;
+}
+
 // 💶 Zuzahlung heute: Patienten mit Termin am gewählten Tag und offener Zuzahlung
 // (Soll − Anzahlung > 0, nicht befreit). Kassiert-Häkchen lokal, bis der nächste
 // Export die Anzahlung nachzieht. Nur mit neuem Export-Format verfügbar.
@@ -5412,27 +5514,8 @@ function tageszielUebersichtHTML(a){
       `<span>💶 ${zzBlk?`<b>${zzBlk[b.key][0]}/${zzBlk[b.key][1]}</b>`:'–'} · <span class="tzh-kzl">LV</span> <b>${v[0]}/${v[1]}</b> · <span class="tzh-kzl">DP</span> <b>${d[0]}/${d[1]}</b>${werTxt}</span></div>`;
   }).join('');
   if(rows) h += `<div style="margin-bottom:6px">${rows}</div>`;
-  // 💶-Liste: wer kommt heute und hat noch nicht bezahlt?
-  if(zh && zh.list.length){
-    h += `<div class="ausl-card" style="padding:10px;margin-bottom:10px">
-      <div style="font-family:Montserrat;font-weight:800;font-size:12px;margin-bottom:6px">💶 Zuzahlung heute fällig · ${zh.offen.length} von ${zh.list.length} offen</div>`;
-    zh.list.forEach(p=>{
-      const k = zzKassiert(p.key);
-      h += `<div class="ac" style="border-left-color:${k?'var(--teal)':'var(--fire)'};flex-wrap:wrap${k?';opacity:.55':''}">
-        <span style="font-size:14px">${k?'✅':'💶'}</span>
-        <div class="ac-b">
-          <div class="ac-t">${hhmm(p.start)} · ${esc(p.name)}</div>
-          <div class="ac-s">${p.nRez} Rezept${p.nRez!==1?'e':''}${p.therapist?' · '+esc(p.therapist):''}</div>
-        </div>
-        <span class="zz-badge">${euroFmt(p.betrag)}</span>
-        <button class="tps-btn${k?' a':''}" onclick="toggleZzKassiert('${jsq(p.key)}')">${k?'kassiert ✓':'kassiert?'}</button>
-        ${patNotizField(p.key, p.name)}
-      </div>`;
-    });
-    h += `</div>`;
-  } else if(zh){
-    h += `<div style="font-size:11px;color:rgba(255,255,255,.7);margin-bottom:8px">💶 Heute keine offenen Zuzahlungen bei Patienten mit Termin.</div>`;
-  }
+  // Okt 2026 (Wunsch Chaled): Die 💶-Patientenliste steht jetzt unter
+  // Aufgaben → Tagesgeschäft → „Zuzahlungen kassieren" (nicht mehr hier im Kopf).
   return h;
 }
 
@@ -5450,9 +5533,9 @@ function buildTagesplan(a, rez){
   const push = (key, t)=>{ if(!key) return; (byKey[key]=byKey[key]||[]).push(t); };
   a.typA.forEach(r=>push(r.patKey, {id:'abr|'+r.rezeptNr, cat:'abr', ico:'💰', txt:'Rezept abrechnen',
     sub:`${r.erbracht}/${r.echteMenge} erbracht${r.heilmittel?' · '+esc(r.heilmittel):''}${voDat(r.rezDatum)}`}));
-  a.typB.forEach(r=>push(r.patKey, {id:'ft|'+r.rezeptNr, cat:'ft', ico:'📞', txt:'Folgetermin vereinbaren',
+  a.typB.forEach(r=>push(r.patKey, {id:'ft|'+r.rezeptNr, cat:'ft', ico:'📞', txt:'Rezept zu Ende planen',
     sub:`${r.erbracht}/${r.echteMenge} · Serie läuft${voDat(r.rezDatum)}`}));
-  a.folgeVO.forEach(r=>push(r.patKey, {id:'fvo|'+r.rezeptNr, cat:'fvo', ico:'🔄', txt:'Folge-VO anfordern',
+  a.folgeVO.forEach(r=>push(r.patKey, {id:'fvo|'+r.rezeptNr, cat:'fvo', ico:'🔄', txt:'Passive Patienten',
     sub:`Serie fertig · Arzt: ${r.arzt?esc(r.arzt):'?'}${voDat(r.rezDatum)}`}));
   const dauerKeys = dauerKandidatKeys();
 
@@ -5628,7 +5711,9 @@ function renderAssignmentMatrix(){
 function renderTeamBar(withMatrix){
   const team=getTeam();
   const date = currentDate;
-  const chips=team.map(m=>'<span class="tm-chip"><span class="tm-dot" style="background:'+teamColor(m.n)+'"></span>'+esc(m.n)+'<span class="tm-x" title="Entfernen" onclick="removeTeamMember(\''+jsq(m.n)+'\')">×</span></span>').join('');
+  const chips=team.map(m=>'<span class="tm-chip"><span class="tm-dot" style="background:'+teamColor(m.n)+'"></span>'+esc(m.n)+
+    '<span title="'+(m.geb?'Geburtstag: '+esc(m.geb)+' · klicken zum Ändern':'Geburtstag pflegen')+'" style="cursor:pointer;margin-left:4px;font-size:10px" onclick="setTeamGeb(\''+jsq(m.n)+'\')">🎂'+(m.geb?'<span style="font-weight:600">'+esc(m.geb)+'</span>':'')+'</span>'+
+    '<span class="tm-x" title="Entfernen" onclick="removeTeamMember(\''+jsq(m.n)+'\')">×</span></span>').join('');
   const meOpts=['<option value="">— ich bin …</option>'].concat(team.map(m=>'<option value="'+esc(m.n)+'"'+(getMe()===m.n?' selected':'')+'>'+esc(m.n)+'</option>')).join('');
   let h = `<div class="tm-bar">
     <span class="tm-label">👥 Team</span>
@@ -5705,8 +5790,9 @@ const TZ_TAGESGESCHAEFT = [
   {t:'Tagesberichte', s:''},
   {t:'Plan für Heute + Morgen füllen', s:''},
   {t:'Akten für den nächsten Tag raussuchen', s:''},
-  {t:'Grimz-fuq Box Kontrolle', s:''},
-  {t:'HB Akten aus dem Tagesgeschäft kontrollieren', s:''}
+  {t:'HB Akten aus dem Tagesgeschäft kontrollieren', s:''},
+  {t:'Zuzahlungen kassieren', s:''},
+  {t:'Geburtstage Mitarbeiter', s:''}
 ];
 const TZ_BACKOFFICE = [
   {t:'Backoffice', s:'täglich wiederkehrende Backoffice-Aufgaben bearbeiten'},
@@ -5781,13 +5867,13 @@ function buildAufgabenSections(a){
         main:esc(r.name),
         tdef: r.nextTermin ? timeBlockOfHour(r.nextTermin.getHours() + r.nextTermin.getMinutes()/60) : undefined,
         sub:`${r.erbracht}/${r.echteMenge} erbracht${r.heilmittel?' · '+esc(r.heilmittel):''}${voDat(r.rezDatum)}${r.tageSeitLetzterTermin!=null?' · seit '+r.tageSeitLetzterTermin+' Tagen':''}` })) },
-    { key:'ft', ico:'📞', color:'var(--primary)', ttl:'Folgetermin vereinbaren', go:"gotoOffene('ohne')",
+    { key:'ft', ico:'📞', color:'var(--primary)', ttl:'Rezept zu Ende planen', go:"gotoOffene('ohne')",
       items: a.typB.map(r=>({
         id:'ft|'+r.rezeptNr,
         main:esc(r.name),
         tdef: r.nextTermin ? timeBlockOfHour(r.nextTermin.getHours() + r.nextTermin.getMinutes()/60) : undefined,
         sub:`${r.erbracht}/${r.echteMenge}${voDat(r.rezDatum)} · ${r.mobil?esc(r.mobil):'keine Nummer'}` })) },
-    { key:'fvo', ico:'🔄', color:'var(--amber)', ttl:'Folge-VO anfordern', go:"gotoFolgeVO()",
+    { key:'fvo', ico:'🔄', color:'var(--amber)', ttl:'Passive Patienten', go:"gotoFolgeVO()",
       items: a.folgeVO.map(r=>({
         id:'fvo|'+r.rezeptNr,
         main:esc(r.name),
@@ -5817,13 +5903,67 @@ function buildAufgabenSections(a){
   const wdName = ['Sonntag','Montag','Dienstag','Mittwoch','Donnerstag','Freitag','Samstag'][wdNum];
   const spTasks = (TZ_SCHWERPUNKT[wdNum]||[]).map(t=>({t:t, s:'Schwerpunkt am '+wdName}));
   const mkStd = (pfx,arr)=>arr.map((x,i)=>({id:'std|'+currentDate+'|'+pfx+i, main:esc(x.t), sub:esc(x.s||''), hidden:x.hidden}));
+  // ── Hausbesuche des Tages unter "HB Akten … kontrollieren" anzeigen ──
+  const tgItems = mkStd('tg',TZ_TAGESGESCHAEFT);
+  const hbIt = tgItems.find(it=>it.main.indexOf('HB Akten')===0 || it.main.includes('HB Akten'));
+  if(hbIt){
+    const hb = hausbesucheHeute();
+    if(hb.length){
+      hbIt.sub = hb.length+' Hausbesuch'+(hb.length>1?'e':'')+' heute · Akten prüfen';
+      hbIt.notiz = `<div onclick="event.stopPropagation()" style="margin-top:6px;padding:8px 10px;background:var(--teal-bg);border-radius:8px;font-size:12px;line-height:1.7">`+
+        hb.map(x=>`🏠 <b>${x.time}</b> · ${esc(x.name)}${x.therapist?' · <span style="color:var(--muted)">'+esc(x.therapist)+'</span>':''}`).join('<br>')+
+        `</div>`;
+    } else {
+      hbIt.sub = 'heute keine Hausbesuche im Plan';
+    }
+  }
+  // ── Okt 2026 (Wunsch Chaled): Zuzahlungs-Liste gehört ins Tagesgeschäft ──
+  // (vorher stand sie im blauen Tagesziel-Kopf). Angezeigt wird die OFFENE ZUZAHLUNG
+  // je Patient (Soll − Anzahlung), nicht der Rezeptwert.
+  const zzIt = tgItems.find(it=>it.main.includes('Zuzahlungen kassieren'));
+  if(zzIt){
+    const zh = zuzahlungHeute();
+    if(!zh){
+      zzIt.sub = 'keine Zuzahlungsdaten im Export';
+    } else if(zh.list.length){
+      const done = zh.list.length - zh.offen.length;
+      const sumOffen = zh.offen.reduce((s,p)=>s+p.betrag,0);
+      zzIt.sub = done+'/'+zh.list.length+' kassiert'+(sumOffen>0?' · '+euroFmt(sumOffen)+' Zuzahlung heute noch offen':' · alles kassiert 🎉');
+      zzIt.notiz = `<div onclick="event.stopPropagation()" style="margin-top:6px;padding:8px 10px;background:var(--amber-bg);border-radius:8px;font-size:12px;line-height:2">`+
+        zh.list.map(p=>{
+          const k = zzKassiert(p.key);
+          return `${k?'✅':'💶'} <b>${hhmm(p.start)}</b> · ${k?'<span style="opacity:.55">'+esc(p.name)+'</span>':esc(p.name)} · `+
+            `<b style="color:${k?'var(--teal)':'var(--fire)'}">${euroFmt(p.betrag)}</b> <span style="color:var(--muted)">Zuzahlung offen · ${p.nRez} Rezept${p.nRez!==1?'e':''}</span> `+
+            `<button class="tps-btn${k?' a':''}" onclick="event.stopPropagation();toggleZzKassiert('${jsq(p.key)}')">${k?'kassiert ✓':'kassiert?'}</button>`;
+        }).join('<br>')+`</div>`;
+    } else {
+      zzIt.sub = 'heute keine offenen Zuzahlungen bei Patienten mit Termin';
+    }
+  }
+  // ── Okt 2026 (Wunsch Chaled): Mitarbeiter-Geburtstage im Tagesgeschäft ──
+  const gbIt = tgItems.find(it=>it.main.includes('Geburtstage Mitarbeiter'));
+  if(gbIt){
+    const gb = teamGeburtstage(currentDate, 14);
+    if(gb.gepflegt===0){
+      gbIt.sub = 'noch keine Geburtstage gepflegt · 🎂 am Namen in der Team-Leiste klicken';
+    } else if(gb.heute.length){
+      gbIt.sub = '🎉 HEUTE: '+gb.heute.join(', ')+' · gratulieren!';
+      gbIt.notiz = `<div onclick="event.stopPropagation()" style="margin-top:6px;padding:8px 10px;background:var(--teal-bg);border-radius:8px;font-size:12px;line-height:1.7">`+
+        gb.heute.map(n=>`🎂 <b>${esc(n)}</b> hat heute Geburtstag!`).join('<br>')+
+        (gb.demnaechst.length?'<br>'+gb.demnaechst.map(x=>`🗓️ ${esc(x.n)} in ${x.in} Tag${x.in===1?'':'en'} (${esc(x.geb)})`).join('<br>'):'')+`</div>`;
+    } else if(gb.demnaechst.length){
+      gbIt.sub = 'demnächst: '+gb.demnaechst.map(x=>x.n+' ('+x.geb+')').join(', ');
+    } else {
+      gbIt.sub = 'keine Geburtstage in den nächsten 14 Tagen';
+    }
+  }
   // Filter Backoffice-Items: "Rezepte taxieren" nur wenn aktiviert
   const boItems = mkStd('bo',TZ_BACKOFFICE).filter(it=>{
     if(it.main.includes('Rezepte taxieren')) return getRezepteTaxierenActive(currentDate);
     return true;
   });
   const stdSections = [
-    { key:'std_tg', ico:'📋', color:'var(--primary)', ttl:'Tagesgeschäft', defOpen:true, items:mkStd('tg',TZ_TAGESGESCHAEFT) },
+    { key:'std_tg', ico:'📋', color:'var(--primary)', ttl:'Tagesgeschäft', defOpen:true, items:tgItems },
     { key:'std_bo', ico:'🖥️', color:'#0891b2', ttl:'Backoffice', defOpen:true, items:boItems },
     { key:'std_sp', ico:'⭐', color:'var(--amber)', ttl:'Schwerpunkt '+wdName, defOpen:true, items:mkStd('sp',spTasks) },
     { key:'std_fs', ico:'🌅', color:'var(--accent)', ttl:'Frühschicht', defOpen:true, items:mkStd('fs',TZ_FRUEHSCHICHT) }
@@ -5851,11 +5991,11 @@ function renderAufgaben(){
     const who = effectiveAssignee(it.id, s.key, it.tdef);
     if(who){ const pa = persAgg[who] = persAgg[who]||{done:0,total:0}; pa.total++; if(isDone) pa.done++; }
     // Tagesgeschäft: std_tg, gaps, ft, fvo
-    if(s.key==='std_tg'||s.key==='gapHeute'||s.key==='gapMorgen'||s.key==='ft'||s.key==='fvo'){
+    if(s.key==='std_tg'||s.key==='gapHeute'||s.key==='gapMorgen'||s.key==='fvo'){
       tgTotal++; if(isDone) tgDone++;
     }
     // Backoffice: std_bo, abr, Blanko-Aufgaben, Kapazität
-    if(s.key==='std_bo'||s.key==='abr'||s.key==='blum'||s.key==='blpl'||s.key==='kap'){
+    if(s.key==='std_bo'||s.key==='abr'||s.key==='ft'||s.key==='blum'||s.key==='blpl'||s.key==='kap'){
       boTotal++; if(isDone) boDone++;
     }
   }));
@@ -6168,6 +6308,11 @@ let spLoadedFileInfo = null;                 // zuletzt geladene Datei {name, mo
 // Luis lädt täglich eine neue Datei mit hochgezählter Nummer hoch (Historie bleibt erhalten).
 function spSeqNum(name){ const m=String(name).match(/_(\d+)\.csv$/i); return m?parseInt(m[1],10):0; }
 
+// Format-Priorität (Okt 2026): neues THEORG-Exportformat „156" gewinnt IMMER gegen „140",
+// unabhängig von der laufenden Nummer (Export156bay_1 schlägt Export140Bay_14).
+// Erkennung über den Dateinamen: enthält „156" als eigenständige Zahl → Priorität 1.
+function spFmtPrio(name){ return /(?:^|[^0-9])156(?:[^0-9]|$)/.test(String(name)) ? 1 : 0; }
+
 // ── Lade-Overlay + Race-Guard ─────────────────────────────────────────────
 // Während ein SharePoint-Load läuft (30–60 s bei 200+ MB), zeigt das Dashboard
 // sonst kommentarlos den ALTEN Datenstand an → sichtbares Banner oben.
@@ -6340,7 +6485,8 @@ async function loadSpLocation(loc){
       const map = buildLicenseMap(csvs);
       newest = Object.values(map).sort((a,b)=>String(b._stamp).localeCompare(String(a._stamp)))[0];
     } else {
-      newest = csvs.slice().sort((a,b)=> spSeqNum(b.name)-spSeqNum(a.name)
+      newest = csvs.slice().sort((a,b)=> spFmtPrio(b.name)-spFmtPrio(a.name)
+        || spSeqNum(b.name)-spSeqNum(a.name)
         || String(b.lastModifiedDateTime||'').localeCompare(String(a.lastModifiedDateTime||'')))[0];
     }
     await loadSpFile(newest);

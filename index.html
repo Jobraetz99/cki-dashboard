@@ -4548,8 +4548,17 @@ function gotoLuecke(dateStr, therapist, startHHMM){
 }
 
 // ── Abhak-Status (localStorage) ──
-function taskDone(id){ return lsGet('cki_check_'+id, false); }
-function toggleTask(id){ lsSet('cki_check_'+id, !taskDone(id)); renderAufgaben(); }
+// Okt 2026: Zuzahlungs-Unteraufgaben (id 'zzk|<patKey>') laufen über den
+// kassiert-Status (cki_zz_kassiert) statt über ein eigenes Häkchen — damit
+// bleiben Checkbox, kassiert?-Button und die 💶-Zähler im Kopf synchron.
+function taskDone(id){
+  if(String(id).indexOf('zzk|')===0) return zzKassiert(String(id).slice(4));
+  return lsGet('cki_check_'+id, false);
+}
+function toggleTask(id){
+  if(String(id).indexOf('zzk|')===0){ toggleZzKassiert(String(id).slice(4)); return; }
+  lsSet('cki_check_'+id, !taskDone(id)); renderAufgaben();
+}
 
 // ── Punkt 1+2 (Call 17.09.): Weiterplan-Status pro Patient & Tag ──────────────
 //    'wp'  = weiter geplant ✓
@@ -5910,9 +5919,12 @@ function buildAufgabenSections(a){
     const hb = hausbesucheHeute();
     if(hb.length){
       hbIt.sub = hb.length+' Hausbesuch'+(hb.length>1?'e':'')+' heute · Akten prüfen';
-      hbIt.notiz = `<div onclick="event.stopPropagation()" style="margin-top:6px;padding:8px 10px;background:var(--teal-bg);border-radius:8px;font-size:12px;line-height:1.7">`+
-        hb.map(x=>`🏠 <b>${x.time}</b> · ${esc(x.name)}${x.therapist?' · <span style="color:var(--muted)">'+esc(x.therapist)+'</span>':''}`).join('<br>')+
-        `</div>`;
+      // Okt 2026 (Wunsch Chaled): jeder Hausbesuch als eigene abhakbare Unteraufgabe
+      const hbSubs = hb.map(x=>({
+        id:'hb|'+currentDate+'|'+x.patKey, indent:true,
+        main:'🏠 <b>'+x.time+'</b> · '+esc(x.name),
+        sub:(x.therapist?esc(x.therapist)+' · ':'')+'Akte geprüft?' }));
+      tgItems.splice(tgItems.indexOf(hbIt)+1, 0, ...hbSubs);
     } else {
       hbIt.sub = 'heute keine Hausbesuche im Plan';
     }
@@ -5929,13 +5941,14 @@ function buildAufgabenSections(a){
       const done = zh.list.length - zh.offen.length;
       const sumOffen = zh.offen.reduce((s,p)=>s+p.betrag,0);
       zzIt.sub = done+'/'+zh.list.length+' kassiert'+(sumOffen>0?' · '+euroFmt(sumOffen)+' Zuzahlung heute noch offen':' · alles kassiert 🎉');
-      zzIt.notiz = `<div onclick="event.stopPropagation()" style="margin-top:6px;padding:8px 10px;background:var(--amber-bg);border-radius:8px;font-size:12px;line-height:2">`+
-        zh.list.map(p=>{
-          const k = zzKassiert(p.key);
-          return `${k?'✅':'💶'} <b>${hhmm(p.start)}</b> · ${k?'<span style="opacity:.55">'+esc(p.name)+'</span>':esc(p.name)} · `+
-            `<b style="color:${k?'var(--teal)':'var(--fire)'}">${euroFmt(p.betrag)}</b> <span style="color:var(--muted)">Zuzahlung offen · ${p.nRez} Rezept${p.nRez!==1?'e':''}</span> `+
-            `<button class="tps-btn${k?' a':''}" onclick="event.stopPropagation();toggleZzKassiert('${jsq(p.key)}')">${k?'kassiert ✓':'kassiert?'}</button>`;
-        }).join('<br>')+`</div>`;
+      // Okt 2026 (Wunsch Chaled): jeder Patient als eigene Unteraufgabe.
+      // Checkbox = kassiert-Status (id-Präfix 'zzk|' → taskDone/toggleTask routen
+      // durch zzKassiert/toggleZzKassiert, bleibt synchron mit Kopf-Zähler 💶).
+      const zzSubs = zh.list.map(p=>({
+        id:'zzk|'+p.key, indent:true,
+        main:'💶 <b>'+hhmm(p.start)+'</b> · '+esc(p.name)+' · <b style="color:var(--fire)">'+euroFmt(p.betrag)+'</b> Zuzahlung offen',
+        sub:p.nRez+' Rezept'+(p.nRez!==1?'e':'')+(p.therapist?' · '+esc(p.therapist):'')+' · kassiert?' }));
+      tgItems.splice(tgItems.indexOf(zzIt)+1, 0, ...zzSubs);
     } else {
       zzIt.sub = 'heute keine offenen Zuzahlungen bei Patienten mit Termin';
     }
@@ -5947,10 +5960,14 @@ function buildAufgabenSections(a){
     if(gb.gepflegt===0){
       gbIt.sub = 'noch keine Geburtstage gepflegt · 🎂 am Namen in der Team-Leiste klicken';
     } else if(gb.heute.length){
-      gbIt.sub = '🎉 HEUTE: '+gb.heute.join(', ')+' · gratulieren!';
-      gbIt.notiz = `<div onclick="event.stopPropagation()" style="margin-top:6px;padding:8px 10px;background:var(--teal-bg);border-radius:8px;font-size:12px;line-height:1.7">`+
-        gb.heute.map(n=>`🎂 <b>${esc(n)}</b> hat heute Geburtstag!`).join('<br>')+
-        (gb.demnaechst.length?'<br>'+gb.demnaechst.map(x=>`🗓️ ${esc(x.n)} in ${x.in} Tag${x.in===1?'':'en'} (${esc(x.geb)})`).join('<br>'):'')+`</div>`;
+      gbIt.sub = '🎉 HEUTE: '+gb.heute.join(', ')+' · gratulieren!'+
+        (gb.demnaechst.length?' · demnächst: '+gb.demnaechst.map(x=>x.n+' ('+x.geb+')').join(', '):'');
+      // Okt 2026: jedes Geburtstagskind als eigene Unteraufgabe („gratuliert?")
+      const gbSubs = gb.heute.map(n=>({
+        id:'gbt|'+currentDate+'|'+n, indent:true,
+        main:'🎂 <b>'+esc(n)+'</b> hat heute Geburtstag!',
+        sub:'gratuliert?' }));
+      tgItems.splice(tgItems.indexOf(gbIt)+1, 0, ...gbSubs);
     } else if(gb.demnaechst.length){
       gbIt.sub = 'demnächst: '+gb.demnaechst.map(x=>x.n+' ('+x.geb+')').join(', ');
     } else {
@@ -6108,7 +6125,7 @@ function renderAufgaben(){
           <div class="task-list"${open?'':' style="display:none"'}>`;
         items.forEach(it=>{
           const d = taskDone(it.id);
-          h += `<div class="task${d?' done':''}"${it.statusSel?'':` onclick="toggleTask('${jsq(it.id)}')"`}>
+          h += `<div class="task${d?' done':''}"${it.indent?' style="margin-left:26px"':''}${it.statusSel?'':` onclick="toggleTask('${jsq(it.id)}')"`}>
             <div class="task-cb">${d?'✓':''}</div>
             <div class="task-body"><div class="task-main">${it.main}</div><div class="task-sub">${it.sub}</div>${it.notiz||''}</div>
             ${it.statusSel||''}
@@ -6266,7 +6283,7 @@ function renderAufgaben(){
       <div class="task-list"${open?'':' style="display:none"'}>`;
     items.forEach(it=>{
       const d = taskDone(it.id);
-      h += `<div class="task${d?' done':''}"${it.statusSel?'':` onclick="toggleTask('${jsq(it.id)}')"`}>
+      h += `<div class="task${d?' done':''}"${it.indent?' style="margin-left:26px"':''}${it.statusSel?'':` onclick="toggleTask('${jsq(it.id)}')"`}>
         <div class="task-cb">${d?'✓':''}</div>
         <div class="task-body"><div class="task-main">${it.main}</div><div class="task-sub">${it.sub}</div>${it.notiz||''}</div>
         ${it.statusSel||''}

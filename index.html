@@ -3639,8 +3639,14 @@ function patDauerKategorien(p){
   if(hm.some(x=>/MLD\s*-?\s*45/i.test(x))) cats.add('MLD 45');
   if(hm.some(x=>/KG\s*ZNS/i.test(x))) cats.add('KG ZNS');
   if(hm.some(x=>isBlankoHM(x))) cats.add('Blanko');
-  // BVB/LVB bewusst KEIN Dauerplan-Kriterium mehr (Wunsch Chaled, Okt 2026):
-  // langfristiger Versorgungsbedarf heißt nicht automatisch Dauerplan-Kandidat.
+  // To-do 01.10. (Protokoll): BVB/LVB-Patienten gehören unter Potenzial Dauer — wieder Kriterium.
+  // (War am 01.10. kurzzeitig entfernt; deshalb fehlten sie dort.) Patienten MIT Dauerplan-Maske
+  // bzw. Hinweis „kein DP" fallen über istDauer / dauerplanPerHinweisAbgelehnt weiterhin heraus.
+  [...p.icds].forEach(icd=>{
+    const b = findBVB(icd);
+    if(b) cats.add(b.t==='LVB' ? 'LHB' : 'BVB');
+    if(findBVBAge70(icd, p.geb)) cats.add('BVB');
+  });
   return [...cats];
 }
 
@@ -3831,7 +3837,7 @@ function dauerOhneZukunft(){
   DATA.cells.forEach(c=>{
     if(!c.start) return;
     if(!maxAll || c.start>maxAll) maxAll=c.start;
-    if(c.belegt && (!potStich||c.start>potStich)) potStich=c.start;
+    if(c.belegt && c.start.getTime()<=hT && (!potStich||c.start>potStich)) potStich=c.start;   // Fix Okt 2026: gebuchte Zukunftstermine sind kein Stichtag
   });
   const hatZukunft = !!(maxAll && maxAll.getTime() > hT);   // Export enthält überhaupt Zukunftstermine?
   const DREI_WOCHEN=21*86400000;
@@ -3859,8 +3865,11 @@ function renderPotential(){
   // Patienten mit Dauer-geeigneter Behandlungsart/Diagnose, die NOCH KEINE Maske D haben.
   // Logik: geeignete Behandlungsart + noch keine D-Maske = Potenzial Dauer.
   // Punkt 9 (Call 15.09.): Stichtag = spätester wahrgenommener Termin (Export läuft der Realzeit hinterher)
+  // Fix Okt 2026: gebuchte Zukunftstermine sind im Export auch „belegt" und zogen den Stichtag auf das
+  // Exportende (31.12.) → der 3-Wochen-Aktiv-Filter blendete fast alle Kandidaten aus.
   let potStich=null;
-  DATA.cells.forEach(c=>{ if(c.belegt && c.start && (!potStich||c.start>potStich)) potStich=c.start; });
+  const potHeuteEnde=new Date(); potHeuteEnde.setHours(23,59,59,999);
+  DATA.cells.forEach(c=>{ if(c.belegt && c.start && c.start<=potHeuteEnde && (!potStich||c.start>potStich)) potStich=c.start; });
   if(!potStich) potStich=new Date();
   const potStT=potStich.getTime();
   const DREI_WOCHEN=21*86400000;
@@ -3885,7 +3894,7 @@ function renderPotential(){
 
   const catCount = {};
   kandidaten.forEach(p=>p.dauerCats.forEach(c=>catCount[c]=(catCount[c]||0)+1));
-  const CATS = ['Blanko','Privat','MLD 45','MLD 60','KG ZNS','Hausbesuch'];
+  const CATS = ['Blanko','Privat','MLD 45','MLD 60','KG ZNS','Hausbesuch','BVB','LHB'];
 
   // Reiter „Dauerpatienten ohne Termin" (Maske D, kein Zukunftstermin ab heute)
   const dnf = dauerOhneZukunft();
@@ -3905,9 +3914,9 @@ function renderPotential(){
 
   h += `<div style="background:var(--primary-bg,#eef2ff);border:1px solid var(--primary);border-radius:12px;padding:12px 14px;margin-bottom:14px;font-size:11px;color:var(--dark)">
     <b style="color:var(--primary);font-family:Montserrat;font-weight:800">ℹ️ Logik:</b>
-    Angezeigt werden Patienten mit einer für einen Dauerplan geeigneten Behandlungsart (Blanko, Privat, MLD 45/60, KG ZNS, Hausbesuch), die <b>noch keine Maske D</b> besitzen. Sobald ein Patient die Maske D erhält, verschwindet er automatisch aus dieser Liste. BVB/LVB allein zählt <b>nicht</b> als Dauerplan-Kriterium.
+    Angezeigt werden Patienten mit einer für einen Dauerplan geeigneten Behandlungsart (Blanko, Privat, MLD 45/60, KG ZNS, Hausbesuch, BVB/LVB), die <b>noch keine Maske D</b> besitzen. Sobald ein Patient die Maske D erhält, verschwindet er automatisch aus dieser Liste. Auch <b>BVB/LVB-Diagnosen</b> (langfristiger Versorgungsbedarf) zählen als Dauerplan-Kriterium.
     <br><b style="color:var(--primary)">Aktiv-Filter:</b> Es zählen nur Patienten, die <b>in den letzten 3 Wochen</b> einen Termin hatten oder einen gebuchten Zukunftstermin haben – wer länger raus ist, ist meist nicht mehr in Behandlung (${inaktivRaus} ausgeblendet).
-    <br><b style="color:var(--primary)">Hinweis-Ausschluss:</b> Steht im THEORG-Patientenhinweis „Kein Dauerplan", wird der Patient hier nicht angezeigt${hinweisRaus?` (${hinweisRaus} ausgeblendet)`:''}.
+    <br><b style="color:var(--primary)">Hinweis-Ausschluss:</b> Steht im THEORG-Patientenhinweis „Kein Dauerplan" bzw. „kein DP" / „DP = Nein", wird der Patient hier nicht angezeigt${hinweisRaus?` (${hinweisRaus} ausgeblendet)`:''}.
     <br><b>Tipp:</b> Patient anklicken → Name wird unten in den Telefonleitfaden eingesetzt.</div>`;
 
   h += leitfadenBox('potential', 'Dauerplan anbieten', 'z.B.: „Frau/Herr … , da Sie regelmäßig zu uns kommen, können wir einen Dauerplan einrichten – dann sind Ihre Termine langfristig gesichert …"');
@@ -4016,10 +4025,13 @@ function setFvoFilter(f){ currentFvoFilter=f; renderFolgeVO(); }
 // Potential = orientierende Behandlungsmenge − bereits verordnete Einheiten.
 function computeVerordnungsfaelle(){
   // Stichtag = spätester belegter Termin (Export läuft der Realzeit hinterher)
+  // Fix Okt 2026: gebuchte ZUKUNFTS-Termine sind im Export auch „belegt" und zogen den Stichtag
+  // auf das Exportende (31.12.) → falsche Warnung „keine Zukunftstermine", geplant immer 0.
   let stichtag=null, maxAll=null;
+  const heuteEnde = new Date(); heuteEnde.setHours(23,59,59,999);
   DATA.cells.forEach(c=>{
     if(!c.start) return;
-    if(c.belegt && (!stichtag||c.start>stichtag)) stichtag=c.start;
+    if(c.belegt && c.start<=heuteEnde && (!stichtag||c.start>stichtag)) stichtag=c.start;
     if(!maxAll || c.start>maxAll) maxAll=c.start;
   });
   if(!stichtag) stichtag=new Date();
@@ -4039,7 +4051,7 @@ function computeVerordnungsfaelle(){
       blanko:isBlankoHM(c.heilmittel), bel:new Set(), fut:new Set(), nextTermin:null
     };
     if(!rez[k].ind && c.indikation) rez[k].ind=c.indikation;
-    if(c.termIdent && c.belegt) rez[k].bel.add(c.termIdent);
+    if(c.termIdent && c.belegt && c.start && c.start.getTime()<=stT) rez[k].bel.add(c.termIdent);
     if(c.termIdent && c.start && c.start.getTime()>stT){
       rez[k].fut.add(c.termIdent);
       if(!rez[k].nextTermin || c.start<rez[k].nextTermin) rez[k].nextTermin=c.start;
@@ -4139,7 +4151,7 @@ function blankoBeendetListe(){
 }
 
 function renderFolgeVO(){
-  if(currentFvoFilter==='voll') currentFvoFilter='offen';   // "Ausgeschöpft" ausgeblendet (Okt 2026)
+  if(currentFvoFilter==='voll' || currentFvoFilter==='bvb') currentFvoFilter='offen';   // "Ausgeschöpft" + "BVB/LVB" ausgeblendet (Okt 2026; BVB/LVB steht unter Potenzial Dauer + GRIMZ-Box)
   const {stichtag, faelle, hatZukunftsdaten} = computeVerordnungsfaelle();
   const fmtDE = d => d ? d.toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'numeric'}) : '–';
   const fmtShort = d => d ? d.toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit'}) : '–';
@@ -4186,7 +4198,6 @@ function renderFolgeVO(){
   [
     {f:'erst1', l:'📇 Erst 1 VO',        c:erst1.length},
     {f:'offen', l:'🎫 Potential offen',   c:folgevo.length},
-    {f:'bvb',   l:'♾️ BVB / LVB',        c:bvbFaelle.length},
     {f:'ohne',  l:'❔ Ohne Diagnosegruppe',c:ohneKatalog.length},
     {f:'blend', l:'📄 Blanko beendet · 6 Mon.',c:blankoBeendet.length}
   ].forEach(x=>{

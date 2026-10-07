@@ -937,6 +937,8 @@ function pickPhone(...cands){
 
 // Leistungen, die im Rezept-Checker nichts verloren haben (kein Heilmittel-VO
 // im klassischen Sinn): Rehasport und Anamnese komplett ausblenden.
+// Präventions-Leistungen (PRÄ1 … PRÄ6): kein Rezept zum Abrechnen (Okt 2026)
+function isPraevHM(hm){ return /^\s*PRÄ/i.test(String(hm||'')); }
 function isCheckerExcludedHM(hm){
   const s = String(hm==null?'':hm).toUpperCase().replace(/[\s\-\.]/g,'');
   return s.startsWith('REHASPORT') || s.startsWith('ANAMNESE');
@@ -2023,6 +2025,9 @@ function analyzeRezepteFull(cellsForDay, allCells, opts){
       const t=c.start.getTime();
       if(t>=weekStartT && t<weekEndT) rm.weekTermine.add(c.termIdent);
       if(!rm.lastDate || c.start>rm.lastDate) rm.lastDate = c.start;
+      // Startzeit je Termin (für Blanko-Gültigkeit ab dem ERSTEN Termin, To-do 01.10.)
+      const tts = rm.termTimes = rm.termTimes || {};
+      if(tts[c.termIdent]===undefined || t<tts[c.termIdent]) tts[c.termIdent] = t;
       // Termine innerhalb der Blanko-Gültigkeit: [VO-Datum, VO-Datum + 112 Tage)
       if(rm.rezDatum){
         const rd = rm.rezDatum.getTime();
@@ -2114,7 +2119,7 @@ function analyzeRezepteFull(cellsForDay, allCells, opts){
     }
     
     // 💎 BLANKO-VO NICHT ZU ENDE GEPLANT
-    //   Eine Blanko-VO ist 16 Wochen (112 Tage) ab VO-Datum gültig und sollte
+    //   Eine Blanko-VO läuft 16 Wochen (112 Tage) ab dem ERSTEN TERMIN (To-do 01.10.) und sollte
     //   durchgehend mit 2× pro Woche verplant werden. Ziel = 2×/Wo × 16 Wo = 32
     //   Termine — OHNE Deckelung durch das Blanko-Maximum (Praxis-Vorgabe).
     //   Gezählt werden nur Termine INNERHALB der Gültigkeit.
@@ -2122,13 +2127,29 @@ function analyzeRezepteFull(cellsForDay, allCells, opts){
     if(isBlankoHM(p.heilmittel)){
       const max = getBlankoMax(p.icd);
       const zielTermine = 2*16;                                   // 32 = 2×/Woche über 16 Wochen (kein Deckel)
-      const verplant = p.windowTermine ? p.windowTermine.size : erbracht;  // Termine in Gültigkeit
-      const offen = Math.max(0, zielTermine - verplant);
-      const tagseit = p.rezDatum ? Math.floor((refT-p.rezDatum.getTime())/86400000) : null;
-      const tageUebrig = tagseit!==null ? Math.max(0, 112-tagseit) : null;
-      // Soll bis heute bei durchgehend 2× pro Woche
+      // To-do 01.10.: Die 16 Wochen laufen ab dem ERSTEN TERMIN, nicht ab VO-Datum.
+      // Fallback VO-Datum, wenn der erste Termin vor dem Export-Beginn liegen dürfte
+      // (VO älter als der Export und erster sichtbarer Termin in den ersten 2 Export-Wochen).
+      const tt = p.termTimes ? Object.values(p.termTimes) : [];
+      const expStartT = (DATA && DATA.dates && DATA.dates[0]) ? new Date(DATA.dates[0]+'T00:00:00').getTime() : null;
+      let startT = tt.length ? Math.min(...tt) : null;
+      let startIstTermin = startT!==null;
+      if(p.rezDatum && (startT===null || (expStartT!==null && p.rezDatum.getTime()<expStartT && startT-expStartT < 14*86400000))){
+        startT = p.rezDatum.getTime(); startIstTermin = false;
+      }
+      const endT = startT!==null ? startT + 112*86400000 : null;
+      const verplant = startT!==null ? tt.filter(t=>t>=startT && t<endT).length : erbracht;   // Termine in Gültigkeit
+      const zukunft = startT!==null ? tt.filter(t=>t>refT && t<endT).length : 0;             // davon noch vor uns
+      const tageUebrig = startT!==null ? Math.min(112, Math.max(0, Math.ceil((endT-refT)/86400000))) : null;
+      // Noch zu planen = Soll für die RESTLAUFZEIT (2×/Woche) minus bereits gebuchte Zukunftstermine
+      const sollRest = tageUebrig!==null ? Math.floor(tageUebrig/7*2) : 0;
+      const offen = Math.max(0, sollRest - zukunft);
+      const tagseit = startT!==null ? Math.max(0, Math.floor((refT-startT)/86400000)) : null;
       const wochenVergangen = tagseit!==null ? Math.min(16, Math.max(0, tagseit/7)) : null;
       const sollBisHeute = wochenVergangen!==null ? Math.min(zielTermine, Math.round(wochenVergangen*2)) : null;
+      p.blankoStart = startT!==null ? new Date(startT) : null;
+      p.blankoStartIstTermin = startIstTermin;
+      p.blankoZukunft = zukunft;
       p.blankoMax = max;
       p.blankoAvg = verplant/16;                                  // Ø Termine pro Woche über die 16 Wochen Gültigkeit
       p.blankoZiel = zielTermine;
@@ -2142,7 +2163,7 @@ function analyzeRezepteFull(cellsForDay, allCells, opts){
       // "nicht zu Ende geplant" = VO läuft noch, aber nicht durchgehend 2×/Wo verplant.
       // Nur bewertbar mit VO-Datum (sonst ist die 16-Wochen-Gültigkeit nicht bestimmbar).
       const isAktivLaufend = tageUebrig!==null && tageUebrig > 0;
-      if(p.rezDatum && isAktivLaufend && offen > 0){
+      if(isAktivLaufend && offen > 0){
         tags.blankopot = true;
         cats.blankopot.push(p);
         score += 1;
@@ -2232,7 +2253,7 @@ function renderRezepte(){
     {k:'nr',l:'🔥 Nachrücker',v:r.nr.length,co:'var(--fire)',s:'einplanbar'},
     {k:'blanko',l:'Auf Blanko-VO',v:r.blanko.length,co:'var(--purple)',s:'Rezept umstellen'},
     {k:'blankopot',l:'💎 Blanko-VO',v:r.blankopot.length,co:'var(--accent)',s:'nicht zu Ende geplant'},
-    {k:'bvbpot',l:'🔼 BVB-Pot.',v:r.bvbpot.length,co:'var(--primary)',s:'Freq. nicht ausgeschöpft'},
+    {k:'bvbpot',l:'📦 GRIMZ-Box',v:r.bvbpot.length,co:'var(--primary)',s:'BVB/LHB · Frequenz nicht ausgeschöpft'},
     {k:'untertaktet',l:'🐌 Zu selten',v:r.untertaktet.length,co:'var(--amber)',s:'könnten öfter kommen'},
     {k:'all',l:'📋 Alle',v:r.all.length,co:'var(--dark)',s:'mit Rezept'}
   ];
@@ -2335,6 +2356,17 @@ function renderRezeptGroup(group, cat){
   if(group.geb instanceof Date && !isNaN(group.geb)) gebStr = '* '+group.geb.toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'numeric'});
   else if(group.geb){ const d=new Date(group.geb); gebStr = !isNaN(d) ? '* '+d.toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'numeric'}) : esc(String(group.geb)); }
   h += '<span style="font-size:10px;color:var(--muted);font-weight:600">'+gebStr+'</span>';
+  // To-do 01.10.: bei „Blanko-VO zu Ende planen" direkt sichtbar, wie viele Termine noch fehlen
+  if(cat==='blankopot'){
+    const bl = group.rezepte.filter(r=>r.blankoOffen!=null && r.tags && r.tags.blankopot);
+    if(bl.length){
+      const noch = bl.reduce((a,r)=>a+r.blankoOffen,0);
+      const r0 = bl.slice().sort((a,b)=>(a.tageUebrig||0)-(b.tageUebrig||0))[0];
+      const ab = r0.blankoStart ? ' · 16 Wo. ab '+(r0.blankoStartIstTermin?'1. Termin ':'VO-Datum ')+r0.blankoStart.toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit'}) : '';
+      h += '<span style="font-size:10px;font-weight:800;color:var(--accent)">📌 noch '+noch+' Termin'+(noch===1?'':'e')+' zu planen</span>';
+      h += '<span style="font-size:10px;color:var(--muted);font-weight:600">'+(r0.blankoZukunft||0)+' gebucht · noch '+r0.tageUebrig+' Tage'+ab+'</span>';
+    }
+  }
   h += headStatus;
   h += '<span style="background:var(--primary);color:#fff;border-radius:100px;padding:2px 8px;font-size:10px;font-weight:800">' + group.rezepte.length + '</span>';
   h += '</div>';
@@ -2357,7 +2389,7 @@ function showRezeptDetail(k){
   currentRezeptCat = k;
   const rez = analyzeRezepteFull(null, DATA.cells, {allActive:true});
 
-  const titles = {nr:'🔥 Top-Nachrücker',bvb:'🏥 BVB/LVB-Patienten',blanko:'Rezept auf Blankoverordnung umstellen · Schulter-Patienten',blankopot:'💎 Blanko-VO nicht zu Ende geplant',bvbpot:'🔼 BVB-Potenzial · Frequenz nicht ausgeschöpft',untertaktet:'🐌 Zu selten · könnten öfter kommen',all:'📋 Alle Patienten mit Rezept'};
+  const titles = {nr:'🔥 Top-Nachrücker',bvb:'🏥 BVB/LVB-Patienten',blanko:'Rezept auf Blankoverordnung umstellen · Schulter-Patienten',blankopot:'💎 Blanko-VO nicht zu Ende geplant',bvbpot:'📦 GRIMZ-Box · BVB/LHB-Frequenz nicht ausgeschöpft',untertaktet:'🐌 Zu selten · könnten öfter kommen',all:'📋 Alle Patienten mit Rezept'};
   let items = rez[k];
 
   // Punkt 18: Rezepte pro Patient gruppieren (Name + Geburtsdatum Matching)
@@ -2438,8 +2470,8 @@ function showRezeptDetail(k){
     } else if(k==='blankopot'){
       h += `<div style="background:var(--accent-bg);border-radius:12px;padding:12px 14px;margin-bottom:10px;font-size:11px;color:var(--dark);line-height:1.6">
         <b style="color:var(--accent);font-family:Montserrat;font-weight:800">💎 Aktion: Blanko-VO zu Ende planen!</b>
-        Diese Blanko-VOs sind nicht durchgehend mit <b>Ø 2× pro Woche</b> über die 16 Wochen Gültigkeit verplant —
-        bitte Termine auffüllen. Status direkt am Rezept pflegen · Klick auf den Patienten übernimmt ihn in den Telefonleitfaden.
+        Die <b>16 Wochen laufen ab dem ersten Termin</b> (nicht ab VO-Datum). Für die Restlaufzeit sollen <b>2 Termine pro Woche</b> gebucht sein —
+        fehlende Termine stehen als <b>„noch X Termine zu planen"</b> am Patienten. Ist die Restlaufzeit voll verplant, verschwindet er. Status direkt am Rezept pflegen · Klick auf den Patienten übernimmt ihn in den Telefonleitfaden.
       </div>`;
     }
     // Rezepte gruppieren
@@ -2450,12 +2482,12 @@ function showRezeptDetail(k){
     // mit 2×/Woche über die 16-Wochen-Gültigkeit verplant sind.
     h += `<div style="background:var(--accent-bg);border-radius:12px;padding:12px 14px;margin-bottom:10px;font-size:11px;color:var(--dark);line-height:1.6">
       <b style="color:var(--accent);font-family:Montserrat;font-weight:800">💎 Blanko-VO nicht zu Ende geplant:</b>
-      Geprüft wird nur der Durchschnitt: Wie oft pro Woche ist der Patient über die <b>16 Wochen Gültigkeit</b> verplant?
-      <b>Ø 2× pro Woche = passt</b> (wird nicht angezeigt). Liegt der Schnitt darunter, steht der Patient hier — bitte auf 2× pro Woche auffüllen.
+      Die <b>16 Wochen Gültigkeit laufen ab dem ersten Termin</b> (nicht ab VO-Datum). Für die Restlaufzeit sollen <b>2 Termine pro Woche</b> gebucht sein.
+      Fehlen Termine, steht der Patient hier mit der Zahl <b>„noch X Termine zu planen"</b>. Ist die Restlaufzeit voll verplant, verschwindet er.
     </div>`;
 
     // Nach niedrigstem Wochenschnitt sortieren — am wenigsten geplant zuerst
-    const sortedItems = [...items].sort((a,b)=> (a.blankoAvg||0) - (b.blankoAvg||0));
+    const sortedItems = [...items].sort((a,b)=> (b.blankoOffen||0) - (a.blankoOffen||0));
 
     sortedItems.forEach(p=>{
       const age = p.geb ? Math.floor((Date.now()-new Date(p.geb).getTime())/(365.25*86400000)) : null;
@@ -2472,6 +2504,8 @@ function showRezeptDetail(k){
           <div class="pr-d">
             <b>${p.heilmittel||'?'}</b> · <b style="color:var(--fire);font-size:11px">Ø ${avgStr}×/Woche geplant</b> · Ziel 2×/Woche${voDat(p.rezDatum)}
             ${tg!==null?` · <span style="color:${tgC}">🗓 ${tg<0?'⚠ abgelaufen':'noch '+tg+' Tage gültig'}</span>`:''}
+            <br><b style="color:var(--accent);font-size:11px">📌 noch ${p.blankoOffen} Termin${p.blankoOffen===1?'':'e'} zu planen</b>
+            <span style="color:var(--muted)"> · ${p.blankoZukunft||0} bereits gebucht${p.blankoStart?' · 16 Wochen ab '+(p.blankoStartIstTermin?'1. Termin ':'VO-Datum ')+p.blankoStart.toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'numeric'}):''}</span>
           </div>
           <div class="progress-mini"><div class="progress-mini-f" style="width:${pct}%;background:var(--accent)"></div></div>
         </div>
@@ -2783,7 +2817,7 @@ function renderOffene(){
 
   // 6) Kandidaten nach gewähltem Schwellwert + zwei Anzeige-Gruppen
   const kandidaten = basePool.filter(r=>r.tageSeitLetzterTermin>=threshold);
-  const grpFertig = kandidaten.filter(r=>r.erbracht>=r.echteMenge && !r.istAbgerechnet)
+  const grpFertig = kandidaten.filter(r=>r.erbracht>=r.echteMenge && !r.istAbgerechnet && !isPraevHM(r.heilmittel))
     .sort((a,b)=>(b.tageSeitLetzterTermin||0)-(a.tageSeitLetzterTermin||0));
   const grpOffen = kandidaten.filter(r=>r.rest>0)
     .sort((a,b)=>(b.tageSeitLetzterTermin||0)-(a.tageSeitLetzterTermin||0));
@@ -3151,6 +3185,9 @@ function ctrlKapazitaetData(){
   }
   return {weeks, cap, capH, refMax, refMaxH};
 }
+// To-do 01.10.: Ziel gilt als erreicht, wenn die GERUNDETE Auslastung ≥ Ziel ist –
+// sonst steht „87 %" am Balken, er ist aber rot (z. B. 302 h bei Ziel 302,8 h).
+function kapZielErreicht(v, refMax, pct){ return refMax>0 && Math.round(v/refMax*100) >= (pct||87); }
 function ctrlKapazitaetChart(data){
   const {weeks, cap, capH, refMax, refMaxH} = data;
   if(!weeks.length) return '<div class="empty">Keine Arbeitszeit-Daten für die KW-Kapazität gefunden.</div>';
@@ -3184,11 +3221,12 @@ function ctrlKapazitaetChart(data){
     const diffH = Math.round((v-refMax)*CONFIG.slotMin/60);              // Defizit zur Max-Kapazität in Stunden
     // Ampel (Okt 2026, Wunsch Chaled): Rot NUR unterhalb des 87%-Ziels.
     // Über der Ziellinie ist die KW „richtig" → grün nahe Max (bis gT%), sonst gelb.
-    const col = adev<=gT ? 'var(--teal)' : v>=target ? 'var(--amber)' : 'var(--accent)';
-    const ampel = adev<=gT ? `beobachten (bis ${gT}% unter Max)` : v>=target ? `über ${TARGET_PCT}%-Ziel · handeln` : `🚨 unter ${TARGET_PCT}%-Ziel`;
+    const zielOk = kapZielErreicht(v, refMax, TARGET_PCT);
+    const col = adev<=gT ? 'var(--teal)' : zielOk ? 'var(--amber)' : 'var(--accent)';
+    const ampel = adev<=gT ? `beobachten (bis ${gT}% unter Max)` : zielOk ? `über ${TARGET_PCT}%-Ziel · handeln` : `🚨 unter ${TARGET_PCT}%-Ziel`;
     const richtung = diffH<0 ? `⏱️ es fehlen ${-diffH} h zur Max-Kapazität` : 'volle Kapazität erreicht';
     const zielPct = refMax>0 ? Math.round(v/refMax*100) : 0;                       // Auslastung der Max-Kapazität in %
-    const fehlZielH = v<target ? Math.round((target-v)*CONFIG.slotMin/60) : 0;     // fehlende Stunden zum 87%-Ziel
+    const fehlZielH = !zielOk ? Math.max(1, Math.round((target-v)*CONFIG.slotMin/60)) : 0;     // fehlende Stunden zum 87%-Ziel
     const zielTxt = fehlZielH>0 ? `🎯 ${zielPct}% – es fehlen ${fehlZielH} h zum ${TARGET_PCT}%-Ziel` : `🎯 ${zielPct}% – ${TARGET_PCT}%-Ziel erreicht`;
     const pct = `${dev>0?'+':''}${Math.round(dev)}%`;
     const diffLab = `${diffH>0?'+':diffH<0?'−':''}${Math.abs(diffH)} h`;
@@ -3232,7 +3270,7 @@ function ctrlKapazitaetChart(data){
   const dot = c => `<span style="width:11px;height:11px;border-radius:50%;background:${c};display:inline-block"></span>`;
   const defSumH = Math.round(cap.reduce((a,v)=> a + (v<refMax ? refMax-v : 0), 0)*CONFIG.slotMin/60);
   const zielFehlSumH = Math.round(cap.reduce((a,v)=> a + (v<target ? target-v : 0), 0)*CONFIG.slotMin/60);
-  const wksUnterZiel = cap.filter(v=> v<target).length;
+  const wksUnterZiel = cap.filter(v=> !kapZielErreicht(v, refMax, TARGET_PCT)).length;
   // Detail-Zeile zum angeklickten Balken
   let selInfo='';
   const si = weeks.indexOf(ctrlKapSel);
@@ -3449,9 +3487,9 @@ function renderControlling(){
   let ampGruen=0, ampGelb=0, ampRot=0;
   const kdTarget = kd.refMax*0.87;
   kd.cap.forEach(v=>{ const ad = kd.refMax>0?Math.abs((v-kd.refMax)/kd.refMax*100):0;
-    if(ad<=CONFIG.ampelGruen) ampGruen++; else if(v>=kdTarget) ampGelb++; else ampRot++; });
+    if(ad<=CONFIG.ampelGruen) ampGruen++; else if(kapZielErreicht(v, kd.refMax)) ampGelb++; else ampRot++; });
   const kapInfo = `<b>Verfügbare Kapazität pro KW</b><br>Je KW = alle bezahlten Arbeitszeit-Slots (AZ=J) aller Mitarbeiter, umgerechnet in Termine à ${CONFIG.slotMin} min bzw. Stunden.<br><b>Referenz = maximale Kapazität</b>: die höchste KW-Kapazität über <u>alle</u> Wochen im Export (angeschnittene Rand-KW ausgeklammert) — sie bleibt auch bei gefiltertem Zeitraum stabil.<br><b>Anzeige</b> folgt dem Zeitraum-Selektor oben: es werden nur die Kalenderwochen des gewählten Zeitraums gezeigt.<br><b>Ampel</b>: bis ${CONFIG.ampelGruen}% unter Max beobachten (grün); über dem 87%-Ziel, aber weiter unter Max → handeln (gelb); <u>unter dem 87%-Ziel</u> → Notstand (rot). Rot gibt es also nur, wenn das Ziel verfehlt wird.<br><b>🎯 87%-Ziel</b> (lila Linie): Ziel-Auslastung = 87 % der Max-Kapazität. Klick auf einen Balken zeigt, wie viele <u>Stunden</u> zur Ziellinie fehlen.`;
-  const kdUnterZiel = kd.cap.filter(v=> v < kd.refMax*0.87).length;
+  const kdUnterZiel = kd.cap.filter(v=> !kapZielErreicht(v, kd.refMax)).length;
   h += `<div class="st">🗓️ Verfügbare Kapazität pro KW <span class="sub">in Stunden · Ampel vs. Max-Kapazität · 🎯 87%-Ziel</span> ${infoI(kapInfo)}</div>`;
   h += `<div class="sg" style="margin-bottom:12px">
     <div class="si"><div class="si-l">Max. Kapazität</div><div class="si-v">${kd.refMaxH} h</div><div class="si-s">pro Woche</div></div>
@@ -3607,11 +3645,14 @@ function patDauerKategorien(p){
 }
 
 // THEORG-Hinweis "Kein Dauerplan" → Patient aus Potential-Dauer ausschließen (Okt 2026).
-// Prüft Hinweis + Wiedervorlage aus dem Export, tolerant bei Schreibweise (kein/keinen Dauerplan).
+// Prüft Hinweis + Wiedervorlage aus dem Export, tolerant bei Schreibweise (kein/keinen Dauerplan/DP, DP = Nein …).
 function dauerplanPerHinweisAbgelehnt(patKey){
   const e = DATA && DATA.patHinweise ? DATA.patHinweise[patKey] : null;
   if(!e) return false;
-  return /kein\w*\s+dauerplan/i.test((e.hinweis||'')+' '+(e.wv||''));
+  // Mail Luis 07.10.: die Praxis schreibt meist „KEIN DP" – auch „DP = Nein", „DP: nein",
+  // „DP erstmal nicht möglich", „Dauerplan abgelehnt" erkennen. („kommt auf uns zu für DP" zählt NICHT.)
+  const t = (e.hinweis||'')+' '+(e.wv||'');
+  return /kein\w*\s+(dauerplan|DP\b)/i.test(t) || /(dauerplan|\bDP)\s*[=:\-–]?\s*(erst\s?mal\s+)?(nein|abgelehnt|nicht)\b/i.test(t);
 }
 
 // Quartals-Helfer (fortlaufende Quartalsnummer, für Folge-VO-Logik)
@@ -4078,6 +4119,25 @@ function handlungsstatus(f){
   return f.restBeh>0 ? 'folgevo' : 'fertig';
 }
 
+// To-do 01.10.: Patienten der letzten 6 Monate mit Blanko-VO, die abgerechnet ist,
+// und die KEINEN Termin mehr im Plan haben (egal auf welchem Rezept) → Rückgewinnung.
+// Je Patient die jüngste Blanko-VO. Bezug = letzter wahrgenommener Termin der VO.
+function blankoBeendetListe(){
+  if(!DATA) return [];
+  const todayEnd = new Date(); todayEnd.setHours(23,59,59,999);
+  const tE = todayEnd.getTime(), grenze = tE - 183*86400000;
+  const hatZukunft = new Set();
+  DATA.cells.forEach(c=>{ if(c.patKey && c.patNach && c.termIdent && c.start && c.start.getTime()>tE) hatZukunft.add(c.patKey); });
+  const byPat = {};
+  collectRezepte().forEach(r=>{
+    if(!r.istBlanko || !r.istAbgerechnet || !r.lastTerminDate) return;
+    if(r.lastTerminDate.getTime() < grenze) return;
+    if(r.hasFuture || hatZukunft.has(r.patKey)) return;
+    if(!byPat[r.patKey] || r.lastTerminDate > byPat[r.patKey].lastTerminDate) byPat[r.patKey] = r;
+  });
+  return Object.values(byPat).sort((a,b)=> b.lastTerminDate - a.lastTerminDate);
+}
+
 function renderFolgeVO(){
   if(currentFvoFilter==='voll') currentFvoFilter='offen';   // "Ausgeschöpft" ausgeblendet (Okt 2026)
   const {stichtag, faelle, hatZukunftsdaten} = computeVerordnungsfaelle();
@@ -4090,6 +4150,7 @@ function renderFolgeVO(){
   const erst1    = folgevo.filter(f=>f.nurEineVO);                 // erst 1 VO, Potential offen
   const fertig   = bewertbar.filter(f=>f.handlung==='fertig');    // ausgeschöpft
   const bvbFaelle = faelle.filter(f=>f.bvb);
+  const blankoBeendet = blankoBeendetListe();
   const ohneKatalog = faelle.filter(f=>!f.hatKatalog && !f.bvb);
   const summeNochRez = folgevo.reduce((s,f)=>s+(f.nochRezepte||0),0);
 
@@ -4126,7 +4187,8 @@ function renderFolgeVO(){
     {f:'erst1', l:'📇 Erst 1 VO',        c:erst1.length},
     {f:'offen', l:'🎫 Potential offen',   c:folgevo.length},
     {f:'bvb',   l:'♾️ BVB / LVB',        c:bvbFaelle.length},
-    {f:'ohne',  l:'❔ Ohne Diagnosegruppe',c:ohneKatalog.length}
+    {f:'ohne',  l:'❔ Ohne Diagnosegruppe',c:ohneKatalog.length},
+    {f:'blend', l:'📄 Blanko beendet · 6 Mon.',c:blankoBeendet.length}
   ].forEach(x=>{
     h += `<button class="nr-filter${currentFvoFilter===x.f?' a':''}" onclick="setFvoFilter('${x.f}')">${x.l} (${x.c})</button>`;
   });
@@ -4197,6 +4259,26 @@ function renderFolgeVO(){
       ${patNotizField(f.patKey, f.name)}
     </div>`;
   };
+
+  if(currentFvoFilter==='blend'){
+    h += `<div style="background:var(--amber-bg);border:1px solid var(--amber);border-radius:10px;padding:10px 12px;margin-bottom:10px;font-size:11px;color:var(--dark);line-height:1.6">
+      <b>📄 Blanko-VO beendet:</b> Patienten, deren Blanko-VO in den <b>letzten 6 Monaten</b> lief, die <b>abgerechnet</b> ist und die <b>keinen Termin mehr</b> im Plan haben. Sortiert nach letztem Termin (neueste zuerst).</div>`;
+    if(!blankoBeendet.length){ h += `<div class="empty">Keine Patienten in dieser Kategorie 🎉</div>`; document.getElementById('content').innerHTML=h; return; }
+    h += `<div class="ausl-card" style="padding:8px">`;
+    blankoBeendet.forEach(r=>{
+      const abr = r.abrechnungsdatum instanceof Date ? fmtDE(r.abrechnungsdatum) : (r.abrechnungsdatum?esc(String(r.abrechnungsdatum)):'');
+      h += `<div class="ac" style="border-left-color:var(--amber);align-items:flex-start;flex-wrap:wrap">
+        <div class="ac-b" style="min-width:60%">
+          <div class="ac-t">${esc(r.name)} <span style="color:var(--muted,#94a3b8);font-weight:600;font-size:10px">${esc(r.icd||'')}</span></div>
+          <div class="ac-s">${esc(r.heilmittel||'Blanko')} · ${r.erbracht} Termine · letzter Termin <b>${fmtDE(r.lastTerminDate)}</b>${voDat(r.rezDatum)}${abr?' · abgerechnet '+abr:' · abgerechnet'}</div>
+        </div>
+        ${r.mobil?`<a href="tel:${esc(r.mobil)}" class="pr-tel" onclick="event.stopPropagation()">📞 ${esc(r.mobil)}</a>`:''}
+        ${patNotizField(r.patKey, r.name)}
+      </div>`;
+    });
+    h += `</div>`;
+    document.getElementById('content').innerHTML = h; return;
+  }
 
   let liste, mode;
   if(currentFvoFilter==='bvb'){ liste=bvbFaelle; mode='bvb'; }
@@ -4558,7 +4640,13 @@ function gotoLuecke(dateStr, therapist, startHHMM){
 // Okt 2026: Zuzahlungs-Unteraufgaben (id 'zzk|<patKey>') laufen über den
 // kassiert-Status (cki_zz_kassiert) statt über ein eigenes Häkchen — damit
 // bleiben Checkbox, kassiert?-Button und die 💶-Zähler im Kopf synchron.
+// To-do 01.10.: Aufgaben, die sich aus dem Export selbst abhaken (id → true/false),
+// werden bei jedem Aufbau der Aufgabenliste neu gesetzt (buildAufgabenSections).
+const TZ_AUTO_DONE = {};
+function togglePlanFill(){ lsSet('cki_secopen_planfill', !lsGet('cki_secopen_planfill', false)); renderAufgaben(); }
+function taskRowStyle(it){ const st=(it.indent?'margin-left:26px;':'')+(it.rowHide?'display:none;':''); return st?' style="'+st+'"':''; }
 function taskDone(id){
+  if(Object.prototype.hasOwnProperty.call(TZ_AUTO_DONE, id)) return TZ_AUTO_DONE[id];
   if(String(id).indexOf('zzk|')===0) return zzKassiert(String(id).slice(4));
   return lsGet('cki_check_'+id, false);
 }
@@ -5089,7 +5177,7 @@ function setTzArea(a){ tzArea=(a==='tg'||a==='bo')?a:'alle'; lsSet('cki_tzarea',
 // Voreinstellung je Kategorie (per Dropdown jederzeit änderbar)
 const TZ_AREA_DEFAULTS = { std_tg:'tg', std_bo:'bo', std_sp:'tg', std_fs:'tg', std_ss:'tg',
   gapHeute:'tg', gapMorgen:'tg', abr:'bo', ft:'bo', fvo:'bo', dauer:'tg',
-  blum:'bo', blpl:'bo', kap:'bo' };
+  blum:'bo', blpl:'bo', grimz:'bo', kap:'bo' };
 // Punkt 5 (Call 15.09.): Lücken-Kategorien sind IMMER Tagesgeschäft (nicht umstellbar)
 const TZ_AREA_LOCKED = { gapHeute:'tg', gapMorgen:'tg' };
 function getCatArea(k){ if(TZ_AREA_LOCKED[k]) return TZ_AREA_LOCKED[k]; const v=lsGet('cki_catarea_'+k, TZ_AREA_DEFAULTS[k]||'tg'); return (v==='bo')?'bo':'tg'; }
@@ -5758,7 +5846,7 @@ function istAbgeschlossen(r){ return rezStatus(r).includes('abgeschlossen'); }
 function computeActionItems(){
   const rez = collectRezepte();
   // Fertig, aber nicht abgerechnet (Nicht-Blanko) – abgebrochene raus
-  const typA = rez.filter(r=>!r.istAbgerechnet && r.echteMenge>0 && !r.istBlanko && r.erbracht>=r.echteMenge && !istStorniert(r));
+  const typA = rez.filter(r=>!r.istAbgerechnet && r.echteMenge>0 && !r.istBlanko && r.erbracht>=r.echteMenge && !istStorniert(r) && !isPraevHM(r.heilmittel));
   // Angefangen, kein Folgetermin geplant – abgebrochene UND abgeschlossene raus
   // (eine abgeschlossene Serie braucht keinen Folgetermin mehr)
   const typB = rez.filter(r=>!r.istAbgerechnet && r.echteMenge>0 && r.erbracht>0 && r.erbracht<r.echteMenge && !r.hasFuture && !istStorniert(r) && !istAbgeschlossen(r));
@@ -5849,6 +5937,9 @@ function buildAufgabenSections(a){
   const _seenUm = new Set(), _seenPl = new Set();
   const blUm = (blCats.blanko||[]).filter(p=>{ if(!p.rezeptNr||_seenUm.has(p.rezeptNr)) return false; _seenUm.add(p.rezeptNr); return true; });
   const blPl = (blCats.blankopot||[]).filter(p=>{ if(!p.rezeptNr||_seenPl.has(p.rezeptNr)) return false; _seenPl.add(p.rezeptNr); return true; });
+  // Mail Luis 07.10.: GRIMZ-Box (BVB/LHB, Frequenz nicht ausgeschöpft) als Backoffice-Aufgabe
+  const _seenGz = new Set();
+  const grimz = (blCats.bvbpot||[]).filter(p=>{ if(!p.rezeptNr||_seenGz.has(p.rezeptNr)) return false; _seenGz.add(p.rezeptNr); return true; });
 
   // ── Punkt 6b (Call 15.09.): Kapazität 4 Wochen im Voraus bereinigen (Ziel 87 %) ──
   const kap = calcKap4Wochen();
@@ -5866,7 +5957,9 @@ function buildAufgabenSections(a){
   }
 
   // Kategorien → einzelne abhakbare Einträge
-  const sections = [
+  // To-do 01.10.: „Lücken heute/morgen schließen" stehen NICHT mehr unten als eigene Sektionen,
+  // sondern als Unterpunkte von „Plan für Heute + Morgen füllen" im Tagesgeschäft (s. u.).
+  const gapSecs = [
     { key:'gapHeute', ico:'⚡', color:'var(--accent)', ttl:'Lücken heute schließen', go:"switchView('luecken')",
       items: gapsHeute.map(g=>({
         id:'gap|'+currentDate+'|'+g.therapist+'|'+hhmm(g.start),
@@ -5880,7 +5973,9 @@ function buildAufgabenSections(a){
         main:esc(g.therapist)+' · '+hhmm(g.start)+'–'+hhmm(g.end),
         tdef:timeBlockOfHour(gapHourOf(g)),
         sub:Math.round(g.min)+' min frei · vorab Nachrücker organisieren',
-        link:`<button class="task-open" onclick="event.stopPropagation();gotoLuecke('${morgenStr}','${jsq(g.therapist)}','${hhmm(g.start)}')" title="Lücke im Lücken-Tab öffnen — Nachrücker-Liste klappt direkt auf">⚡ Nachrücker →</button>` })) },
+        link:`<button class="task-open" onclick="event.stopPropagation();gotoLuecke('${morgenStr}','${jsq(g.therapist)}','${hhmm(g.start)}')" title="Lücke im Lücken-Tab öffnen — Nachrücker-Liste klappt direkt auf">⚡ Nachrücker →</button>` })) }
+  ];
+  const sections = [
     { key:'abr', ico:'💰', color:'var(--fire)', ttl:'Rezepte abrechnen', go:"gotoOffene('abr')",
       items: a.typA.map(r=>({
         id:'abr|'+r.rezeptNr,
@@ -5904,8 +5999,14 @@ function buildAufgabenSections(a){
       items: blPl.map(p=>({
         id:'blpl|'+p.rezeptNr,
         main:esc(p.name),
-        sub:`${p.blankoVerplant!=null?p.blankoVerplant+' von '+p.blankoZiel+' verplant':''}${p.tageUebrig!=null?' · noch '+p.tageUebrig+' Tage gültig':''}${voDat(p.rezDatum)}`,
+        sub:`${p.blankoOffen!=null?'noch '+p.blankoOffen+' Termin'+(p.blankoOffen===1?'':'e')+' zu planen':''}${p.tageUebrig!=null?' · noch '+p.tageUebrig+' Tage gültig':''}${voDat(p.rezDatum)}`,
         statusSel: blStatusSelect('pl',p.rezeptNr,p.name),
+        notiz: patNotizField(p.patKey, p.name) })) },
+    { key:'grimz', ico:'📦', color:'var(--primary)', ttl:'GRIMZ-Box Kontrolle · BVB/LHB', go:"switchView('rezepte');showRezeptDetail('bvbpot')",
+      items: grimz.map(p=>({
+        id:'grimz|'+p.rezeptNr,
+        main:esc(p.name),
+        sub:`${p.heilmittel?esc(p.heilmittel)+' · ':''}nur ${p.menge} von bis zu ${p.bvbMaxMoeglich} verordnet (bis ${p.bvbFreqMax}×/Wo)${voDat(p.rezDatum)} · größere Folge-VO anstoßen`,
         notiz: patNotizField(p.patKey, p.name) })) },
     { key:'kap', ico:'📊', color:'var(--primary)', ttl:'Kapazität 4 Wochen im Voraus bereinigen · Ziel 87 %', go:"switchView('controlling')",
       items: kapItems },
@@ -5941,6 +6042,26 @@ function buildAufgabenSections(a){
     } else {
       hbIt.sub = 'heute keine Hausbesuche bis 16:30 im Plan';
     }
+  }
+  // ── To-do 01.10.: Lücken heute + morgen als aufklappbare Unterpunkte von „Plan füllen" ──
+  // Der Hauptpunkt hakt sich AUTOMATISCH ab, sobald keine Lücke mehr offen ist (Lücke im
+  // nächsten Export geschlossen → verschwindet; oder einzeln abgehakt). Klick = Liste auf/zu.
+  const planIt = tgItems.find(it=>it.main.includes('Plan für Heute'));
+  if(planIt){
+    const gH = gapSecs[0].items.map(g=>Object.assign(g,{indent:true, main:'⚡ <b>Heute</b> · '+g.main}));
+    const gM = gapSecs[1].items.map(g=>Object.assign(g,{indent:true, main:'📅 <b>Morgen</b> · '+g.main}));
+    const subs = gH.concat(gM);
+    const offen = subs.filter(g=>!taskDone(g.id)).length;
+    const open = lsGet('cki_secopen_planfill', false);
+    TZ_AUTO_DONE[planIt.id] = offen===0;
+    planIt.onclick = 'togglePlanFill()';
+    planIt.sub = subs.length
+      ? gH.length+' Lücke'+(gH.length!==1?'n':'')+' heute · '+gM.length+' morgen'+(morgenStr?' ('+morgenLabel+')':'')+' · '+
+        (offen ? '<b style="color:var(--accent)">'+offen+' offen</b>' : '<b style="color:var(--teal)">alle geschlossen ✓</b>')+' · '+(open?'▾ Liste zuklappen':'▸ klicken zeigt die Liste')
+      : 'keine Lücken heute und morgen · automatisch erledigt ✓';
+    planIt.link = `<button class="task-open" onclick="event.stopPropagation();switchView('luecken')">Lücken-Tab →</button>`;
+    if(!open) subs.forEach(g=>{ g.rowHide = true; });
+    tgItems.splice(tgItems.indexOf(planIt)+1, 0, ...subs);
   }
   // ── Okt 2026 (Wunsch Chaled): Zuzahlungs-Liste gehört ins Tagesgeschäft ──
   // (vorher stand sie im blauen Tagesziel-Kopf). Angezeigt wird die OFFENE ZUZAHLUNG
@@ -6025,7 +6146,7 @@ function renderAufgaben(){
       tgTotal++; if(isDone) tgDone++;
     }
     // Backoffice: std_bo, abr, Blanko-Aufgaben, Kapazität
-    if(s.key==='std_bo'||s.key==='abr'||s.key==='ft'||s.key==='blum'||s.key==='blpl'||s.key==='kap'){
+    if(s.key==='std_bo'||s.key==='abr'||s.key==='ft'||s.key==='blum'||s.key==='blpl'||s.key==='grimz'||s.key==='kap'){
       boTotal++; if(isDone) boDone++;
     }
   }));
@@ -6138,7 +6259,7 @@ function renderAufgaben(){
           <div class="task-list"${open?'':' style="display:none"'}>`;
         items.forEach(it=>{
           const d = taskDone(it.id);
-          h += `<div class="task${d?' done':''}${it.compact?' task-compact':''}"${it.indent?' style="margin-left:26px"':''}${it.statusSel?'':` onclick="toggleTask('${jsq(it.id)}')"`}>
+          h += `<div class="task${d?' done':''}${it.compact?' task-compact':''}"${taskRowStyle(it)}${it.statusSel?'':` onclick="${it.onclick||`toggleTask('${jsq(it.id)}')`}"`}>
             <div class="task-cb">${d?'✓':''}</div>
             <div class="task-body"><div class="task-main">${it.main}</div><div class="task-sub">${it.sub}</div>${it.notiz||''}</div>
             ${it.statusSel||''}
@@ -6296,7 +6417,7 @@ function renderAufgaben(){
       <div class="task-list"${open?'':' style="display:none"'}>`;
     items.forEach(it=>{
       const d = taskDone(it.id);
-      h += `<div class="task${d?' done':''}${it.compact?' task-compact':''}"${it.indent?' style="margin-left:26px"':''}${it.statusSel?'':` onclick="toggleTask('${jsq(it.id)}')"`}>
+      h += `<div class="task${d?' done':''}${it.compact?' task-compact':''}"${taskRowStyle(it)}${it.statusSel?'':` onclick="${it.onclick||`toggleTask('${jsq(it.id)}')`}"`}>
         <div class="task-cb">${d?'✓':''}</div>
         <div class="task-body"><div class="task-main">${it.main}</div><div class="task-sub">${it.sub}</div>${it.notiz||''}</div>
         ${it.statusSel||''}

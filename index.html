@@ -410,6 +410,10 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--dark);min
 .task-open:hover{background:var(--primary);color:#fff;border-color:var(--primary)}
 .task{display:flex;align-items:center;gap:12px;padding:11px 18px;border-top:1px solid var(--border);cursor:pointer;transition:background .12s}
 .task:hover{background:#f7f9fb}
+.task.task-compact{padding:4px 18px;gap:9px}
+.task-compact .task-cb{width:17px;height:17px;font-size:11px;border-radius:5px}
+.task-compact .task-main{font-weight:600;font-size:12px}
+.task-compact .task-sub:empty{display:none}
 .task-cb{width:22px;height:22px;flex-shrink:0;border:2px solid var(--border);border-radius:6px;display:flex;align-items:center;justify-content:center;font-weight:900;color:#fff;font-size:14px;transition:all .15s}
 .task.done .task-cb{background:var(--teal);border-color:var(--teal)}
 .task-body{min-width:0}
@@ -1312,7 +1316,9 @@ function parseData(rows, sheetName){
   cells.forEach(c=>{
     if(!c.patKey || !c.rezeptNr || c.zuzahlung===null) return;
     const k = c.patKey+'|'+c.rezeptNr;
-    const e = zzRez[k] = zzRez[k] || {patKey:c.patKey, rezeptNr:c.rezeptNr, zz:0, anz:0, befreit:false};
+    const e = zzRez[k] = zzRez[k] || {patKey:c.patKey, rezeptNr:c.rezeptNr, zz:0, anz:0, befreit:false, blanko:false, hb:false};
+    if(isBlankoHM(c.heilmittel)) e.blanko = true;
+    if(c.hausbesuch) e.hb = true;
     if(c.zuzahlung>e.zz) e.zz = c.zuzahlung;
     if(c.anzahlung!==null && c.anzahlung>e.anz) e.anz = c.anzahlung;
     if(c.befreit) e.befreit = true;
@@ -1324,7 +1330,7 @@ function parseData(rows, sheetName){
     if(offen<=0.005) return;
     const p = zzOffen[e.patKey] = zzOffen[e.patKey] || {betrag:0, rezepte:[]};
     p.betrag = Math.round((p.betrag+offen)*100)/100;
-    p.rezepte.push({rezeptNr:e.rezeptNr, offen:offen, soll:e.zz});
+    p.rezepte.push({rezeptNr:e.rezeptNr, offen:offen, soll:e.zz, blanko:e.blanko, hb:e.hb});
   });
 
   DATA = {cells, dates, therapists, dauerPats, patHinweise, zzOffen, hatZuzahlungsdaten};
@@ -2097,7 +2103,8 @@ function analyzeRezepteFull(cellsForDay, allCells, opts){
     //   → Schulter-Patienten mit normalem Rezept (noch kein BV)
     //   → Aktion: Beim Arzt Umstellung auf Blanko anstoßen
     //   NICHT wenn der Patient bereits eine aktive Blanko-VO hat (Proforma-Fall, Okt 2026)
-    if(isShoulder(p.icd) && !isBlankoHM(p.heilmittel) && !aktiveBlankoPats.has(p.patKey||patKeyFor(p))){
+    //   NICHT wenn der Patient eine Dauerplan-Maske hat (To-do 01.10. – jedes Kriterium reicht allein)
+    if(isShoulder(p.icd) && !isBlankoHM(p.heilmittel) && !aktiveBlankoPats.has(p.patKey||patKeyFor(p)) && !isDauerPatKey(p.patKey||patKeyFor(p))){
       isBlanko = true;
       tags.blanko = true;
       // (Push in cats.blanko passiert unten zentral – vorher doppelt = Dopplungen in der Liste)
@@ -5477,8 +5484,14 @@ function zuzahlungHeute(){
     if(c.dateStr!==day || c.belArt!=='R' || !c.patNach || !c.termIdent || !c.belegt) return;
     const k = c.patKey; if(!k) return;
     const zz = zzOffenFor(k); if(!zz) return;
+    // To-do 01.10.: Blanko-VO und Hausbesuche gehören nicht in die Kassier-Liste
+    // (HB-Patienten kommen nicht an die Theke). Betrag = nur die übrigen Rezepte.
+    if(c.hausbesuch) return;
+    const rez = zz.rezepte.filter(r=>!r.blanko && !r.hb);
+    if(!rez.length) return;
     let p = pats[k];
-    if(!p) p = pats[k] = { key:k, name:(c.patVor+' '+c.patNach).trim(), start:c.start, therapist:c.therapist||'', betrag:zz.betrag, nRez:zz.rezepte.length };
+    if(!p) p = pats[k] = { key:k, name:(c.patVor+' '+c.patNach).trim(), start:c.start, therapist:c.therapist||'',
+      betrag:Math.round(rez.reduce((s,r)=>s+r.offen,0)*100)/100, nRez:rez.length };
     if(c.start<p.start) p.start = c.start;
   });
   const list = Object.values(pats).sort((a,b)=>a.start-b.start || a.name.localeCompare(b.name));
@@ -5798,7 +5811,7 @@ const TZ_TAGESGESCHAEFT = [
   {t:'Tagesgeschäft', s:'laufende Aufgaben des Tages abarbeiten'},
   {t:'Tagesberichte', s:''},
   {t:'Plan für Heute + Morgen füllen', s:''},
-  {t:'Akten für den nächsten Tag raussuchen', s:''},
+  {t:'Akten für den nächsten Tag rausnehmen / Privat- und HB-Daten eintragen', s:''},
   {t:'HB Akten aus dem Tagesgeschäft kontrollieren', s:''},
   {t:'Zuzahlungen kassieren', s:''},
   {t:'Geburtstage Mitarbeiter', s:''}
@@ -5816,10 +5829,8 @@ const TZ_SCHWERPUNKT = {
   5:['Ausgefallene Termine','Stornoliste']
 };
 // Punkt 1 (Call 15.09.): Spätschicht entfällt – alles unter Frühschicht, jeweils "für den nächsten Tag"
-const TZ_FRUEHSCHICHT = [
-  {t:'Alle Privatpatienten für den nächsten Tag eintragen', s:''},
-  {t:'Alle HB Akten für den nächsten Tag eintragen', s:''}
-];
+// To-do 01.10.: Privat-/HB-Daten eintragen steckt jetzt in der Akten-Aufgabe (Tagesgeschäft) – keine Dopplung.
+const TZ_FRUEHSCHICHT = [];
 
 // Aufgaben-Sektionen headless aufbauen (gemeinsame Basis für renderAufgaben
 // und die Browser-Benachrichtigungen, Punkt 19) — nutzt currentDate.
@@ -5882,13 +5893,6 @@ function buildAufgabenSections(a){
         main:esc(r.name),
         tdef: r.nextTermin ? timeBlockOfHour(r.nextTermin.getHours() + r.nextTermin.getMinutes()/60) : undefined,
         sub:`${r.erbracht}/${r.echteMenge}${voDat(r.rezDatum)} · ${r.mobil?esc(r.mobil):'keine Nummer'}` })) },
-    { key:'fvo', ico:'🔄', color:'var(--amber)', ttl:'Passive Patienten', go:"gotoFolgeVO()",
-      items: a.folgeVO.map(r=>({
-        id:'fvo|'+r.rezeptNr,
-        main:esc(r.name),
-        tdef: r.nextTermin ? timeBlockOfHour(r.nextTermin.getHours() + r.nextTermin.getMinutes()/60) : undefined,
-        sub:`Serie fertig · Arzt: ${r.arzt?esc(r.arzt):'?'}${voDat(r.rezDatum)}`,
-        notiz: patNotizField(r.patKey, r.name) })) },
     { key:'blum', ico:'📄', color:'var(--purple)', ttl:'Rezeptänderungen nachhalten · auf Blanko-VO umstellen', go:"switchView('rezepte')",
       items: blUm.map(p=>({
         id:'blum|'+p.rezeptNr,
@@ -5904,7 +5908,15 @@ function buildAufgabenSections(a){
         statusSel: blStatusSelect('pl',p.rezeptNr,p.name),
         notiz: patNotizField(p.patKey, p.name) })) },
     { key:'kap', ico:'📊', color:'var(--primary)', ttl:'Kapazität 4 Wochen im Voraus bereinigen · Ziel 87 %', go:"switchView('controlling')",
-      items: kapItems }
+      items: kapItems },
+    // To-do 01.10.: „Passive Patienten" (Marketing-Liste) bleibt Aufgabe, steht aber ganz unten
+    { key:'fvo', ico:'🔄', color:'var(--amber)', ttl:'Passive Patienten', go:"gotoFolgeVO()",
+      items: a.folgeVO.map(r=>({
+        id:'fvo|'+r.rezeptNr,
+        main:esc(r.name),
+        tdef: r.nextTermin ? timeBlockOfHour(r.nextTermin.getHours() + r.nextTermin.getMinutes()/60) : undefined,
+        sub:`Serie fertig · Arzt: ${r.arzt?esc(r.arzt):'?'}${voDat(r.rezDatum)}`,
+        notiz: patNotizField(r.patKey, r.name) })) }
   ];
 
   // ── Standardaufgaben aus der Arbeitsaufteilung (Vorlage) ──
@@ -5916,17 +5928,18 @@ function buildAufgabenSections(a){
   const tgItems = mkStd('tg',TZ_TAGESGESCHAEFT);
   const hbIt = tgItems.find(it=>it.main.indexOf('HB Akten')===0 || it.main.includes('HB Akten'));
   if(hbIt){
-    const hb = hausbesucheHeute();
+    // To-do 01.10.: nur Hausbesuche bis Schichtende (16:30)
+    const hb = hausbesucheHeute().filter(x=>x.start.getHours()+x.start.getMinutes()/60 < 16.5);
     if(hb.length){
-      hbIt.sub = hb.length+' Hausbesuch'+(hb.length>1?'e':'')+' heute · Akten prüfen';
+      hbIt.sub = hb.length+' Hausbesuch'+(hb.length>1?'e':'')+' heute bis 16:30 · Akten prüfen';
       // Okt 2026 (Wunsch Chaled): jeder Hausbesuch als eigene abhakbare Unteraufgabe
       const hbSubs = hb.map(x=>({
         id:'hb|'+currentDate+'|'+x.patKey, indent:true,
         main:'🏠 <b>'+x.time+'</b> · '+esc(x.name),
-        sub:(x.therapist?esc(x.therapist)+' · ':'')+'Akte geprüft?' }));
+        sub:(x.therapist?esc(x.therapist)+' · ':'')+'Datum/Unterschrift kontrolliert?' }));
       tgItems.splice(tgItems.indexOf(hbIt)+1, 0, ...hbSubs);
     } else {
-      hbIt.sub = 'heute keine Hausbesuche im Plan';
+      hbIt.sub = 'heute keine Hausbesuche bis 16:30 im Plan';
     }
   }
   // ── Okt 2026 (Wunsch Chaled): Zuzahlungs-Liste gehört ins Tagesgeschäft ──
@@ -5945,9 +5958,9 @@ function buildAufgabenSections(a){
       // Checkbox = kassiert-Status (id-Präfix 'zzk|' → taskDone/toggleTask routen
       // durch zzKassiert/toggleZzKassiert, bleibt synchron mit Kopf-Zähler 💶).
       const zzSubs = zh.list.map(p=>({
-        id:'zzk|'+p.key, indent:true,
-        main:'💶 <b>'+hhmm(p.start)+'</b> · '+esc(p.name)+' · <b style="color:var(--fire)">'+euroFmt(p.betrag)+'</b> Zuzahlung offen',
-        sub:p.nRez+' Rezept'+(p.nRez!==1?'e':'')+(p.therapist?' · '+esc(p.therapist):'')+' · kassiert?' }));
+        id:'zzk|'+p.key, indent:true, compact:true,
+        main:esc(p.name)+' · <b style="color:var(--fire)">'+euroFmt(p.betrag)+'</b>',
+        sub:'' }));
       tgItems.splice(tgItems.indexOf(zzIt)+1, 0, ...zzSubs);
     } else {
       zzIt.sub = 'heute keine offenen Zuzahlungen bei Patienten mit Termin';
@@ -5980,10 +5993,10 @@ function buildAufgabenSections(a){
     return true;
   });
   const stdSections = [
+    { key:'std_fs', ico:'🌅', color:'var(--accent)', ttl:'Frühschicht', defOpen:true, items:mkStd('fs',TZ_FRUEHSCHICHT) },
     { key:'std_tg', ico:'📋', color:'var(--primary)', ttl:'Tagesgeschäft', defOpen:true, items:tgItems },
     { key:'std_bo', ico:'🖥️', color:'#0891b2', ttl:'Backoffice', defOpen:true, items:boItems },
-    { key:'std_sp', ico:'⭐', color:'var(--amber)', ttl:'Schwerpunkt '+wdName, defOpen:true, items:mkStd('sp',spTasks) },
-    { key:'std_fs', ico:'🌅', color:'var(--accent)', ttl:'Frühschicht', defOpen:true, items:mkStd('fs',TZ_FRUEHSCHICHT) }
+    { key:'std_sp', ico:'⭐', color:'var(--amber)', ttl:'Schwerpunkt '+wdName, defOpen:true, items:mkStd('sp',spTasks) }
   ].filter(s=>s.items.length);
   const allSections = stdSections.concat(sections);
   return {gapsHeute, gapsMorgen, morgenStr, morgenLabel, rez, sections, stdSections, allSections};
@@ -6125,7 +6138,7 @@ function renderAufgaben(){
           <div class="task-list"${open?'':' style="display:none"'}>`;
         items.forEach(it=>{
           const d = taskDone(it.id);
-          h += `<div class="task${d?' done':''}"${it.indent?' style="margin-left:26px"':''}${it.statusSel?'':` onclick="toggleTask('${jsq(it.id)}')"`}>
+          h += `<div class="task${d?' done':''}${it.compact?' task-compact':''}"${it.indent?' style="margin-left:26px"':''}${it.statusSel?'':` onclick="toggleTask('${jsq(it.id)}')"`}>
             <div class="task-cb">${d?'✓':''}</div>
             <div class="task-body"><div class="task-main">${it.main}</div><div class="task-sub">${it.sub}</div>${it.notiz||''}</div>
             ${it.statusSel||''}
@@ -6283,7 +6296,7 @@ function renderAufgaben(){
       <div class="task-list"${open?'':' style="display:none"'}>`;
     items.forEach(it=>{
       const d = taskDone(it.id);
-      h += `<div class="task${d?' done':''}"${it.indent?' style="margin-left:26px"':''}${it.statusSel?'':` onclick="toggleTask('${jsq(it.id)}')"`}>
+      h += `<div class="task${d?' done':''}${it.compact?' task-compact':''}"${it.indent?' style="margin-left:26px"':''}${it.statusSel?'':` onclick="toggleTask('${jsq(it.id)}')"`}>
         <div class="task-cb">${d?'✓':''}</div>
         <div class="task-body"><div class="task-main">${it.main}</div><div class="task-sub">${it.sub}</div>${it.notiz||''}</div>
         ${it.statusSel||''}

@@ -1322,7 +1322,8 @@ function parseData(rows, sheetName){
   // THEORG füllt „Zuzahlung" (Soll) und „Rezeptwert" ERST nach dem Taxieren/Abrechnen. Bei
   // laufenden Rezepten stehen beide auf 0,00 – nur „Anzahlung" + Quittungsnummer zeigen, ob der
   // Patient schon gezahlt hat. Deshalb zwei Fälle (Okt 2026, geprüft am Export 156bay_8):
-  //   A) Soll vorhanden (abgerechnet):  offen = Zuzahlung − Anzahlung
+  //   A) Soll vorhanden (taxiert, aber noch NICHT abgerechnet):  offen = Zuzahlung − Anzahlung
+  //      Abgerechnete Rezepte werden gar nicht angezeigt.
   //   B) laufendes Rezept, Soll = 0:    offen, wenn Kassenrezept, erwachsen, nicht befreit, echte
   //      Menge (kein Dauer-Platzhalter, nicht storniert) UND weder Anzahlung noch Quittung.
   //      Betrag = 10 € + Menge × 10 % des Einheitspreises (je Einheit gerundet) – deckt sich bei
@@ -1335,7 +1336,7 @@ function parseData(rows, sheetName){
     if(!c.patKey || !c.rezeptNr || c.zuzahlung===null) return;
     const k = c.patKey+'|'+c.rezeptNr;
     const e = zzRez[k] = zzRez[k] || {patKey:c.patKey, rezeptNr:c.rezeptNr, zz:0, anz:0, befreit:false, blanko:false, hb:false,
-      quittung:false, kasse:'', art:'', menge:null, geb:null, preise:{}, dauer:false, storno:false, praev:isPraevHM(c.heilmittel)};
+      quittung:false, kasse:'', art:'', menge:null, geb:null, preise:{}, dauer:false, storno:false, abger:false, praev:isPraevHM(c.heilmittel)};
     if(isBlankoHM(c.heilmittel)) e.blanko = true;
     if(c.hausbesuch) e.hb = true;
     if(c.zuzahlung>e.zz) e.zz = c.zuzahlung;
@@ -1345,6 +1346,7 @@ function parseData(rows, sheetName){
     if(c.quittungNr) e.quittung = true;
     if(c.dauertermin) e.dauer = true;
     if(/abgebrochen/i.test(c.bearbStatus||'')) e.storno = true;
+    if(/^abger/i.test(c.bearbStatus||'') || c.rechnungNr || c.abrechnungsdatum) e.abger = true;
     if(!e.kasse && c.kasse) e.kasse = c.kasse;
     if(!e.art && c.artVerord) e.art = c.artVerord;
     if(e.menge===null && c.menge) e.menge = c.menge;
@@ -1354,6 +1356,7 @@ function parseData(rows, sheetName){
   const zzOffen = {};
   Object.values(zzRez).forEach(e=>{
     if(e.befreit) return;
+    if(e.abger) return;                                                // abgerechnete Rezepte gehören nicht in die Kassier-Liste (Wunsch 09.10.)
     let offen = 0, geschaetzt = false;
     if(e.zz>0){                                                        // A) Soll bekannt
       offen = Math.round((e.zz - e.anz)*100)/100;

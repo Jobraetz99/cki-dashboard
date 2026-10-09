@@ -773,7 +773,7 @@ let currentNRFilter = 'all';
 let currentBlStFilter = 'offen';  // Punkt 8 (Call 15.09.) · A7 (Call 18.09.): Default = nur „offen" — fertige/in Bearbeitung per Filter
 let verlaufTab = 'tg';            // Punkt 11 (Call 15.09.): Rubrik im Verlauf-Reiter (tg/bo/sp)
 let verlaufPerson = '';           // Punkt 4 (Call 23.09.): Mitarbeiter-Filter im Verlauf ('' = alle)
-let currentOffeneFilter = 'w4';
+let currentOffeneFilter = 'alle';
 let currentFvoFilter = 'offen';
 let currentPotFilter = 'alle';
 let potTab = 'kand';   // Reiter in „Potenzial Dauer": 'kand' = Kandidaten ohne Maske D, 'dnf' = Dauerpatienten ohne Zukunftstermin
@@ -1335,7 +1335,10 @@ function parseData(rows, sheetName){
     p.rezepte.push({rezeptNr:e.rezeptNr, offen:offen, soll:e.zz, blanko:e.blanko, hb:e.hb});
   });
 
-  DATA = {cells, dates, therapists, dauerPats, patHinweise, zzOffen, hatZuzahlungsdaten};
+  // Lizenznummer des Exports = Standort-Kennung (für standortbezogene Merklisten)
+  let lizenz = '';
+  for(let i=1;i<rows.length && i<50 && !lizenz;i++){ const v = rows[i] && rows[i][COL.lizenz]; if(v!==null && v!==undefined && String(v).trim()) lizenz = String(v).trim(); }
+  DATA = {cells, dates, therapists, dauerPats, patHinweise, zzOffen, hatZuzahlungsdaten, lizenz};
   
   // Heute lokal (nicht UTC!)
   const today = localDateStr(new Date());
@@ -1709,6 +1712,7 @@ function renderLuecken(){
             <div class="ac-t">${t.name} — ${Math.round(g.min)} min</div>
             <div class="ac-s">${fmt(g.start)} – ${fmt(g.end)} · ${slots} Slot${slots>1?'s':''} à 20 min</div>
           </div>
+          ${taskStatusSelect('gap|'+currentDate+'|'+t.name+'|'+hhmm(g.start), t.name+' '+hhmm(g.start))}
           <span class="ac-p">🔥 ${slots}×</span>
         </div>
         <div id="${gapId}"></div>`;
@@ -2554,7 +2558,7 @@ function showRezeptDetail(k){
       const age = p.geb ? Math.floor((Date.now()-new Date(p.geb).getTime())/(365.25*86400000)) : null;
       const ageStr = age ? `${age}J` : '';
       const pct = p.bvbMaxMoeglich ? Math.min(100, Math.round((p.menge/p.bvbMaxMoeglich)*100)) : 0;
-      h += `<div class="pr${prCardClass(k,p)}" data-lf-sel="${esc(p.name)}" onclick="selectLeitfadenPatient('${jsq(p.name)}','${jsq(p.mobil||'')}','${jsq(p.therapist||'')}','')">
+      h += `<div class="pr${p.rezeptNr ? (taskDone('grimz|'+p.rezeptNr)?' pr-done':'') : prCardClass(k,p)}" style="flex-wrap:wrap" data-lf-sel="${esc(p.name)}" onclick="selectLeitfadenPatient('${jsq(p.name)}','${jsq(p.mobil||'')}','${jsq(p.therapist||'')}','')">
         <div class="pr-i">
           <div class="pr-n">${p.name} ${ageStr ? `<span style="font-size:9px;color:var(--muted);font-weight:600;margin-left:6px">${ageStr}</span>` : ''} <span style="font-size:9px;color:var(--primary);font-weight:700;margin-left:6px">${p.icd||'—'}</span></div>
           <div class="pr-d">
@@ -2563,8 +2567,9 @@ function showRezeptDetail(k){
           </div>
           <div class="progress-mini"><div class="progress-mini-f" style="width:${pct}%;background:var(--primary)"></div></div>
         </div>
-        ${prStatusChip(k,p)}
+        ${p.rezeptNr ? taskStatusSelect('grimz|'+p.rezeptNr, p.name) : prStatusChip(k,p)}
         ${p.mobil?`<a href="tel:${String(p.mobil).replace(/[^+\\d]/g,'')}" class="pr-tel" onclick="event.stopPropagation()">📞 ${p.mobil}</a>`:''}
+        ${patNotizField(p.patKey||patKeyFor(p), p.name)}
       </div>`;
     });
   } else if(k==='untertaktet'){
@@ -2727,8 +2732,8 @@ function renderOffene(){
   // Rehasport/Anamnese raus. Blanko-VOs sind enthalten (echte Menge via getBlankoMax).
 
   // A8 (Call 18.09.): nur noch zwei Ansichten — seit 2 Wochen und seit 4 Wochen (1 Monat)
-  const WEEKS = { w2:14, w4:28 };
-  if(!(currentOffeneFilter in WEEKS)) currentOffeneFilter = 'w4';
+  const WEEKS = { alle:0, w2:14, w4:28 };
+  if(!(currentOffeneFilter in WEEKS)) currentOffeneFilter = 'alle';
   const threshold = WEEKS[currentOffeneFilter];
 
   // 1) Stichtag: spätester wahrgenommener (belegter) Termin im gesamten Export
@@ -2806,24 +2811,20 @@ function renderOffene(){
 
   // 5) Basis-Pool: gestartet, kein Zukunftstermin, Handlungsbedarf, letzter Termin bekannt
   // A8 (Call 18.09.): abgerechnete Rezepte erscheinen GAR NICHT mehr (vorher: doch, wenn rest>0)
-  const basePoolAll = rezepte.filter(r=>
-    r.erbracht>0 && !r.hasFuture && r.tageSeitLetzterTermin!=null &&
-    !r.istAbgerechnet
-  );
-  // A8 (Call 18.09.): Uralt-Fälle fest raus — der bisherige 1-Monats-Filter ist jetzt immer aktiv
-  // (Patienten ohne aktiven Termin im letzten Monat werden nicht mehr angezeigt).
-  const basePool = basePoolAll.filter(r=>hasActiveTerminInLast60Days(r.rezeptNr, DATA.cells));
-  const cntFor = t => basePool.filter(r=>r.tageSeitLetzterTermin>=t).length;
-
-  // 6) Kandidaten nach gewähltem Schwellwert + zwei Anzeige-Gruppen
-  const kandidaten = basePool.filter(r=>r.tageSeitLetzterTermin>=threshold);
-  const grpFertig = kandidaten.filter(r=>r.erbracht>=r.echteMenge && !r.istAbgerechnet && !isPraevHM(r.heilmittel))
-    .sort((a,b)=>(b.tageSeitLetzterTermin||0)-(a.tageSeitLetzterTermin||0));
-  const grpOffen = kandidaten.filter(r=>r.rest>0)
-    .sort((a,b)=>(b.tageSeitLetzterTermin||0)-(a.tageSeitLetzterTermin||0));
+  // Okt 2026: Der Reiter zeigt DIESELBEN Aufgaben wie das Tagesziel („Rezepte abrechnen" /
+  // „Rezept zu Ende planen") – gleiche Quelle (computeActionItems), gleiche Aufgaben-ID.
+  // Vorher: eigener Pool (≥ 2/4 Wochen ohne Termin UND Termin im letzten Monat) → praktisch leer,
+  // während das Tagesziel dutzende Aufgaben hierher verlinkte. 2/4 Wochen grenzen nur noch ein.
+  const _act = computeActionItems();
+  const seit = r => Math.max(0, r.tageSeitLetzterTermin||0);   // letzter Termin HEUTE ergibt −1 → als 0 zählen
+  const bySeit = (a,b)=> seit(b)-seit(a);
+  const cntFor = t => _act.typA.concat(_act.typB).filter(r=>seit(r)>=t).length;
+  const grpFertig = _act.typA.filter(r=>seit(r)>=threshold).sort(bySeit);
+  const grpOffen  = _act.typB.filter(r=>seit(r)>=threshold).sort(bySeit);
+  const kandidaten = grpFertig.concat(grpOffen);
 
   let h = `<div class="summary">
-    <h2>🪦 Offene Rezepte · seit ${threshold/7|0} Wochen kein Termin</h2>
+    <h2>🪦 Offene Rezepte · ${threshold?'seit '+(threshold/7|0)+' Wochen kein Termin':'alle offenen Aufgaben'}</h2>
     <div class="sg">
       <div class="si"><div class="si-l">💰 Fertig, nicht abgerechnet</div><div class="si-v">${grpFertig.length}</div><div class="si-s">Geld liegt auf der Straße!</div></div>
       <div class="si"><div class="si-l">📞 Offene Behandlungen</div><div class="si-v">${grpOffen.length}</div><div class="si-s">Rezept noch nicht ausgeschöpft</div></div>
@@ -2850,11 +2851,12 @@ function renderOffene(){
 
   // A8 (Call 18.09.): 1-Monats-Filter ist jetzt fest aktiv (kein Toggle mehr) — nur Hinweis
   h += `<div style="background:var(--primary-bg);border:1px solid var(--primary);border-radius:10px;padding:10px 12px;margin-bottom:14px;font-size:11px;color:var(--dark)">
-    🚫 <b style="color:var(--primary)">Altlasten fest ausgeblendet:</b> Patienten ohne aktiven Termin im letzten Monat und Rezepte mit Status „abgerechnet" erscheinen hier nicht mehr.
+    🔗 <b style="color:var(--primary)">Gleiche Aufgaben wie im Tagesziel:</b> Hier stehen genau die Rezepte aus „Rezepte abrechnen" und „Rezept zu Ende planen". Status und Notiz gelten an beiden Stellen. Abgerechnete und stornierte Rezepte erscheinen nicht.
   </div>`;
 
   h += `<div class="nr-filters" style="margin-bottom:14px">`;
   [
+    {f:'alle', l:'📋 Alle', t:0},
     {f:'w2', l:'⏱️ seit 2 Wochen', t:14},
     {f:'w4', l:'📅 seit 4 Wochen (1 Monat)', t:28}
   ].forEach(x=>{
@@ -2891,7 +2893,7 @@ function renderOffene(){
   }
 
   if(!kandidaten.length){
-    h += `<div class="empty" style="background:var(--teal-bg);border:1px solid var(--teal);color:var(--teal)"><b>🎉 Nichts offen!</b><br><span style="font-size:11px">Kein Rezept mit ${threshold/7|0}+ Wochen ohne Termin, das noch Handlungsbedarf hätte.</span></div>`;
+    h += `<div class="empty" style="background:var(--teal-bg);border:1px solid var(--teal);color:var(--teal)"><b>🎉 Nichts offen!</b><br><span style="font-size:11px">Kein Rezept mit Handlungsbedarf${threshold?' und '+(threshold/7|0)+'+ Wochen ohne Termin':''}.</span></div>`;
   }
 
   document.getElementById('content').innerHTML = h;
@@ -2920,7 +2922,7 @@ function renderKarteileiche(r, typ){
     action = `<b style="color:${tColor}">📞 Anrufen!</b> Letzte Behandlung: ${lastDateStr}${r.tageSeitLetzterTermin?' (vor '+r.tageSeitLetzterTermin+' Tagen)':''}`;
   }
   
-  return `<div class="pr" style="border-left:3px solid ${tColor}" data-lf-sel="${esc(r.name)}" onclick="selectLeitfadenPatient('${jsq(r.name)}','${jsq(r.mobil||'')}','${jsq(r.therapist||'')}','')">
+  return `<div class="pr${taskDone((typ==='abr'?'abr|':'ft|')+r.rezeptNr)?' pr-done':''}" style="border-left:3px solid ${tColor};flex-wrap:wrap" data-lf-sel="${esc(r.name)}" onclick="selectLeitfadenPatient('${jsq(r.name)}','${jsq(r.mobil||'')}','${jsq(r.therapist||'')}','')">
     <div class="pr-i">
       <div class="pr-n">${r.name} ${ageStr ? `<span style="font-size:9px;color:var(--muted);font-weight:600;margin-left:6px">${ageStr}</span>` : ''} <span style="font-size:9px;color:${tColor};font-weight:700;margin-left:6px">${r.icd||'—'}</span></div>
       <div class="pr-d">
@@ -2930,7 +2932,9 @@ function renderKarteileiche(r, typ){
       </div>
       <div class="progress-mini"><div class="progress-mini-f" style="width:${pct}%;background:${tColor}"></div></div>
     </div>
+    ${taskStatusSelect((typ==='abr'?'abr|':'ft|')+r.rezeptNr, r.name)}
     ${r.mobil?`<a href="tel:${r.mobil}" class="pr-tel" onclick="event.stopPropagation()">📞 ${r.mobil}</a>`:''}
+    ${patNotizField(r.patKey, r.name)}
   </div>`;
 }
 
@@ -4634,7 +4638,7 @@ function calcKap4Wochen(){
 
 // ═══════════════════════════════════════════════════════════
 // Navigation aus den Aufgaben-Kacheln in die jeweiligen Tabs
-function gotoOffene(f){ currentOffeneFilter=(f==='w2'||f==='w4')?f:'w4'; switchView('offene'); }  // A8: nur noch 2/4 Wochen
+function gotoOffene(f){ currentOffeneFilter=(f==='w2'||f==='w4')?f:'alle'; if(f==='ohne') lsSet('cki_offene_show_ohne', true); switchView('offene'); }  // A8: nur noch 2/4 Wochen
 function gotoFolgeVO(){ currentFvoFilter='offen'; switchView('folgevo'); }
 // ── Punkt 1 (Call 23.09.): Deep-Link Tagesziel → konkrete Lücke im Lücken-Tab ──
 //    Springt zum richtigen Tag, öffnet die Nachrücker-Liste der Lücke und scrollt hin.
@@ -4663,7 +4667,68 @@ function taskDone(id){
 }
 function toggleTask(id){
   if(String(id).indexOf('zzk|')===0){ toggleZzKassiert(String(id).slice(4)); return; }
-  lsSet('cki_check_'+id, !taskDone(id)); renderAufgaben();
+  const nd = !taskDone(id);
+  aufWrite(id, {st: nd?'erledigt':'offen', ts:Date.now(), by:getMe()||''});
+  renderAufgaben();
+}
+
+// ═══ Einheitlicher Aufgaben-Status (Okt 2026, wie im Werneck-Patientenchecker) ═══════════
+// JEDES Item ist EINE Aufgabe mit EINER ID (z. B. abr|<Rezept>, ft|<Rezept>, grimz|<Rezept>,
+// gap|<Datum>|<Therapeut>|<HH:MM>). Tagesziel und Reiter zeigen dieselbe Status-Auswahl auf
+// derselben ID → was im Reiter gesetzt wird, steht im Tagesziel und umgekehrt.
+// Speicher: cki_tasks = { id: {st, ts, by, reason?} }. Der Haken (cki_check_<id>) wird
+// mitgeschrieben, damit Fortschrittsbalken/Zähler/Historie unverändert weiterlaufen.
+// Aufgaben mit eigenem Fach-Status (Blanko, Dauerplan, Verordnungsfall, weiter geplant)
+// behalten ihren; alle anderen haben diese vier Stufen.
+const AUF_STATUS = [['offen','🔴 offen'],['ib','🟡 in Bearbeitung'],['erledigt','✅ erledigt'],['abgelehnt','🚫 abgelehnt']];
+const AUF_FARBE = {offen:'var(--accent)', ib:'var(--amber)', erledigt:'var(--teal)', abgelehnt:'var(--muted)'};
+let _aufCache = null;
+function aufAll(){ if(!_aufCache) _aufCache = lsGet('cki_tasks', {}) || {}; return _aufCache; }
+function aufWrite(id, e){
+  const a = aufAll(); a[id] = e; lsSet('cki_tasks', a);
+  lsSet('cki_check_'+id, e.st==='erledigt' || e.st==='abgelehnt');
+}
+function taskSt(id){
+  const e = aufAll()[id];
+  if(e && e.st) return e.st;
+  return lsGet('cki_check_'+id, false) ? 'erledigt' : 'offen';   // Alt-Haken aus der Zeit vor dem Status
+}
+// Standort-Kennung für standortbezogene Merklisten (sonst gälten nach einem Standortwechsel
+// alle Aufgaben des vorherigen Standorts als „erledigt"). SharePoint-Standort, sonst Lizenznummer.
+function aufOrtKey(){
+  try{ if(typeof spCurrentLoc!=='undefined' && spCurrentLoc && spCurrentLoc.name) return String(spCurrentLoc.name); }catch(e){}
+  return (DATA && DATA.lizenz) ? String(DATA.lizenz) : 'lokal';
+}
+function rerenderCurrent(){
+  if(currentView==='aufgaben') renderAufgaben();
+  else if(currentView==='rezepte') showRezeptDetail(currentRezeptCat);
+  else if(currentView==='offene') renderOffene();
+  else if(currentView==='luecken') renderLuecken();
+  else if(currentView==='potential') renderPotential();
+  else if(currentView==='folgevo') renderFolgeVO();
+  else if(currentView==='verlauf') renderVerlauf();
+}
+function setTaskSt(id, st, name){
+  if(!AUF_STATUS.some(o=>o[0]===st)) return;
+  const e = {st:st, ts:Date.now(), by:getMe()||''};
+  if(st==='abgelehnt'){                       // Ablehnung nie ohne Begründung (Konvention)
+    const reason = pflichtBegruendung('Warum wurde die Aufgabe'+(name?' „'+name+'"':'')+' ABGELEHNT?');
+    if(reason===null){ rerenderCurrent(); return; }
+    ablehnungLog('aufgabe', id, name, reason);
+    e.reason = reason;
+  }
+  aufWrite(id, e);
+  rerenderCurrent();
+}
+// Die EINE Status-Auswahl für Tagesziel und alle Reiter.
+function taskStatusSelect(id, name){
+  const cur = taskSt(id), col = AUF_FARBE[cur] || AUF_FARBE.offen;
+  const e = aufAll()[id];
+  const tip = e && e.ts ? 'zuletzt geändert '+new Date(e.ts).toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit'})+(e.by?' · '+e.by:'')+(e.reason?' · Grund: '+e.reason:'') : 'Status der Aufgabe';
+  let o = '';
+  AUF_STATUS.forEach(([v,l])=>{ o += '<option value="'+v+'"'+(v===cur?' selected':'')+'>'+l+'</option>'; });
+  return '<select class="asg-sel auf-st" title="'+esc(tip)+'" style="border-color:'+col+';color:'+col+';font-weight:700" '+
+    'onclick="event.stopPropagation()" onchange="setTaskSt(\''+esc(jsq(String(id)))+'\',this.value,\''+esc(jsq(name||''))+'\')">'+o+'</select>';
 }
 
 // ── Punkt 1+2 (Call 17.09.): Weiterplan-Status pro Patient & Tag ──────────────
@@ -4900,7 +4965,7 @@ function renderUnterschriften(){
 // Punkt 6 (Call 17.09.): Backoffice-Review aller Ablehnungen mit Begründung.
 // „Endgültig geprüft" durch die Leitung kommt erst mit Microsoft-Konten (echte Rechte-Trennung).
 function renderAblehnungsReview(){
-  const typLabel = { weiterplan:'📞 nicht weiter geplant', dauerplan:'🎯 Dauerplan abgelehnt',
+  const typLabel = { aufgabe:'🚫 Aufgabe abgelehnt', weiterplan:'📞 nicht weiter geplant', dauerplan:'🎯 Dauerplan abgelehnt',
     blanko_um:'📄 Blanko-Umstellung abgelehnt', blanko_pl:'💎 Blanko-Planung abgelehnt', folgevo:'🔄 Folge-VO abgelehnt',
     rezeptbestellung:'📦 Rezeptbestellung abgelehnt', nachruecker:'⚡ Nachrücken abgelehnt' };
   const all = ablehnungen().slice().sort((x,y)=>y.ts-x.ts);
@@ -6025,13 +6090,15 @@ function buildAufgabenSections(a){
         id:'abr|'+r.rezeptNr,
         main:esc(r.name),
         tdef: r.nextTermin ? timeBlockOfHour(r.nextTermin.getHours() + r.nextTermin.getMinutes()/60) : undefined,
-        sub:`${r.erbracht}/${r.echteMenge} erbracht${r.heilmittel?' · '+esc(r.heilmittel):''}${voDat(r.rezDatum)}${r.tageSeitLetzterTermin!=null?' · seit '+r.tageSeitLetzterTermin+' Tagen':''}` })) },
+        sub:`${r.erbracht}/${r.echteMenge} erbracht${r.heilmittel?' · '+esc(r.heilmittel):''}${voDat(r.rezDatum)}${r.tageSeitLetzterTermin!=null?' · seit '+r.tageSeitLetzterTermin+' Tagen':''}`,
+        notiz: patNotizField(r.patKey, r.name) })) },
     { key:'ft', ico:'📞', color:'var(--primary)', ttl:'Rezept zu Ende planen', go:"gotoOffene('ohne')",
       items: a.typB.map(r=>({
         id:'ft|'+r.rezeptNr,
         main:esc(r.name),
         tdef: r.nextTermin ? timeBlockOfHour(r.nextTermin.getHours() + r.nextTermin.getMinutes()/60) : undefined,
-        sub:`${r.erbracht}/${r.echteMenge}${voDat(r.rezDatum)} · ${r.mobil?esc(r.mobil):'keine Nummer'}` })) },
+        sub:`${r.erbracht}/${r.echteMenge}${voDat(r.rezDatum)} · ${r.mobil?esc(r.mobil):'keine Nummer'}`,
+        notiz: patNotizField(r.patKey, r.name) })) },
     { key:'blum', ico:'📄', color:'var(--purple)', ttl:'Rezeptänderungen nachhalten · auf Blanko-VO umstellen', go:"switchView('rezepte')",
       items: blUm.map(p=>({
         id:'blum|'+p.rezeptNr,
@@ -6063,6 +6130,52 @@ function buildAufgabenSections(a){
         sub:`Serie fertig · Arzt: ${r.arzt?esc(r.arzt):'?'}${voDat(r.rezDatum)}`,
         notiz: patNotizField(r.patKey, r.name) })) }
   ];
+
+  // ── Vom Export erledigt (Okt 2026, wie im Werneck-Patientenchecker) ──────────────────
+  // Jede Export-Aufgabe, die an diesem Tag einmal in der Liste stand, wird gemerkt
+  // (cki_tagesliste, je Standort+Tag, 14 Tage). Fehlt sie beim nächsten Export
+  // (Lücke gefüllt, Rezept abgerechnet, Termin gebucht …), verschwindet sie NICHT, sondern
+  // bleibt mit Haken „laut Export erledigt" stehen → der Fortschrittsbalken läuft weiter.
+  // Taucht sie später wieder auf (z. B. Termin abgesagt), wird sie automatisch wieder offen.
+  (function(){
+    const AUTO_KEYS = ['gapHeute','gapMorgen','abr','ft','grimz','blum','blpl'];
+    const all = lsGet('cki_tagesliste', {}) || {};
+    const dayKey = aufOrtKey()+'|'+currentDate;
+    const snap = all[dayKey] || {};
+    let dirty = false;
+    sections.concat(gapSecs).forEach(sec=>{
+      if(!AUTO_KEYS.includes(sec.key)) return;
+      const present = new Set(sec.items.map(it=>it.id));
+      sec.items.forEach(it=>{
+        if(!snap[it.id]){ snap[it.id] = {k:sec.key, m:it.main, s:it.sub}; dirty = true; }
+        const e = aufAll()[it.id];
+        if(e && e.auto) aufWrite(it.id, {st:'offen', ts:Date.now(), by:'Export'});      // wieder aufgetaucht
+      });
+      Object.keys(snap).forEach(id=>{
+        const g = snap[id];
+        if(g.k!==sec.key || present.has(id)) return;
+        const st = taskSt(id);
+        if(st==='offen' || st==='ib') aufWrite(id, {st:'erledigt', auto:true, ts:Date.now(), by:'Export'});
+        const e = aufAll()[id] || {};
+        const wann = e.ts ? new Date(e.ts).toLocaleString('de-DE',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
+        sec.items.push({ id:id, main:g.m, ghost:true,
+          sub: e.auto ? '<b style="color:var(--teal)">✅ laut Export erledigt</b>'+(wann?' · '+wann:'')
+                      : 'nicht mehr im Export · '+esc((AUF_STATUS.find(o=>o[0]===taskSt(id))||['',''])[1])+(e.by?' von '+esc(e.by):'') });
+      });
+    });
+    if(dirty){
+      const grenze = Date.now() - 14*86400000;
+      Object.keys(all).forEach(k=>{ const d = new Date(k.split('|').pop()+'T12:00:00').getTime(); if(isNaN(d) || d<grenze) delete all[k]; });
+      all[dayKey] = snap; lsSet('cki_tagesliste', all);
+    }
+  })();
+
+  // Einheitlicher Aufgaben-Status (offen / in Bearbeitung / erledigt / abgelehnt) – dieselbe
+  // Auswahl hängt in den Reitern an derselben ID. Klick auf die Zeile hakt weiterhin ab.
+  sections.concat(gapSecs).forEach(sec=>{
+    if(!['gapHeute','gapMorgen','abr','ft','grimz','kap'].includes(sec.key)) return;
+    sec.items.forEach(it=>{ it.statusSel = taskStatusSelect(it.id, String(it.main).replace(/<[^>]+>/g,'')); it.clickToggle = true; });
+  });
 
   // ── Standardaufgaben aus der Arbeitsaufteilung (Vorlage) ──
   const wdNum = new Date(currentDate+'T12:00:00').getDay();
@@ -6303,7 +6416,7 @@ function renderAufgaben(){
           <div class="task-list"${open?'':' style="display:none"'}>`;
         items.forEach(it=>{
           const d = taskDone(it.id);
-          h += `<div class="task${d?' done':''}${it.compact?' task-compact':''}"${taskRowStyle(it)}${it.statusSel?'':` onclick="${it.onclick||`toggleTask('${jsq(it.id)}')`}"`}>
+          h += `<div class="task${d?' done':''}${it.compact?' task-compact':''}"${taskRowStyle(it)}${(it.statusSel&&!it.clickToggle)?'':` onclick="${it.onclick||`toggleTask('${jsq(it.id)}')`}"`}>
             <div class="task-cb">${d?'✓':''}</div>
             <div class="task-body"><div class="task-main">${it.main}</div><div class="task-sub">${it.sub}</div>${it.notiz||''}</div>
             ${it.statusSel||''}
@@ -6461,7 +6574,7 @@ function renderAufgaben(){
       <div class="task-list"${open?'':' style="display:none"'}>`;
     items.forEach(it=>{
       const d = taskDone(it.id);
-      h += `<div class="task${d?' done':''}${it.compact?' task-compact':''}"${taskRowStyle(it)}${it.statusSel?'':` onclick="${it.onclick||`toggleTask('${jsq(it.id)}')`}"`}>
+      h += `<div class="task${d?' done':''}${it.compact?' task-compact':''}"${taskRowStyle(it)}${(it.statusSel&&!it.clickToggle)?'':` onclick="${it.onclick||`toggleTask('${jsq(it.id)}')`}"`}>
         <div class="task-cb">${d?'✓':''}</div>
         <div class="task-body"><div class="task-main">${it.main}</div><div class="task-sub">${it.sub}</div>${it.notiz||''}</div>
         ${it.statusSel||''}

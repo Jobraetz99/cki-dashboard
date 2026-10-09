@@ -880,11 +880,23 @@ function getFallStatus(key){
 function setFallStatus(key, st, name){
   if(st==='abgelehnt'){
     const reason = pflichtBegruendung('Warum wurde die Folge-Verordnung ABGELEHNT?');
-    if(reason===null){ if(currentView==='folgevo') renderFolgeVO(); return; }   // Abbruch → Auswahl zurücksetzen
+    if(reason===null){ rerenderCurrent(); return; }   // Abbruch → Auswahl zurücksetzen
     ablehnungLog('folgevo', key, name||'', reason);
   }
   lsSet('cki_fall_'+key, st||'offen');
-  if(currentView==='folgevo') renderFolgeVO();
+  rerenderCurrent();
+}
+// Okt 2026: Die Aufgabe „Passive Patienten" (id fvo|<Rezept>) hängt am Status des VERORDNUNGSFALLS
+// (Patient + ICD-3-Steller) – derselbe Status wie im Reiter „Passive Patienten". FVO_FALL merkt
+// sich je Aufgabe den Fall-Schlüssel (wird in computeActionItems gefüllt).
+const FVO_FALL = {};
+function fvoFallKey(r){ return r.patKey+'|'+icd3Steller(r.icd); }
+function fvoStatusSelect(fallKey, name){
+  const cur = getFallStatus(fallKey);
+  const col = cur==='verplant' ? 'var(--teal)' : cur==='abgelehnt' ? 'var(--muted)' : (cur==='ib'||cur==='ang') ? 'var(--amber)' : 'var(--accent)';
+  const o = FVO_STATUS.map(([v,l])=>'<option value="'+v+'"'+(v===cur?' selected':'')+'>'+l+'</option>').join('');
+  return '<select class="asg-sel" style="border-color:'+col+';color:'+col+';font-weight:700" onclick="event.stopPropagation()" '+
+    'onchange="setFallStatus(\''+esc(jsq(fallKey))+'\',this.value,\''+esc(jsq(name||''))+'\')">'+o+'</select>';
 }
 // Kompatibilität (alte Aufrufe): Ablehnung über den zentralen Setter
 function rejectFallStatus(key,name){ setFallStatus(key,'abgelehnt',name); }
@@ -4720,6 +4732,10 @@ function taskDone(id){
   if(String(id).indexOf('zzk|')===0) return zzKassiert(String(id).slice(4));
   // L/V-Aufgabe ('lv|<Tag>|<patKey>') hängt am „weiter geplant"-Status → Tagesplan, Kopf-Zahl und Aufgabe bleiben eins
   if(String(id).indexOf('lv|')===0){ const p=lvIdParts(id); if(getTpStatus(p.day, p.key)) return true; }
+  // Passive Patienten: erledigt = Fall „Folgerezept verplant" oder „abgelehnt"
+  if(String(id).indexOf('fvo|')===0 && FVO_FALL[id]){ const fs=getFallStatus(FVO_FALL[id]); if(fs==='verplant'||fs==='abgelehnt') return true; }
+  // Dauerplan ansprechen: erledigt, sobald ein Dauerplan-Status gesetzt ist (angesprochen … möchte nicht)
+  if(String(id).indexOf('dauer|')===0 && dpStatusSt(String(id).slice(6))) return true;
   return lsGet('cki_check_'+id, false);
 }
 function lvIdParts(id){ const p=String(id).split('|'); return {day:p[1], key:p.slice(2).join('|')}; }
@@ -4735,6 +4751,8 @@ function lvStatusSelect(day, patKey, name){
 function toggleTask(id){
   if(String(id).indexOf('zzk|')===0){ toggleZzKassiert(String(id).slice(4)); return; }
   if(String(id).indexOf('lv|')===0){ const p=lvIdParts(id); const st=getTpStatus(p.day,p.key); setTpStatus(p.day, p.key, st?null:'wp', ''); return; }
+  if(String(id).indexOf('fvo|')===0 && FVO_FALL[id]){ const d0=taskDone(id); lsSet('cki_check_'+id, false); setFallStatus(FVO_FALL[id], d0?'offen':'verplant', ''); return; }
+  if(String(id).indexOf('dauer|')===0){ const k=String(id).slice(6); const d0=taskDone(id); lsSet('cki_check_'+id, false); setDpStatus(k, d0?'':'ang', ''); return; }
   const nd = !taskDone(id);
   aufWrite(id, {st: nd?'erledigt':'offen', ts:Date.now(), by:getMe()||''});
   renderAufgaben();
@@ -5849,7 +5867,7 @@ function tageszielUebersichtHTML(a){
   }
   let h = `<div class="tzh">
     ${zzCell}
-    <div class="tzh-cell"><div class="tzh-num">${cnt(s.vl)}</div><div class="tzh-lbl"><span class="tzh-kzl">LV</span> weitergeplant</div>${s.vl.abgelehnt?`<div class="tzh-sub">${s.vl.abgelehnt}× nicht (begründet)</div>`:''}</div>
+    <div class="tzh-cell"><div class="tzh-num">${cnt(s.vl)}</div><div class="tzh-lbl"><span class="tzh-kzl">VL</span> weitergeplant</div>${s.vl.abgelehnt?`<div class="tzh-sub">${s.vl.abgelehnt}× nicht (begründet)</div>`:''}</div>
     <div class="tzh-cell"><div class="tzh-num">${cnt(s.dp)}</div><div class="tzh-lbl"><span class="tzh-kzl">DP</span> Dauerplan angesprochen</div>${s.dp.abgelehnt?`<div class="tzh-sub">${s.dp.abgelehnt}× nicht (begründet)</div>`:''}</div>
   </div>`;
   // A1 (Call 18.09.): Schichtzeiten von–bis + zugewiesene Person(en) direkt daneben
@@ -5865,7 +5883,7 @@ function tageszielUebersichtHTML(a){
     const werTxt = wer.length ? ' · <b>'+wer.map(esc).join(', ')+'</b>'
       : ' · <span style="color:rgba(255,255,255,.55)">niemand zugewiesen</span>';
     return `<div class="tzh-blk"><span class="tzh-blk-l">${b.ico} ${b.ttl} <span style="font-weight:400">${b.von}–${b.bis}</span></span>`+
-      `<span>💶 ${zzBlk?`<b>${zzBlk[b.key][0]}/${zzBlk[b.key][1]}</b>`:'–'} · <span class="tzh-kzl">LV</span> <b>${v[0]}/${v[1]}</b> · <span class="tzh-kzl">DP</span> <b>${d[0]}/${d[1]}</b>${werTxt}</span></div>`;
+      `<span>💶 ${zzBlk?`<b>${zzBlk[b.key][0]}/${zzBlk[b.key][1]}</b>`:'–'} · <span class="tzh-kzl">VL</span> <b>${v[0]}/${v[1]}</b> · <span class="tzh-kzl">DP</span> <b>${d[0]}/${d[1]}</b>${werTxt}</span></div>`;
   }).join('');
   if(rows) h += `<div style="margin-bottom:6px">${rows}</div>`;
   // Okt 2026 (Wunsch Chaled): Die 💶-Patientenliste steht jetzt unter
@@ -5890,7 +5908,8 @@ function buildTagesplan(a, rez){
   a.typB.forEach(r=>push(r.patKey, {id:'ft|'+r.rezeptNr, cat:'ft', ico:'📞', txt:'Rezept zu Ende planen',
     sub:`${r.erbracht}/${r.echteMenge} · Serie läuft${voDat(r.rezDatum)}`}));
   a.folgeVO.forEach(r=>push(r.patKey, {id:'fvo|'+r.rezeptNr, cat:'fvo', ico:'🔄', txt:'Passive Patienten',
-    sub:`Serie fertig · Arzt: ${r.arzt?esc(r.arzt):'?'}${voDat(r.rezDatum)}`}));
+    sub:`Serie fertig · Arzt: ${r.arzt?esc(r.arzt):'?'}${voDat(r.rezDatum)}`,
+    statusSel: fvoStatusSelect(fvoFallKey(r), r.name)}));
   const dauerKeys = dauerKandidatKeys();
   // 💶 Zuzahlung als eigene, abhakbare Aufgabe im Tagesplan (Wunsch 09.10.) – dieselbe Liste wie
   // „Zuzahlungen kassieren" im Tagesgeschäft und die 💶-Zahl im Kopf (zuzahlungHeute); der Haken
@@ -5989,13 +6008,12 @@ function buildTagesplan(a, rez){
 }
 // Status-Auswahl direkt an der Aufgabe im Tagesplan – je Aufgabenart der passende Status:
 //   L/V → offen / weiter geplant / nicht weiter geplant · Dauerplan → Dauerplan-Status ·
-//   Zuzahlung, Abrechnen, Zu-Ende-planen → einheitlicher Aufgaben-Status · Folge-VO → Ablehnen-Knopf.
+//   Zuzahlung, Abrechnen, Zu-Ende-planen → einheitlicher Aufgaben-Status · Passive Patienten → Fall-Status.
 function tpTaskStatus(t, p, day){
   if(t.statusSel) return t.statusSel;
   if(t.cat==='lv') return lvStatusSelect(day, p.key, p.name);
   if(t.cat==='dauer') return dpStatusSelect(p.key, p.name);
   if(t.cat==='abr' || t.cat==='ft') return taskStatusSelect(t.id, p.name);
-  if(t.cat==='fvo' && !taskDone(t.id)) return `<button class="tps-btn nwp" title="Folge-VO abgelehnt (Pflicht-Begründung, landet im Ablehnungs-Review)" onclick="event.stopPropagation();rejectFvoFromTagesplan('${jsq(p.key)}','${jsq(p.name)}','${jsq(t.id)}')">🔄🚫 VO abgelehnt</button>`;
   return '';
 }
 // Segment-Umschalter Liste ↔ Kalender
@@ -6101,6 +6119,7 @@ function computeActionItems(){
   // Folge-VO-Kandidaten (Serie faktisch fertig, keine neuere VO, keine Zukunftstermine) – nur die offenen; abgebrochene raus
   const folgeVO = rez.filter(r=>r.echteMenge>0 && r.erbracht>0 && !r.hasFuture && !r.hasFolgeVO && (r.erbracht>=r.echteMenge || r.rest<=1) && !istStorniert(r))
                      .filter(r=>getDoingStatus(r.rezeptNr)==='offen');
+  folgeVO.forEach(r=>{ FVO_FALL['fvo|'+r.rezeptNr] = fvoFallKey(r); });
   // Lücken am aktuell gewählten Tag → einzelne Slots
   const dayCells = DATA.cells.filter(c=>c.dateStr===currentDate);
   const dayAnal = analyzeDay(dayCells);
@@ -6151,7 +6170,8 @@ const TZ_TAGESGESCHAEFT = [
   {t:'HB Akten aus dem Tagesgeschäft kontrollieren', s:''},
   {t:'Zuzahlungen kassieren', s:''},
   {t:'Geburtstage Mitarbeiter', s:''},
-  {t:'Letzter / vorletzter Termin · Patienten weiterplanen', s:''}
+  {t:'Vorletzter / letzter Termin · Patienten weiterplanen', s:''},
+  {t:'Dauerplan ansprechen · Patienten mit Dauerplan-Potenzial', s:''}
 ];
 const TZ_BACKOFFICE = [
   {t:'Backoffice', s:'täglich wiederkehrende Backoffice-Aufgaben bearbeiten'},
@@ -6268,6 +6288,7 @@ function buildAufgabenSections(a){
         main:esc(r.name),
         tdef: r.nextTermin ? timeBlockOfHour(r.nextTermin.getHours() + r.nextTermin.getMinutes()/60) : undefined,
         sub:`Serie fertig · Arzt: ${r.arzt?esc(r.arzt):'?'}${voDat(r.rezDatum)}`,
+        statusSel: fvoStatusSelect(fvoFallKey(r), r.name), clickToggle:true,
         notiz: patNotizField(r.patKey, r.name) })) }
   ];
 
@@ -6334,7 +6355,7 @@ function buildAufgabenSections(a){
   }
   // ── Okt 2026: Letzter/vorletzter Termin als Aufgabe im Tagesgeschäft (je PATIENT) ──
   // Dieselbe Menge wie die LV-Zahl im Kopf und die Karten im Tagesplan (lvKandidaten).
-  const lvIt = tgItems.find(it=>it.main.includes('Letzter / vorletzter Termin'));
+  const lvIt = tgItems.find(it=>it.main.includes('Vorletzter / letzter Termin'));
   if(lvIt){
     const lv = lvKandidaten(currentDate);
     const info = {};
@@ -6364,6 +6385,38 @@ function buildAufgabenSections(a){
     let pos = tgItems.findIndex(it=>it.main.includes('Akten für den nächsten Tag'));
     if(pos<0) pos = tgItems.length;
     tgItems.splice(pos, 0, lvIt, ...lvSubs);
+  }
+  // ── Okt 2026: „Dauerplan ansprechen" als Aufgabe im Tagesgeschäft (je PATIENT) ──
+  // Dieselbe Menge wie die DP-Zahl im Kopf und die Karten im Tagesplan: heutige Patienten, die
+  // dauerplanfähig sind und noch keine Dauer-Maske haben. Status = Dauerplan-Status (cki_dpst).
+  const dpIt = tgItems.find(it=>it.main.includes('Dauerplan ansprechen'));
+  if(dpIt){
+    const dk = dauerKandidatKeys();
+    const info = {};
+    DATA.cells.forEach(c=>{
+      if(c.dateStr!==currentDate || c.belArt!=='R' || !c.patNach || !c.termIdent || !c.belegt || !c.patKey || !dk.has(c.patKey)) return;
+      const e = info[c.patKey] = info[c.patKey] || {name:(c.patVor+' '+c.patNach).trim(), start:c.start, therapist:c.therapist||''};
+      if(c.start < e.start){ e.start = c.start; e.therapist = c.therapist||''; }
+    });
+    const dpSubs = Object.keys(info).sort((a,b)=>info[a].start-info[b].start).map(k=>{
+      const i = info[k], ds = getDpStatus(k);
+      return { id:'dauer|'+k, indent:true, clickToggle:true,
+        tdef: timeBlockOfHour(i.start.getHours()+i.start.getMinutes()/60),
+        main:'🎯 <b>'+hhmm(i.start)+'</b> · '+esc(i.name),
+        sub:(i.therapist?esc(i.therapist)+' · ':'')+esc((dk.get(k)||[]).join(', '))+' dauerplanfähig · noch keine Dauer-Maske'+(ds&&ds.reason?' · Grund: '+esc(ds.reason):''),
+        statusSel: dpStatusSelect(k, i.name),
+        notiz: patNotizField(k, i.name) };
+    });
+    const done = dpSubs.filter(x=>taskDone(x.id)).length;
+    dpIt.onclick = 'void 0';
+    TZ_AUTO_DONE[dpIt.id] = true;
+    dpIt.sub = dpSubs.length ? done+'/'+dpSubs.length+' Patienten angesprochen · heute im Haus, dauerplanfähig, noch keine Dauer-Maske'
+                             : 'heute kein Patient mit Dauerplan-Potenzial · automatisch erledigt ✓';
+    subAufklapp(dpIt, dpSubs, 'dp');
+    tgItems.splice(tgItems.indexOf(dpIt), 1);
+    let pos = tgItems.findIndex(it=>it.main.includes('Akten für den nächsten Tag'));
+    if(pos<0) pos = tgItems.length;
+    tgItems.splice(pos, 0, dpIt, ...dpSubs);
   }
   // ── Okt 2026 (Wunsch Chaled): Zuzahlungs-Liste gehört ins Tagesgeschäft ──
   // (vorher stand sie im blauen Tagesziel-Kopf). Angezeigt wird die OFFENE ZUZAHLUNG

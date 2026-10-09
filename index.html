@@ -5511,6 +5511,35 @@ function dauerKandidatKeys(){
 // ── Punkt 1 (Call 17.09.): Tagesziel-Übersicht "heutige Patienten" ────────────
 // Soll = heutige Patienten mit €-/V·L-/DP-Bedarf, Ist = Status/Haken.
 // Zählt pro Zeitblock (Vormittag/Mittag/Nachmittag) und gesamt.
+// ── LV = letzter / vorletzter Termin (To-do 01.10. + Mail Luis 09.10.) ──────────
+// Patient hat am Tag einen Termin auf einem Rezept, auf dem danach höchstens EIN weiterer
+// Termin gebucht ist, UND es gibt kein anderes Rezept mit späteren Terminen (= Folgerezept
+// ist noch nicht geplant). Dauerplan-Patienten, Rehasport/Anamnese und Prävention zählen nicht.
+// Rückgabe: Map patKey → {rezeptNr, letzter:true|false, heilmittel}
+function lvKandidaten(day){
+  const out = new Map();
+  if(!DATA || !day) return out;
+  const dayStart = new Date(day+'T00:00:00').getTime(), dayEnd = new Date(day+'T23:59:59').getTime();
+  const per = {};
+  DATA.cells.forEach(c=>{
+    if(!c.rezeptNr || c.belArt!=='R' || !c.termIdent || !c.patKey || !c.start || c.excluded) return;
+    const r = per[c.rezeptNr] = per[c.rezeptNr] || {pat:c.patKey, heute:false, nach:new Set(), hm:c.heilmittel};
+    const t = c.start.getTime();
+    if(t>=dayStart && t<=dayEnd){ if(c.belegt) r.heute = true; }
+    else if(t>dayEnd) r.nach.add(c.termIdent);
+  });
+  const byPat = {};
+  Object.entries(per).forEach(([nr,r])=>{ (byPat[r.pat]=byPat[r.pat]||[]).push({nr:nr, n:r.nach.size}); });
+  Object.entries(per).forEach(([nr,r])=>{
+    if(!r.heute || r.nach.size>1) return;
+    if(isDauerPatKey(r.pat) || isCheckerExcludedHM(r.hm) || isPraevHM(r.hm)) return;
+    if(byPat[r.pat].some(x=>x.nr!==nr && x.n>0)) return;          // Folgerezept bereits mit Terminen geplant
+    const prev = out.get(r.pat);
+    const e = {rezeptNr:nr, letzter:r.nach.size===0, heilmittel:r.hm||''};
+    if(!prev || (e.letzter && !prev.letzter)) out.set(r.pat, e);
+  });
+  return out;
+}
 function tageszielHeuteStats(a){
   const day = currentDate;
   // Aufgaben je Patient (nur die drei Tagesziel-Kategorien)
@@ -5519,6 +5548,7 @@ function tageszielHeuteStats(a){
   a.typB.forEach(r=>push(r.patKey,'ft','ft|'+r.rezeptNr));
   a.folgeVO.forEach(r=>push(r.patKey,'fvo','fvo|'+r.rezeptNr));
   const dauerKeys = dauerKandidatKeys();
+  const lv = lvKandidaten(day);
   // heutige Patienten (früheste Termin-Uhrzeit → Zeitblock)
   const pat = {};
   DATA.cells.forEach(c=>{
@@ -5534,11 +5564,10 @@ function tageszielHeuteStats(a){
     const tasks = byKey[p.key]||[];
     const blkKey = timeBlockOfHour(p.start.getHours()+p.start.getMinutes()/60);
     const st = getTpStatus(day, p.key);
-    const ftTasks = tasks.filter(t=>t.cat==='ft');
     const fvoTasks = tasks.filter(t=>t.cat==='fvo');
-    if(ftTasks.length || fvoTasks.length){                     // V/L: letzter/vorletzter Termin → weiterplanen
+    if(lv.has(p.key)){                                         // L/V: heute letzter/vorletzter Termin, kein Folgerezept geplant
       if(st && st.st==='nwp'){ vl.tot++; vl.blk[blkKey][1]++; vl.abgelehnt++; }
-      else add(vl, blkKey, (st && st.st==='wp') || tasks.every(t=>taskDone(t.id)));
+      else add(vl, blkKey, (st && st.st==='wp') || taskDone('lv|'+day+'|'+p.key));
     }
     if(dauerKeys.has(p.key)){                                   // DP: Dauerplan-Kandidat heute im Haus
       const ds = dpStatusSt(p.key);                             // Punkt 3 (Call 17.09.): DP-Status zählt mit
@@ -5659,6 +5688,10 @@ function buildTagesplan(a, rez){
   a.folgeVO.forEach(r=>push(r.patKey, {id:'fvo|'+r.rezeptNr, cat:'fvo', ico:'🔄', txt:'Passive Patienten',
     sub:`Serie fertig · Arzt: ${r.arzt?esc(r.arzt):'?'}${voDat(r.rezDatum)}`}));
   const dauerKeys = dauerKandidatKeys();
+  // L/V: heute letzter/vorletzter Termin, noch kein Folgerezept geplant → dieselbe Menge wie die LV-Zahl im Kopf
+  lvKandidaten(day).forEach((e,key)=>push(key, {id:'lv|'+day+'|'+key, cat:'lv', ico:'📅',
+    txt:(e.letzter?'Letzter':'Vorletzter')+' Termin heute · weiterplanen',
+    sub:(e.heilmittel?esc(e.heilmittel)+' · ':'')+(e.letzter?'danach kein Termin mehr gebucht':'danach nur noch 1 Termin gebucht')+' · kein Folgerezept geplant'}));
 
   // 2) Termine des Tages nach Patient bündeln
   const patAppt = {};
@@ -5732,7 +5765,7 @@ function buildTagesplan(a, rez){
     });
     h += `</div>`;
     // ── Punkt 2 (Call 17.09.): Weiterplan-Status für Patienten mit V/L-Aufgabe ──
-    if(p.tasks.some(t=>t.cat==='ft'||t.cat==='fvo')){
+    if(p.tasks.some(t=>t.cat==='ft'||t.cat==='fvo'||t.cat==='lv')){
       const isWp = tpst && tpst.st==='wp', isNwp = tpst && tpst.st==='nwp';
       // Punkt A3 (Call 21.09.): Folge-VO-Ablehnung auch direkt im Tagesplan dokumentieren
       const fvoTask = p.tasks.find(t=>t.cat==='fvo');

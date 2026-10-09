@@ -4761,6 +4761,37 @@ function taskSt(id){
   if(e && e.st) return e.st;
   return lsGet('cki_check_'+id, false) ? 'erledigt' : 'offen';   // Alt-Haken aus der Zeit vor dem Status
 }
+// Merkliste je Standort+Tag (cki_tagesliste, 14 Tage): Aufgaben, die heute in der Liste standen und
+// im aktuellen Export FEHLEN, bleiben als „laut Export erledigt" stehen (werden an items angehängt).
+// Tauchen sie wieder auf, stehen sie automatisch wieder auf offen.
+function aufMerkliste(secKey, items, erledigtText){
+  const all = lsGet('cki_tagesliste', {}) || {};
+  const dayKey = aufOrtKey()+'|'+currentDate;
+  const snap = all[dayKey] || {};
+  let dirty = false;
+  const present = new Set(items.map(it=>it.id));
+  items.forEach(it=>{
+    if(!snap[it.id]){ snap[it.id] = {k:secKey, m:it.main, s:it.sub}; dirty = true; }
+    const e = aufAll()[it.id];
+    if(e && e.auto) aufWrite(it.id, {st:'offen', ts:Date.now(), by:'Export'});          // wieder aufgetaucht
+  });
+  Object.keys(snap).forEach(id=>{
+    const g = snap[id];
+    if(g.k!==secKey || present.has(id)) return;
+    const st = taskSt(id);
+    if(st==='offen' || st==='ib') aufWrite(id, {st:'erledigt', auto:true, ts:Date.now(), by:'Export'});
+    const e = aufAll()[id] || {};
+    const wann = e.ts ? new Date(e.ts).toLocaleString('de-DE',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
+    items.push({ id:id, main:g.m, ghost:true,
+      sub: e.auto ? '<b style="color:var(--teal)">✅ '+(erledigtText||'laut Export erledigt')+'</b>'+(wann?' · '+wann:'')
+                  : 'nicht mehr im Export · '+esc((AUF_STATUS.find(o=>o[0]===taskSt(id))||['',''])[1])+(e.by?' von '+esc(e.by):'') });
+  });
+  if(dirty){
+    const grenze = Date.now() - 14*86400000;
+    Object.keys(all).forEach(k=>{ const d = new Date(k.split('|').pop()+'T12:00:00').getTime(); if(isNaN(d) || d<grenze) delete all[k]; });
+    all[dayKey] = snap; lsSet('cki_tagesliste', all);
+  }
+}
 // Standort-Kennung für standortbezogene Merklisten (sonst gälten nach einem Standortwechsel
 // alle Aufgaben des vorherigen Standorts als „erledigt"). SharePoint-Standort, sonst Lizenznummer.
 function aufOrtKey(){
@@ -4938,7 +4969,11 @@ function zzOffenFor(patKey){
 }
 function euroFmt(x){ return (Math.round(x*100)/100).toLocaleString('de-DE',{minimumFractionDigits:2,maximumFractionDigits:2})+' €'; }
 // Lokales Kassiert-Häkchen (bis der nächste Export die Anzahlung nachzieht)
-function zzKassiert(patKey){ return !!lsGet('cki_zz_kassiert', {})[patKey]; }
+// Okt 2026: Zuzahlung ist eine eigene Aufgabe je Patient UND Tag (id 'zz|<Tag>|<patKey>') mit dem
+// einheitlichen Status (offen / in Bearbeitung / erledigt / abgelehnt). Vorher hing ein „kassiert"-
+// Haken dauerhaft am Patienten und galt dadurch auch beim nächsten Rezept noch.
+function zzId(day, patKey){ return 'zz|'+day+'|'+patKey; }
+function zzKassiert(patKey, day){ return taskDone(zzId(day||currentDate, patKey)); }
 function toggleZzKassiert(patKey){
   const all = lsGet('cki_zz_kassiert', {});
   if(all[patKey]) delete all[patKey];
@@ -5825,6 +5860,14 @@ function buildTagesplan(a, rez){
   a.folgeVO.forEach(r=>push(r.patKey, {id:'fvo|'+r.rezeptNr, cat:'fvo', ico:'🔄', txt:'Passive Patienten',
     sub:`Serie fertig · Arzt: ${r.arzt?esc(r.arzt):'?'}${voDat(r.rezDatum)}`}));
   const dauerKeys = dauerKandidatKeys();
+  // 💶 Zuzahlung als eigene, abhakbare Aufgabe im Tagesplan (Wunsch 09.10.) – dieselbe Liste wie
+  // „Zuzahlungen kassieren" im Tagesgeschäft und die 💶-Zahl im Kopf (zuzahlungHeute); der Haken
+  // ist der einheitliche Aufgaben-Status (id 'zz|<Tag>|<patKey>').
+  const zzTp = zuzahlungHeute();
+  if(zzTp) zzTp.list.forEach(z=>push(z.key, {id:zzId(day, z.key), cat:'zz', ico:'💶',
+    txt:'Zuzahlung kassieren · <b style="color:var(--fire)">'+euroFmt(z.betrag)+'</b>',
+    sub:z.nRez+' Rezept'+(z.nRez!==1?'e':'')+' · noch nichts kassiert',
+    statusSel: taskStatusSelect(zzId(day, z.key), z.name)}));
   // L/V: heute letzter/vorletzter Termin, noch kein Folgerezept geplant → dieselbe Menge wie die LV-Zahl im Kopf
   lvKandidaten(day).forEach((e,key)=>push(key, {id:'lv|'+day+'|'+key, cat:'lv', ico:'📅',
     txt:(e.letzter?'Letzter':'Vorletzter')+' Termin heute · weiterplanen',
@@ -5886,7 +5929,7 @@ function buildTagesplan(a, rez){
     h += `<div class="tp-card${tpst?(tpst.st==='wp'?' tps-wp':' tps-nwp'):''}">
       <div class="tp-time">${hhmm(p.start)}</div>
       <div class="tp-main">
-        <div class="tp-pat">${esc(p.name)}${p.therapist?`<span class="tp-th"> · ${esc(p.therapist)}</span>`:''}${(()=>{const z=zzOffenFor(p.key);return z&&!zzKassiert(p.key)?` <span class="zz-badge" title="Offene Zuzahlung — heute kassieren">💶 ${euroFmt(z.betrag)} offen</span>`:'';})()}</div>
+        <div class="tp-pat">${esc(p.name)}${p.therapist?`<span class="tp-th"> · ${esc(p.therapist)}</span>`:''}${(()=>{const z=p.tasks.find(t=>t.cat==='zz');return z&&!taskDone(z.id)?` <span class="zz-badge" title="Offene Zuzahlung — heute kassieren">💶 offen</span>`:'';})()}</div>
         ${leist?`<div class="tp-leist">${esc(leist)}</div>`:''}
         <div class="tp-tasks">`;
     const pTdef = timeBlockOfHour(p.start.getHours()+p.start.getMinutes()/60);
@@ -5894,35 +5937,16 @@ function buildTagesplan(a, rez){
       const d = taskDone(t.id);
       h += `<div class="tp-task${d?' done':''}">
         <div class="tp-task-cb" onclick="toggleTask('${jsq(t.id)}')">${d?'✓':''}</div>
-        <div class="tp-task-body" onclick="toggleTask('${jsq(t.id)}')"><span class="tp-task-txt">${t.ico} ${t.txt}</span><span class="tp-task-sub">${t.sub}</span></div>
+        <div class="tp-task-body" onclick="toggleTask('${jsq(t.id)}')"><span class="tp-task-txt">${t.ico} ${t.txt}</span><span class="tp-task-sub">${t.sub}${t.cat==='lv'&&tpst&&tpst.reason?' · <b>Grund:</b> '+esc(tpst.reason)+(tpst.by?' ('+esc(tpst.by)+')':''):''}</span></div>
+        ${tpTaskStatus(t, p, day)}
         ${lfKeyOfCat(t.cat)?`<button class="tps-btn lf" onclick="event.stopPropagation();showAnsprache('${lfKeyOfCat(t.cat)}','${jsq(p.name)}','${jsq(p.therapist||'')}','${hhmm(p.start)}')">💬 Ansprache</button>`:''}
         ${areaChip(t.id,t.cat)}
         ${assigneeChip(t.id,t.cat,pTdef)}
       </div>`;
     });
     h += `</div>`;
-    // ── Punkt 2 (Call 17.09.): Weiterplan-Status für Patienten mit V/L-Aufgabe ──
-    if(p.tasks.some(t=>t.cat==='ft'||t.cat==='fvo'||t.cat==='lv')){
-      const isWp = tpst && tpst.st==='wp', isNwp = tpst && tpst.st==='nwp';
-      // Punkt A3 (Call 21.09.): Folge-VO-Ablehnung auch direkt im Tagesplan dokumentieren
-      const fvoTask = p.tasks.find(t=>t.cat==='fvo');
-      h += `<div class="tp-status">
-        <button class="tps-btn wp${isWp?' a':''}" onclick="setTpStatus('${day}','${jsq(p.key)}',${isWp?'null':"'wp'"},'${jsq(p.name)}')">✅ weiter geplant</button>
-        <button class="tps-btn nwp${isNwp?' a':''}" onclick="setTpStatus('${day}','${jsq(p.key)}',${isNwp?'null':"'nwp'"},'${jsq(p.name)}')">🚫 nicht weiter geplant</button>
-        ${fvoTask&&!taskDone(fvoTask.id)?`<button class="tps-btn nwp" title="Folge-VO abgelehnt (Pflicht-Begründung, landet im Ablehnungs-Review)" onclick="rejectFvoFromTagesplan('${jsq(p.key)}','${jsq(p.name)}','${jsq(fvoTask.id)}')">🔄🚫 VO abgelehnt</button>`:''}
-        ${isNwp&&tpst.reason?`<span class="tps-reason">📝 ${esc(tpst.reason)}${tpst.by?' · '+esc(tpst.by):''}</span>`:''}
-      </div>`;
-    }
-    // ── Dauerplan-Status direkt im Tagesplan: eingetragen / kein Dauerplan (mit Pflicht-Begründung) ──
-    if(p.tasks.some(t=>t.cat==='dauer')){
-      const ds = dpStatusSt(p.key);
-      h += `<div class="tp-status">
-        <span style="font-size:10px;font-weight:700;color:var(--muted)">🎯 Dauerplan:</span>
-        <button class="tps-btn wp${ds==='ja'?' a':''}" onclick="setDpStatus('${jsq(p.key)}',${ds==='ja'?"''":"'ja'"},'${jsq(p.name)}')">✅ eingetragen</button>
-        <button class="tps-btn nwp${ds==='nein'?' a':''}" onclick="setDpStatus('${jsq(p.key)}',${ds==='nein'?"''":"'nein'"},'${jsq(p.name)}')">🚫 kein Dauerplan</button>
-        ${ds==='ang'||ds==='ib'?`<span class="tps-reason">${ds==='ang'?'💬 angesprochen':'🟡 in Bearbeitung'}</span>`:''}
-      </div>`;
-    }
+    // Okt 2026: Der Status steht jetzt DIREKT an der jeweiligen Aufgabe (siehe tpTaskStatus) –
+    // die früheren Knopfreihen „weiter geplant / Dauerplan" unter den Aufgaben sind entfallen.
     // Punkt 2 (Call 23.09.): Patienten-Notiz auch im Tagesplan
     h += patNotizField(p.key, p.name);
     h += `</div>`;
@@ -5930,6 +5954,17 @@ function buildTagesplan(a, rez){
     h += `</div>`;
   });
   return h;
+}
+// Status-Auswahl direkt an der Aufgabe im Tagesplan – je Aufgabenart der passende Status:
+//   L/V → offen / weiter geplant / nicht weiter geplant · Dauerplan → Dauerplan-Status ·
+//   Zuzahlung, Abrechnen, Zu-Ende-planen → einheitlicher Aufgaben-Status · Folge-VO → Ablehnen-Knopf.
+function tpTaskStatus(t, p, day){
+  if(t.statusSel) return t.statusSel;
+  if(t.cat==='lv') return lvStatusSelect(day, p.key, p.name);
+  if(t.cat==='dauer') return dpStatusSelect(p.key, p.name);
+  if(t.cat==='abr' || t.cat==='ft') return taskStatusSelect(t.id, p.name);
+  if(t.cat==='fvo' && !taskDone(t.id)) return `<button class="tps-btn nwp" title="Folge-VO abgelehnt (Pflicht-Begründung, landet im Ablehnungs-Review)" onclick="event.stopPropagation();rejectFvoFromTagesplan('${jsq(p.key)}','${jsq(p.name)}','${jsq(t.id)}')">🔄🚫 VO abgelehnt</button>`;
+  return '';
 }
 // Segment-Umschalter Liste ↔ Kalender
 function tzModeToggle(){
@@ -6210,38 +6245,9 @@ function buildAufgabenSections(a){
   // (Lücke gefüllt, Rezept abgerechnet, Termin gebucht …), verschwindet sie NICHT, sondern
   // bleibt mit Haken „laut Export erledigt" stehen → der Fortschrittsbalken läuft weiter.
   // Taucht sie später wieder auf (z. B. Termin abgesagt), wird sie automatisch wieder offen.
-  (function(){
-    const AUTO_KEYS = ['gapHeute','gapMorgen','abr','ft','grimz','blum','blpl'];
-    const all = lsGet('cki_tagesliste', {}) || {};
-    const dayKey = aufOrtKey()+'|'+currentDate;
-    const snap = all[dayKey] || {};
-    let dirty = false;
-    sections.concat(gapSecs).forEach(sec=>{
-      if(!AUTO_KEYS.includes(sec.key)) return;
-      const present = new Set(sec.items.map(it=>it.id));
-      sec.items.forEach(it=>{
-        if(!snap[it.id]){ snap[it.id] = {k:sec.key, m:it.main, s:it.sub}; dirty = true; }
-        const e = aufAll()[it.id];
-        if(e && e.auto) aufWrite(it.id, {st:'offen', ts:Date.now(), by:'Export'});      // wieder aufgetaucht
-      });
-      Object.keys(snap).forEach(id=>{
-        const g = snap[id];
-        if(g.k!==sec.key || present.has(id)) return;
-        const st = taskSt(id);
-        if(st==='offen' || st==='ib') aufWrite(id, {st:'erledigt', auto:true, ts:Date.now(), by:'Export'});
-        const e = aufAll()[id] || {};
-        const wann = e.ts ? new Date(e.ts).toLocaleString('de-DE',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
-        sec.items.push({ id:id, main:g.m, ghost:true,
-          sub: e.auto ? '<b style="color:var(--teal)">✅ laut Export erledigt</b>'+(wann?' · '+wann:'')
-                      : 'nicht mehr im Export · '+esc((AUF_STATUS.find(o=>o[0]===taskSt(id))||['',''])[1])+(e.by?' von '+esc(e.by):'') });
-      });
-    });
-    if(dirty){
-      const grenze = Date.now() - 14*86400000;
-      Object.keys(all).forEach(k=>{ const d = new Date(k.split('|').pop()+'T12:00:00').getTime(); if(isNaN(d) || d<grenze) delete all[k]; });
-      all[dayKey] = snap; lsSet('cki_tagesliste', all);
-    }
-  })();
+  sections.concat(gapSecs).forEach(sec=>{
+    if(['gapHeute','gapMorgen','abr','ft','grimz','blum','blpl'].includes(sec.key)) aufMerkliste(sec.key, sec.items);
+  });
 
   // Einheitlicher Aufgaben-Status (offen / in Bearbeitung / erledigt / abgelehnt) – dieselbe
   // Auswahl hängt in den Reitern an derselben ID. Klick auf die Zeile hakt weiterhin ab.
@@ -6335,21 +6341,30 @@ function buildAufgabenSections(a){
     const zh = zuzahlungHeute();
     if(!zh){
       zzIt.sub = 'keine Zuzahlungsdaten im Export';
-    } else if(zh.list.length){
-      const done = zh.list.length - zh.offen.length;
-      const sumOffen = zh.offen.reduce((s,p)=>s+p.betrag,0);
-      zzIt.sub = done+'/'+zh.list.length+' kassiert'+(sumOffen>0?' · '+euroFmt(sumOffen)+' Zuzahlung heute noch offen':' · alles kassiert 🎉');
-      // Okt 2026 (Wunsch Chaled): jeder Patient als eigene Unteraufgabe.
-      // Checkbox = kassiert-Status (id-Präfix 'zzk|' → taskDone/toggleTask routen
-      // durch zzKassiert/toggleZzKassiert, bleibt synchron mit Kopf-Zähler 💶).
-      const zzSubs = zh.list.map(p=>({
-        id:'zzk|'+p.key, indent:true, compact:true,
-        main:esc(p.name)+' · <b style="color:var(--fire)">'+euroFmt(p.betrag)+'</b>',
-        sub:'' }));
-      subAufklapp(zzIt, zzSubs, 'zz');
-      tgItems.splice(tgItems.indexOf(zzIt)+1, 0, ...zzSubs);
     } else {
-      zzIt.sub = 'heute keine offenen Zuzahlungen bei Patienten mit Termin';
+      // Jeder Patient = eigene Aufgabe (id zz|<Tag>|<patKey>) mit Status + Notiz; dieselbe Aufgabe
+      // steht im Tagesplan. Ist die Zahlung im nächsten Export verbucht, bleibt sie als
+      // „laut Export bezahlt" stehen.
+      const zzSubs = zh.list.map(p=>({
+        id:zzId(currentDate, p.key), _name:p.name, _key:p.key,
+        main:esc(p.name)+' · <b style="color:var(--fire)">'+euroFmt(p.betrag)+'</b>',   // nur Patient + Betrag (To-do 01.10.)
+        sub:'' }));
+      aufMerkliste('zz', zzSubs, 'laut Export bezahlt');
+      zzSubs.forEach(x=>{
+        x.indent = true; x.compact = true; x.clickToggle = true;
+        const nm = x._name || String(x.main).replace(/<[^>]+>/g,'');
+        x.statusSel = taskStatusSelect(x.id, nm);
+        if(x._key) x.notiz = patNotizField(x._key, x._name);
+      });
+      if(zzSubs.length){
+        const done = zzSubs.filter(x=>taskDone(x.id)).length;
+        const sumOffen = zh.list.filter(p=>!taskDone(zzId(currentDate,p.key))).reduce((a,p)=>a+p.betrag,0);
+        zzIt.sub = done+'/'+zzSubs.length+' kassiert'+(sumOffen>0?' · '+euroFmt(sumOffen)+' Zuzahlung heute noch offen':' · alles kassiert 🎉');
+        subAufklapp(zzIt, zzSubs, 'zz');
+        tgItems.splice(tgItems.indexOf(zzIt)+1, 0, ...zzSubs);
+      } else {
+        zzIt.sub = 'heute keine offenen Zuzahlungen bei Patienten mit Termin';
+      }
     }
   }
   // ── Okt 2026 (Wunsch Chaled): Mitarbeiter-Geburtstage im Tagesgeschäft ──

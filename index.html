@@ -4663,6 +4663,17 @@ function gotoLuecke(dateStr, therapist, startHHMM){
 // To-do 01.10.: Aufgaben, die sich aus dem Export selbst abhaken (id → true/false),
 // werden bei jedem Aufbau der Aufgabenliste neu gesetzt (buildAufgabenSections).
 const TZ_AUTO_DONE = {};
+// Unteraufgaben (L/V, HB-Akten, Zuzahlungen) ein-/ausklappbar – Standard: zu. Klick auf den
+// Hauptpunkt klappt auf; der Hauptpunkt hakt sich ab, sobald alle Unteraufgaben erledigt sind.
+function toggleSubAuf(key){ lsSet('cki_secopen_sub_'+key, !lsGet('cki_secopen_sub_'+key, false)); renderAufgaben(); }
+function subAufklapp(parent, subs, key){
+  if(!subs.length) return;
+  const open = lsGet('cki_secopen_sub_'+key, false);
+  if(!open) subs.forEach(x=>{ x.rowHide = true; });
+  parent.onclick = "toggleSubAuf('"+key+"')";
+  parent.sub = (parent.sub ? parent.sub+' · ' : '')+(open ? '▾ Liste zuklappen' : '▸ klicken zeigt die Liste');
+  TZ_AUTO_DONE[parent.id] = subs.every(x=>taskDone(x.id));
+}
 function togglePlanFill(){ lsSet('cki_secopen_planfill', !lsGet('cki_secopen_planfill', false)); renderAufgaben(); }
 function taskRowStyle(it){ const st=(it.indent?'margin-left:26px;':'')+(it.rowHide?'display:none;':''); return st?' style="'+st+'"':''; }
 function taskDone(id){
@@ -6218,6 +6229,7 @@ function buildAufgabenSections(a){
         id:'hb|'+currentDate+'|'+x.patKey, indent:true,
         main:'🏠 <b>'+x.time+'</b> · '+esc(x.name),
         sub:(x.therapist?esc(x.therapist)+' · ':'')+'Datum/Unterschrift kontrolliert?' }));
+      subAufklapp(hbIt, hbSubs, 'hb');
       tgItems.splice(tgItems.indexOf(hbIt)+1, 0, ...hbSubs);
     } else {
       hbIt.sub = 'heute keine Hausbesuche bis 16:30 im Plan';
@@ -6269,6 +6281,7 @@ function buildAufgabenSections(a){
     lvIt.onclick = 'void 0';   // Hauptpunkt hakt sich über die Patienten selbst ab
     lvIt.sub = lvSubs.length ? done+'/'+lvSubs.length+' Patienten weitergeplant · heute letzter oder vorletzter Termin, noch kein Folgerezept geplant'
                              : 'heute kein Patient mit letztem oder vorletztem Termin · automatisch erledigt ✓';
+    subAufklapp(lvIt, lvSubs, 'lv');
     // direkt unter „Plan für Heute + Morgen füllen" einsortieren
     tgItems.splice(tgItems.indexOf(lvIt), 1);
     let pos = tgItems.findIndex(it=>it.main.includes('Akten für den nächsten Tag'));
@@ -6294,6 +6307,7 @@ function buildAufgabenSections(a){
         id:'zzk|'+p.key, indent:true, compact:true,
         main:esc(p.name)+' · <b style="color:var(--fire)">'+euroFmt(p.betrag)+'</b>',
         sub:'' }));
+      subAufklapp(zzIt, zzSubs, 'zz');
       tgItems.splice(tgItems.indexOf(zzIt)+1, 0, ...zzSubs);
     } else {
       zzIt.sub = 'heute keine offenen Zuzahlungen bei Patienten mit Termin';

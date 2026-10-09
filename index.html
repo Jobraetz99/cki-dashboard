@@ -736,6 +736,7 @@ select:active,input[type=checkbox]:active{filter:brightness(.95)}
     <div class="hdr-r">
       <span class="demo-badge">🎭 Demo v2.1</span>
       <span id="meta" style="font-size:11px;color:var(--muted)"></span>
+      <span id="syncChip" class="hdr-btn" style="display:none;cursor:pointer;font-size:11px" onclick="syncChipClick()"></span>
       <select id="hdrLocation" class="hdr-btn" style="display:none" title="Standort wechseln"></select>
       <button class="hdr-btn" onclick="resetDash()">📂 Neue Datei</button>
     </div>
@@ -801,15 +802,19 @@ const EXCLUDE_TERMS = ['amanse'];
 
 // ── Persistenter Speicher (localStorage) ───────────────────
 // Läuft als statische Seite auf GitHub Pages → localStorage verfügbar.
-// Hinweis: Speicherung ist derzeit rein lokal pro Browser. Ein teamweiter,
-// geräteübergreifender Speicher ist möglich, benötigt aber eine einmalige
-// Admin-Freigabe (siehe Notiz im Verlauf-Tab) und ist deshalb deaktiviert.
+// Okt 2026: Arbeitsdaten (Status, Notizen, Haken, Zuweisungen …) werden zusätzlich über den
+// TEAM-SPEICHER mit SharePoint abgeglichen (Sektion TEAM-SPEICHER weiter unten). localStorage
+// bleibt der schnelle lokale Stand; lsSet meldet jede Änderung an den Abgleich.
 function lsGet(key, fallback){
   try{ const v = localStorage.getItem(key); return v===null?fallback:JSON.parse(v); }
   catch(e){ return fallback; }
 }
 function lsSet(key, val){
+  const sh = (typeof syncShared==='function') && syncShared(key);
+  let old;
+  if(sh){ try{ const o = localStorage.getItem(key); old = o===null ? undefined : JSON.parse(o); }catch(e){ old = undefined; } }
   try{ localStorage.setItem(key, JSON.stringify(val)); }catch(e){}
+  if(sh) syncTouch(key, old, val);
 }
 function lsSetRaw(key, val){ lsSet(key, val); }   // Alias (persönliche Schlüssel wie cki_me)
 // Globaler lokaler Datums-String "YYYY-MM-DD" (parseData hat eine eigene lokale Variante)
@@ -4663,10 +4668,23 @@ function taskRowStyle(it){ const st=(it.indent?'margin-left:26px;':'')+(it.rowHi
 function taskDone(id){
   if(Object.prototype.hasOwnProperty.call(TZ_AUTO_DONE, id)) return TZ_AUTO_DONE[id];
   if(String(id).indexOf('zzk|')===0) return zzKassiert(String(id).slice(4));
+  // L/V-Aufgabe ('lv|<Tag>|<patKey>') hängt am „weiter geplant"-Status → Tagesplan, Kopf-Zahl und Aufgabe bleiben eins
+  if(String(id).indexOf('lv|')===0){ const p=lvIdParts(id); if(getTpStatus(p.day, p.key)) return true; }
   return lsGet('cki_check_'+id, false);
+}
+function lvIdParts(id){ const p=String(id).split('|'); return {day:p[1], key:p.slice(2).join('|')}; }
+// Status-Auswahl für L/V: offen / weiter geplant / nicht weiter geplant (mit Pflicht-Begründung)
+function lvStatusSelect(day, patKey, name){
+  const st = getTpStatus(day, patKey), cur = st ? st.st : '';
+  const col = cur==='wp' ? 'var(--teal)' : cur==='nwp' ? 'var(--muted)' : 'var(--accent)';
+  const opts = [['','🔴 offen'],['wp','✅ weiter geplant'],['nwp','🚫 nicht weiter geplant']]
+    .map(([v,l])=>'<option value="'+v+'"'+(v===cur?' selected':'')+'>'+l+'</option>').join('');
+  return '<select class="asg-sel" title="'+esc(st&&st.reason?'Grund: '+st.reason:'Wurde der Patient weiter geplant?')+'" style="border-color:'+col+';color:'+col+';font-weight:700" onclick="event.stopPropagation()" '+
+    'onchange="setTpStatus(\''+esc(jsq(day))+'\',\''+esc(jsq(patKey))+'\',this.value||null,\''+esc(jsq(name||''))+'\')">'+opts+'</select>';
 }
 function toggleTask(id){
   if(String(id).indexOf('zzk|')===0){ toggleZzKassiert(String(id).slice(4)); return; }
+  if(String(id).indexOf('lv|')===0){ const p=lvIdParts(id); const st=getTpStatus(p.day,p.key); setTpStatus(p.day, p.key, st?null:'wp', ''); return; }
   const nd = !taskDone(id);
   aufWrite(id, {st: nd?'erledigt':'offen', ts:Date.now(), by:getMe()||''});
   renderAufgaben();
@@ -4700,6 +4718,7 @@ function aufOrtKey(){
   return (DATA && DATA.lizenz) ? String(DATA.lizenz) : 'lokal';
 }
 function rerenderCurrent(){
+  if(!DATA) return;                                  // ohne geladenen Export gibt es nichts zu zeichnen
   if(currentView==='aufgaben') renderAufgaben();
   else if(currentView==='rezepte') showRezeptDetail(currentRezeptCat);
   else if(currentView==='offene') renderOffene();
@@ -5091,7 +5110,7 @@ function setTpStatus(date, patKey, st, name){
   let reason = '';
   if(st==='nwp'){
     reason = pflichtBegruendung('Warum wird dieser Patient NICHT weiter geplant?');
-    if(reason===null) return;                       // abgebrochen → kein Status setzen
+    if(reason===null){ renderAufgaben(); return; }  // abgebrochen → kein Status setzen, Auswahl zurückstellen
     ablehnungLog('weiterplan', date+'|'+patKey, name, reason);
   }
   all[k] = { st:st, reason:reason, name:name||'', ts:Date.now(), by:getMe()||'' };
@@ -5579,7 +5598,8 @@ function dauerKandidatKeys(){
 // ── LV = letzter / vorletzter Termin (To-do 01.10. + Mail Luis 09.10.) ──────────
 // Patient hat am Tag einen Termin auf einem Rezept, auf dem danach höchstens EIN weiterer
 // Termin gebucht ist, UND es gibt kein anderes Rezept mit späteren Terminen (= Folgerezept
-// ist noch nicht geplant). Dauerplan-Patienten, Rehasport/Anamnese und Prävention zählen nicht.
+// ist noch nicht geplant). Dauerplan-Patienten, Rehasport/Anamnese und Prävention zählen nicht,
+// ebenso wenig der ERSTE Termin eines Rezepts (vorher kein Termin auf diesem Rezept).
 // Rückgabe: Map patKey → {rezeptNr, letzter:true|false, heilmittel}
 function lvKandidaten(day){
   const out = new Map();
@@ -5588,15 +5608,17 @@ function lvKandidaten(day){
   const per = {};
   DATA.cells.forEach(c=>{
     if(!c.rezeptNr || c.belArt!=='R' || !c.termIdent || !c.patKey || !c.start || c.excluded) return;
-    const r = per[c.rezeptNr] = per[c.rezeptNr] || {pat:c.patKey, heute:false, nach:new Set(), hm:c.heilmittel};
+    const r = per[c.rezeptNr] = per[c.rezeptNr] || {pat:c.patKey, heute:false, nach:new Set(), vor:0, hm:c.heilmittel};
     const t = c.start.getTime();
     if(t>=dayStart && t<=dayEnd){ if(c.belegt) r.heute = true; }
     else if(t>dayEnd) r.nach.add(c.termIdent);
+    else if(c.belegt) r.vor++;                                     // Termin VOR dem Tag auf diesem Rezept
   });
   const byPat = {};
   Object.entries(per).forEach(([nr,r])=>{ (byPat[r.pat]=byPat[r.pat]||[]).push({nr:nr, n:r.nach.size}); });
   Object.entries(per).forEach(([nr,r])=>{
     if(!r.heute || r.nach.size>1) return;
+    if(!r.vor) return;                                            // ERSTTERMIN des Rezepts zählt nicht (Wunsch 09.10.): da wird ohnehin erst geplant
     if(isDauerPatKey(r.pat) || isCheckerExcludedHM(r.hm) || isPraevHM(r.hm)) return;
     if(byPat[r.pat].some(x=>x.nr!==nr && x.n>0)) return;          // Folgerezept bereits mit Terminen geplant
     const prev = out.get(r.pat);
@@ -6011,7 +6033,8 @@ const TZ_TAGESGESCHAEFT = [
   {t:'Akten für den nächsten Tag rausnehmen / Privat- und HB-Daten eintragen', s:''},
   {t:'HB Akten aus dem Tagesgeschäft kontrollieren', s:''},
   {t:'Zuzahlungen kassieren', s:''},
-  {t:'Geburtstage Mitarbeiter', s:''}
+  {t:'Geburtstage Mitarbeiter', s:''},
+  {t:'Letzter / vorletzter Termin · Patienten weiterplanen', s:''}
 ];
 const TZ_BACKOFFICE = [
   {t:'Backoffice', s:'täglich wiederkehrende Backoffice-Aufgaben bearbeiten'},
@@ -6219,6 +6242,38 @@ function buildAufgabenSections(a){
     planIt.link = `<button class="task-open" onclick="event.stopPropagation();switchView('luecken')">Lücken-Tab →</button>`;
     if(!open) subs.forEach(g=>{ g.rowHide = true; });
     tgItems.splice(tgItems.indexOf(planIt)+1, 0, ...subs);
+  }
+  // ── Okt 2026: Letzter/vorletzter Termin als Aufgabe im Tagesgeschäft (je PATIENT) ──
+  // Dieselbe Menge wie die LV-Zahl im Kopf und die Karten im Tagesplan (lvKandidaten).
+  const lvIt = tgItems.find(it=>it.main.includes('Letzter / vorletzter Termin'));
+  if(lvIt){
+    const lv = lvKandidaten(currentDate);
+    const info = {};
+    DATA.cells.forEach(c=>{
+      if(c.dateStr!==currentDate || !c.patKey || !lv.has(c.patKey) || !c.belegt || !c.start) return;
+      const e = info[c.patKey] = info[c.patKey] || {name:(c.patVor+' '+c.patNach).trim(), start:c.start, therapist:c.therapist||''};
+      if(c.start < e.start){ e.start = c.start; e.therapist = c.therapist||''; }
+    });
+    const lvSubs = [...lv.keys()].filter(k=>info[k]).sort((a,b)=>info[a].start-info[b].start).map(k=>{
+      const e = lv.get(k), i = info[k], st = getTpStatus(currentDate, k);
+      return { id:'lv|'+currentDate+'|'+k, indent:true, clickToggle:true,
+        tdef: timeBlockOfHour(i.start.getHours()+i.start.getMinutes()/60),
+        main:'📅 <b>'+hhmm(i.start)+'</b> · '+esc(i.name)+' · <b>'+(e.letzter?'letzter':'vorletzter')+' Termin</b>',
+        sub:(i.therapist?esc(i.therapist)+' · ':'')+(e.letzter?'danach kein Termin mehr gebucht':'danach nur noch 1 Termin gebucht')+(st&&st.reason?' · Grund: '+esc(st.reason):''),
+        statusSel: lvStatusSelect(currentDate, k, i.name),
+        notiz: patNotizField(k, i.name) };
+    });
+    const done = lvSubs.filter(x=>taskDone(x.id)).length;
+    TZ_AUTO_DONE[lvIt.id] = lvSubs.length>0 && done===lvSubs.length;
+    if(!lvSubs.length) TZ_AUTO_DONE[lvIt.id] = true;
+    lvIt.onclick = 'void 0';   // Hauptpunkt hakt sich über die Patienten selbst ab
+    lvIt.sub = lvSubs.length ? done+'/'+lvSubs.length+' Patienten weitergeplant · heute letzter oder vorletzter Termin, noch kein Folgerezept geplant'
+                             : 'heute kein Patient mit letztem oder vorletztem Termin · automatisch erledigt ✓';
+    // direkt unter „Plan für Heute + Morgen füllen" einsortieren
+    tgItems.splice(tgItems.indexOf(lvIt), 1);
+    let pos = tgItems.findIndex(it=>it.main.includes('Akten für den nächsten Tag'));
+    if(pos<0) pos = tgItems.length;
+    tgItems.splice(pos, 0, lvIt, ...lvSubs);
   }
   // ── Okt 2026 (Wunsch Chaled): Zuzahlungs-Liste gehört ins Tagesgeschäft ──
   // (vorher stand sie im blauen Tagesziel-Kopf). Angezeigt wird die OFFENE ZUZAHLUNG
@@ -6678,6 +6733,200 @@ async function graphGet(path, token, asBuffer){
   return asBuffer ? await r.arrayBuffer() : await r.json();
 }
 
+// ═══════════════════════════════════════════════════════════
+// TEAM-SPEICHER (Okt 2026): Status, Notizen, Haken, Zuweisungen für ALLE Rechner
+// ═══════════════════════════════════════════════════════════
+// Eine JSON-Datei im SharePoint der Praxis (Dashboard-Daten/cki-status.json). Braucht die
+// delegierte Graph-Berechtigung Files.ReadWrite.All (Admin-Zustimmung) – die Leserechte für
+// die Exporte bleiben davon getrennt, damit der Export-Login nie an der Schreibfreigabe hängt.
+//
+// Abgleich je EINHEIT mit Zeitstempel („letzte Änderung gewinnt"):
+//   • einfacher Schlüssel            → Einheit = Schlüssel            (z. B. cki_check_<id>)
+//   • Schlüssel mit Objekt als Wert  → Einheit = Schlüssel + Eintrag  (z. B. cki_tasks → je Aufgabe,
+//     cki_patnotiz → je Patient). So überschreiben sich zwei Leute NICHT, wenn sie gleichzeitig
+//     verschiedene Aufgaben/Patienten bearbeiten.
+// Gelöschtes bleibt als Grabstein ({d:1}) in der Datei, sonst käme es vom nächsten Rechner zurück.
+// Persönliches (wer bin ich, aufgeklappte Sektionen, Filter, Benachrichtigungen) wird NICHT geteilt.
+const SYNC_FOLDER = 'Dashboard-Daten', SYNC_FILE = 'cki-status.json', SYNC_SEP = '\u0001';
+const SYNC_WRITE_SCOPES = ['Files.ReadWrite.All'];
+const SYNC_PERSONAL = /^cki_(me$|notif_|gap_snapshot$|tzmode$|tzarea$|secopen_|offene|hideDauer|rezept_group_|_sync)/;
+function syncShared(key){ return /^cki_/.test(key) && !SYNC_PERSONAL.test(key); }
+function syncIsObj(v){ return !!v && typeof v==='object' && !Array.isArray(v); }
+let _syncMeta = null;
+function syncMetaAll(){ if(!_syncMeta){ try{ _syncMeta = JSON.parse(localStorage.getItem('cki__syncmeta')||'{}') || {}; }catch(e){ _syncMeta = {}; } } return _syncMeta; }
+function syncMetaSave(){ try{ localStorage.setItem('cki__syncmeta', JSON.stringify(_syncMeta||{})); }catch(e){} }
+// Wert → Einheiten {name: JSON-String}
+function syncUnitsOf(key, val){
+  const out = {};
+  if(val===undefined) return out;
+  if(syncIsObj(val)) Object.keys(val).forEach(k=>{ out[key+SYNC_SEP+k] = JSON.stringify(val[k]); });
+  else out[key] = JSON.stringify(val);
+  return out;
+}
+// Lokale Änderung vermerken (wird von lsSet gerufen) und Hochladen einplanen.
+let syncActive = false, syncPushTimer = null;
+function syncTouch(key, old, val){
+  const a = syncUnitsOf(key, old), b = syncUnitsOf(key, val), m = syncMetaAll(), now = Date.now();
+  let ch = false;
+  // Zeitstempel je Einheit läuft immer VORWÄRTS (max aus Uhr und letztem bekannten Stand + 1):
+  // geht die Uhr eines anderen Rechners vor, gewinnt die spätere Änderung hier trotzdem.
+  const tick = n => { m[n] = Math.max(now, (m[n]||0)+1); ch = true; };
+  Object.keys(b).forEach(n=>{ if(a[n]!==b[n]) tick(n); });
+  Object.keys(a).forEach(n=>{ if(!(n in b)) tick(n); });                        // gelöscht → Grabstein beim Hochladen
+  if(!ch) return;
+  syncMetaSave();
+  if(syncActive){ clearTimeout(syncPushTimer); syncPushTimer = setTimeout(syncRun, 2500); syncChip('⏳ speichert …'); }
+}
+// Alle geteilten lokalen Einheiten {name: Wert}
+function syncLocalUnits(){
+  const out = {};
+  for(let i=0;i<localStorage.length;i++){
+    const key = localStorage.key(i);
+    if(!syncShared(key)) continue;
+    let v; try{ v = JSON.parse(localStorage.getItem(key)); }catch(e){ continue; }
+    if(syncIsObj(v)) Object.keys(v).forEach(k=>{ out[key+SYNC_SEP+k] = v[k]; });
+    else out[key] = v;
+  }
+  return out;
+}
+// Einheiten aus der Datei in den Browser schreiben (roh, ohne erneutes Vermerken)
+function syncApply(units){
+  const byKey = {};
+  Object.keys(units).forEach(n=>{
+    const i = n.indexOf(SYNC_SEP), key = i<0 ? n : n.slice(0,i);
+    if(!syncShared(key)) return;                                  // nur bekannte, geteilte Schlüssel annehmen
+    (byKey[key] = byKey[key] || []).push([i<0 ? null : n.slice(i+1), units[n]]);
+  });
+  Object.keys(byKey).forEach(key=>{
+    const list = byKey[key];
+    try{
+      if(list.some(x=>x[0]===null)){
+        const u = list.find(x=>x[0]===null)[1];
+        if(u.d) localStorage.removeItem(key); else localStorage.setItem(key, JSON.stringify(u.v));
+      } else {
+        let obj; try{ obj = JSON.parse(localStorage.getItem(key)); }catch(e){ obj = null; }
+        if(!syncIsObj(obj)) obj = {};
+        list.forEach(([sub,u])=>{ if(u.d) delete obj[sub]; else obj[sub] = u.v; });
+        localStorage.setItem(key, JSON.stringify(obj));
+      }
+    }catch(e){}
+  });
+}
+// Transport – austauschbar (Tests setzen SYNC_IO auf einen Schein-Speicher)
+let _syncFolderOk = false, _syncCache = null;
+async function syncToken(interaktiv){
+  const app = initMsal(); const account = app.getAllAccounts()[0];
+  if(!account) throw new Error('nicht angemeldet');
+  try{ return (await app.acquireTokenSilent({ scopes:SYNC_WRITE_SCOPES, account })).accessToken; }
+  catch(e){ if(!interaktiv) throw Object.assign(new Error('Freigabe fehlt'), {needConsent:true}); return (await app.acquireTokenPopup({ scopes:SYNC_WRITE_SCOPES, account })).accessToken; }
+}
+let SYNC_IO = {
+  async read(interaktiv){
+    const token = await syncToken(interaktiv);
+    const r = await fetch('https://graph.microsoft.com/v1.0/sites/'+spSiteId+'/drive/root:/'+SYNC_FOLDER+'/'+SYNC_FILE, { headers:{ Authorization:'Bearer '+token } });
+    if(r.status===404) return null;
+    if(!r.ok) throw Object.assign(new Error('Graph '+r.status), {status:r.status});
+    const meta = await r.json();
+    if(_syncCache && _syncCache.etag===meta.eTag) return _syncCache;         // unverändert → kein Download
+    const c = await fetch(meta['@microsoft.graph.downloadUrl']);
+    if(!c.ok) throw Object.assign(new Error('Download '+c.status), {status:c.status});
+    _syncCache = { data: await c.json(), etag: meta.eTag };
+    return _syncCache;
+  },
+  async write(data, etag){
+    const token = await syncToken(false);
+    const base = 'https://graph.microsoft.com/v1.0/sites/'+spSiteId+'/drive/root';
+    if(!_syncFolderOk){   // Ordner beim ersten Speichern anlegen (409 = gibt es schon)
+      const f = await fetch(base+'/children', { method:'POST', headers:{ Authorization:'Bearer '+token, 'Content-Type':'application/json' },
+        body: JSON.stringify({ name:SYNC_FOLDER, folder:{}, '@microsoft.graph.conflictBehavior':'fail' }) });
+      if(!f.ok && f.status!==409) throw Object.assign(new Error('Ordner '+f.status), {status:f.status});
+      _syncFolderOk = true;
+    }
+    const h = { Authorization:'Bearer '+token, 'Content-Type':'application/json' };
+    if(etag) h['If-Match'] = etag;
+    const r = await fetch(base+':/'+SYNC_FOLDER+'/'+SYNC_FILE+':/content'+(etag?'':'?@microsoft.graph.conflictBehavior=fail'), { method:'PUT', headers:h, body: JSON.stringify(data) });
+    if(!r.ok) throw Object.assign(new Error('Speichern '+r.status), {status:r.status});
+    const meta = await r.json();
+    _syncCache = { data:data, etag:meta.eTag };
+    return meta.eTag;
+  }
+};
+// Ein Abgleich: Datei lesen → Neueres übernehmen → eigenes Neueres hochladen.
+let syncBusy = false, syncAgain = false, syncPendingRender = false, syncLastOk = 0;
+async function syncRun(interaktiv){
+  if(syncBusy){ syncAgain = true; return; }
+  syncBusy = true;
+  let applied = 0;
+  try{
+    for(let versuch=0; versuch<3; versuch++){
+      const remote = await SYNC_IO.read(interaktiv===true);
+      const R = (remote && remote.data && remote.data.units) || {};
+      const m = syncMetaAll();
+      let L = syncLocalUnits();
+      // Erststart: lokale Einheiten ohne Zeitstempel bekommen den eigenen ts des Eintrags, sonst „alt"
+      Object.keys(L).forEach(n=>{ if(!m[n]) m[n] = (syncIsObj(L[n]) && typeof L[n].ts==='number' && L[n].ts>0) ? L[n].ts : 1; });
+      // 1) Datei → Browser
+      const take = {};
+      Object.keys(R).forEach(n=>{ const u = R[n]; if(u && typeof u.t==='number' && u.t > (m[n]||0)){ take[n] = u; m[n] = u.t; } });
+      const nTake = Object.keys(take).length;
+      if(nTake){ syncApply(take); applied += nTake; L = syncLocalUnits(); }
+      // 2) Browser → Datei: alles, was lokal neuer ist oder in der Datei fehlt
+      let upload = false;
+      Object.keys(m).forEach(n=>{ if(n.indexOf('cki_')!==0) return; const rt = R[n] ? R[n].t : 0; if((m[n]||0) > rt) upload = true; });
+      syncMetaSave();
+      if(upload){
+        const out = {};
+        Object.keys(R).forEach(n=>{ out[n] = R[n]; });
+        Object.keys(m).forEach(n=>{
+          const rt = R[n] ? R[n].t : 0;
+          if((m[n]||0) <= rt) return;
+          out[n] = (n in L) ? { t:m[n], v:L[n] } : { t:m[n], d:1 };
+        });
+        try{
+          await SYNC_IO.write({ v:1, savedAt:Date.now(), savedBy:getMe()||'', units:out }, remote ? remote.etag : null);
+        }catch(e){
+          if(e && (e.status===412 || e.status===409)){ _syncCache = null; continue; }   // jemand war schneller → neu lesen und mischen
+          throw e;
+        }
+      }
+      break;
+    }
+    syncLastOk = Date.now();
+    syncChip('☁️ Team-Speicher · '+new Date().toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'}), 'Status, Notizen und Haken werden für alle gespeichert. Klick = jetzt abgleichen.');
+  }catch(e){
+    if(e && e.needConsent) syncChip('🔑 Team-Speicher aktivieren', 'Einmal klicken und die Microsoft-Abfrage bestätigen – danach werden Status und Notizen für alle gespeichert.', true);
+    else syncChip('⚠️ nur lokal gespeichert', 'Team-Speicher nicht erreichbar ('+(e&&e.message||e)+'). Änderungen bleiben in diesem Browser und werden beim nächsten Abgleich nachgetragen. Klick = erneut versuchen.', true);
+  }finally{
+    syncBusy = false;
+    if(applied) syncAfterApply();
+    if(syncAgain){ syncAgain = false; setTimeout(syncRun, 500); }
+  }
+}
+// Nach übernommenen Änderungen: Zwischenspeicher leeren und Ansicht neu zeichnen –
+// aber nicht, während jemand gerade tippt oder eine Auswahl offen hat.
+function syncAfterApply(){
+  try{ _aufCache = null; }catch(e){}
+  const el = document.activeElement, tippt = el && /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName);
+  if(tippt){ syncPendingRender = true; return; }
+  syncPendingRender = false;
+  if(DATA){ try{ rerenderCurrent(); }catch(e){} }
+}
+function syncChip(txt, tip, warn){
+  const c = document.getElementById('syncChip'); if(!c) return;
+  c.style.display = ''; c.textContent = txt; if(tip) c.title = tip;
+  c.style.color = warn ? 'var(--fire)' : '';
+}
+function syncChipClick(){ if(spSiteId) syncRun(true); }
+function teamSyncStart(){
+  if(syncActive) return;
+  syncActive = true;
+  syncChip('⏳ Team-Speicher …');
+  syncRun();
+  setInterval(()=>{ if(!document.hidden) syncRun(); }, 60000);
+  document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) syncRun(); });
+  document.addEventListener('focusout', ()=>{ if(syncPendingRender) setTimeout(()=>{ if(syncPendingRender) syncAfterApply(); }, 300); });
+}
+
 // Dateiname -> {license, ts}. Schema: Lizenz_YYYYMMDDhhmmss.csv. Ohne Prefix -> Einzeldatei.
 function parseFileName(name){
   const m = name.match(/^(\d+)[_-](\d{14})/);
@@ -6712,6 +6961,7 @@ async function connectSharePoint(){
     const site = await graphGet('/sites/'+SP.hostname+':'+SP.sitePath, token);
     spSiteId = site.id;
     autoRegisterMe();   // eingeloggten MS-Nutzer automatisch als „ich" übernehmen
+    teamSyncStart();    // Team-Speicher (Status/Notizen für alle) starten
     msStatus('Suche Standorte …');
     const listing = await graphGet('/sites/'+spSiteId+'/drive/root:/'+encodeURI(SP.folderPath)+':/children?$top=999&$select=name,id,size,folder,lastModifiedDateTime', token);
     const items = listing.value||[];

@@ -736,7 +736,7 @@ select:active,input[type=checkbox]:active{filter:brightness(.95)}
     <div class="hdr-r">
       <span class="demo-badge">🎭 Demo v2.1</span>
       <span id="meta" style="font-size:11px;color:var(--muted)"></span>
-      <span id="syncChip" class="hdr-btn" style="display:none;cursor:pointer;font-size:11px" onclick="syncChipClick()"></span>
+      <span id="syncChip" class="hdr-btn" style="display:none;cursor:pointer;font-size:11px" onclick="syncChipClick(event)"></span>
       <select id="hdrLocation" class="hdr-btn" style="display:none" title="Standort wechseln"></select>
       <button class="hdr-btn" onclick="resetDash()">📂 Neue Datei</button>
     </div>
@@ -5686,7 +5686,39 @@ function dauerKandidatKeys(){
 // ist noch nicht geplant). Dauerplan-Patienten, Rehasport/Anamnese und Prävention zählen nicht,
 // ebenso wenig der ERSTE Termin eines Rezepts (vorher kein Termin auf diesem Rezept).
 // Rückgabe: Map patKey → {rezeptNr, letzter:true|false, heilmittel}
+// Mit Merkliste: Wer heute schon einmal L/V-Kandidat war und es im aktuellen Export NICHT mehr
+// ist (Folgetermine wurden in THEORG gebucht), bleibt in der Liste und gilt als „laut Export
+// weitergeplant" – sonst fiele er aus Zähler und Liste, und aus 2/9 würde beim nächsten Export 0/7.
+// Wird er wieder Kandidat (Termine abgesagt), entfällt der automatische Status.
 function lvKandidaten(day){
+  const out = lvKandidatenRoh(day);
+  if(!DATA || !day) return out;
+  const all = lsGet('cki_tagesliste', {}) || {};
+  const dayKey = aufOrtKey()+'|'+day;
+  const snap = all[dayKey] || {};
+  let dirty = false;
+  out.forEach((e,key)=>{
+    const id = 'lv|'+day+'|'+key;
+    if(!snap[id]){ snap[id] = {k:'lv', l:e.letzter?1:0, hm:e.heilmittel, nr:e.rezeptNr}; dirty = true; }
+    const st = getTpStatus(day, key);
+    if(st && st.auto){ const a = tpStatusAll(); delete a[day+'|'+key]; lsSet('cki_tpstatus', a); }
+  });
+  Object.keys(snap).forEach(id=>{
+    const g = snap[id];
+    if(g.k!=='lv') return;
+    const key = id.split('|').slice(2).join('|');
+    if(out.has(key)) return;
+    if(!getTpStatus(day, key)){
+      const a = tpStatusAll();
+      a[day+'|'+key] = { st:'wp', auto:true, reason:'', name:'', ts:Date.now(), by:'Export' };
+      lsSet('cki_tpstatus', a);
+    }
+    out.set(key, {rezeptNr:g.nr, letzter:!!g.l, heilmittel:g.hm||'', nichtMehrKandidat:true});
+  });
+  if(dirty){ all[dayKey] = snap; lsSet('cki_tagesliste', all); }
+  return out;
+}
+function lvKandidatenRoh(day){
   const out = new Map();
   if(!DATA || !day) return out;
   const dayStart = new Date(day+'T00:00:00').getTime(), dayEnd = new Date(day+'T23:59:59').getTime();
@@ -5871,7 +5903,7 @@ function buildTagesplan(a, rez){
   // L/V: heute letzter/vorletzter Termin, noch kein Folgerezept geplant → dieselbe Menge wie die LV-Zahl im Kopf
   lvKandidaten(day).forEach((e,key)=>push(key, {id:'lv|'+day+'|'+key, cat:'lv', ico:'📅',
     txt:(e.letzter?'Letzter':'Vorletzter')+' Termin heute · weiterplanen',
-    sub:(e.heilmittel?esc(e.heilmittel)+' · ':'')+(e.letzter?'danach kein Termin mehr gebucht':'danach nur noch 1 Termin gebucht')+' · kein Folgerezept geplant'}));
+    sub:(e.heilmittel?esc(e.heilmittel)+' · ':'')+(e.nichtMehrKandidat ? '<b style="color:var(--teal)">✅ laut Export weitergeplant</b> · Folgetermine sind gebucht' : (e.letzter?'danach kein Termin mehr gebucht':'danach nur noch 1 Termin gebucht')+' · kein Folgerezept geplant')}));
 
   // 2) Termine des Tages nach Patient bündeln
   const patAppt = {};
@@ -6316,7 +6348,7 @@ function buildAufgabenSections(a){
       return { id:'lv|'+currentDate+'|'+k, indent:true, clickToggle:true,
         tdef: timeBlockOfHour(i.start.getHours()+i.start.getMinutes()/60),
         main:'📅 <b>'+hhmm(i.start)+'</b> · '+esc(i.name)+' · <b>'+(e.letzter?'letzter':'vorletzter')+' Termin</b>',
-        sub:(i.therapist?esc(i.therapist)+' · ':'')+(e.letzter?'danach kein Termin mehr gebucht':'danach nur noch 1 Termin gebucht')+(st&&st.reason?' · Grund: '+esc(st.reason):''),
+        sub:(i.therapist?esc(i.therapist)+' · ':'')+(e.nichtMehrKandidat ? (st&&st.auto?'<b style="color:var(--teal)">✅ laut Export weitergeplant</b> · Folgetermine sind gebucht':'Folgetermine sind inzwischen gebucht') : (e.letzter?'danach kein Termin mehr gebucht':'danach nur noch 1 Termin gebucht'))+(st&&st.reason?' · Grund: '+esc(st.reason):''),
         statusSel: lvStatusSelect(currentDate, k, i.name),
         notiz: patNotizField(k, i.name) };
     });
@@ -6587,7 +6619,6 @@ function renderAufgaben(){
 
   // ── Punkt 7 + 8: Platzhalter-Badges für kommende Export-Erweiterungen ──────
   h += `<div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap">
-    <span style="background:var(--amber-bg);color:var(--amber);padding:6px 12px;border-radius:100px;font-size:10px;font-weight:700;font-family:Montserrat">💰 Offene Rezeptgebühren · wartet auf Export (Luis)</span>
     <span style="background:var(--amber-bg);color:var(--amber);padding:6px 12px;border-radius:100px;font-size:10px;font-weight:700;font-family:Montserrat">🎂 Personal-Geburtstage · wartet auf Export (Luis)</span>
   </div>`;
 
@@ -6937,7 +6968,7 @@ async function syncRun(interaktiv){
       const take = {};
       Object.keys(R).forEach(n=>{ const u = R[n]; if(u && typeof u.t==='number' && u.t > (m[n]||0)){ take[n] = u; m[n] = u.t; } });
       const nTake = Object.keys(take).length;
-      if(nTake){ syncApply(take); applied += nTake; L = syncLocalUnits(); }
+      if(nTake){ syncLogAdd(take, L); syncApply(take); applied += nTake; L = syncLocalUnits(); }
       // 2) Browser → Datei: alles, was lokal neuer ist oder in der Datei fehlt
       let upload = false;
       Object.keys(m).forEach(n=>{ if(n.indexOf('cki_')!==0) return; const rt = R[n] ? R[n].t : 0; if((m[n]||0) > rt) upload = true; });
@@ -6948,7 +6979,7 @@ async function syncRun(interaktiv){
         Object.keys(m).forEach(n=>{
           const rt = R[n] ? R[n].t : 0;
           if((m[n]||0) <= rt) return;
-          out[n] = (n in L) ? { t:m[n], v:L[n] } : { t:m[n], d:1 };
+          out[n] = (n in L) ? { t:m[n], v:L[n], by:getMe()||'' } : { t:m[n], d:1, by:getMe()||'' };
         });
         try{
           await SYNC_IO.write({ v:1, savedAt:Date.now(), savedBy:getMe()||'', units:out }, remote ? remote.etag : null);
@@ -6960,7 +6991,7 @@ async function syncRun(interaktiv){
       break;
     }
     syncLastOk = Date.now();
-    syncChip('☁️ Team-Speicher · '+new Date().toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'}), 'Status, Notizen und Haken werden für alle gespeichert. Klick = jetzt abgleichen.');
+    syncChip('☁️ Team-Speicher · '+new Date().toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'}), 'Status, Notizen und Haken werden für alle gespeichert. Klick = jetzt abgleichen · Alt-Klick = Protokoll der übernommenen Änderungen.');
   }catch(e){
     if(e && e.needConsent) syncChip('🔑 Team-Speicher aktivieren', 'Einmal klicken und die Microsoft-Abfrage bestätigen – danach werden Status und Notizen für alle gespeichert.', true);
     else syncChip('⚠️ nur lokal gespeichert', 'Team-Speicher nicht erreichbar ('+(e&&e.message||e)+'). Änderungen bleiben in diesem Browser und werden beim nächsten Abgleich nachgetragen. Klick = erneut versuchen.', true);
@@ -6969,6 +7000,28 @@ async function syncRun(interaktiv){
     if(applied) syncAfterApply();
     if(syncAgain){ syncAgain = false; setTimeout(syncRun, 500); }
   }
+}
+// Protokoll der letzten 200 Änderungen, die dieser Browser AUS DEM TEAM-SPEICHER übernommen hat
+// (was, wann, von wem, ob dabei ein eigener Wert überschrieben oder gelöscht wurde). Nur lokal;
+// zum Nachvollziehen, wenn ein Status „plötzlich weg" ist. Anzeigen: Alt-Klick auf die ☁️-Anzeige.
+function syncLogAdd(take, L){
+  try{
+    const log = JSON.parse(localStorage.getItem('cki__synclog')||'[]');
+    const now = Date.now();
+    Object.keys(take).forEach(n=>{
+      const u = take[n];
+      log.push({ at:now, n:n.split(SYNC_SEP).join(' › '), t:u.t, by:u.by||'', del:u.d?1:0, hatte:(n in L)?1:0 });
+    });
+    localStorage.setItem('cki__synclog', JSON.stringify(log.slice(-200)));
+  }catch(e){}
+}
+function syncLogShow(){
+  let log = []; try{ log = JSON.parse(localStorage.getItem('cki__synclog')||'[]'); }catch(e){}
+  const f = t => new Date(t).toLocaleString('de-DE',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  const txt = log.slice(-40).reverse().map(e=> f(e.at)+'  '+(e.del?'GELÖSCHT ':(e.hatte?'überschrieben ':'neu '))+e.n+'  (geändert '+f(e.t)+(e.by?' von '+e.by:'')+')').join('\n');
+  const w = window.open('', '_blank');
+  if(w){ w.document.title = 'Team-Speicher · übernommene Änderungen'; w.document.body.innerHTML = '<pre style="font:12px/1.5 monospace;white-space:pre-wrap"></pre>'; w.document.body.firstChild.textContent = txt || 'Noch nichts aus dem Team-Speicher übernommen.'; }
+  return txt;
 }
 // Nach übernommenen Änderungen: Zwischenspeicher leeren und Ansicht neu zeichnen –
 // aber nicht, während jemand gerade tippt oder eine Auswahl offen hat.
@@ -6979,12 +7032,20 @@ function syncAfterApply(){
   syncPendingRender = false;
   if(DATA){ try{ rerenderCurrent(); }catch(e){} }
 }
+// Mehrere Tabs im selben Browser: schreibt ein anderer Tab, sind die Zwischenspeicher hier veraltet.
+// Ohne das würde dieser Tab beim nächsten Speichern die Einträge des anderen überschreiben –
+// und der Abgleich würde das als „gelöscht" an alle Rechner weitergeben.
+window.addEventListener('storage', function(ev){
+  if(!ev || !ev.key) return;
+  if(ev.key==='cki_tasks'){ try{ _aufCache = null; }catch(e){} }
+  if(ev.key==='cki__syncmeta'){ _syncMeta = null; }
+});
 function syncChip(txt, tip, warn){
   const c = document.getElementById('syncChip'); if(!c) return;
   c.style.display = ''; c.textContent = txt; if(tip) c.title = tip;
   c.style.color = warn ? 'var(--fire)' : '';
 }
-function syncChipClick(){ if(spSiteId) syncRun(true); }
+function syncChipClick(ev){ ev = ev || window.event; if(ev && ev.altKey){ syncLogShow(); return; } if(spSiteId) syncRun(true); }
 function teamSyncStart(){
   if(syncActive) return;
   syncActive = true;
@@ -7040,7 +7101,7 @@ async function connectSharePoint(){
       // ── Standort-pro-Ordner ─────────────────────────────
       spLocations = folders
         .map(f=>({ name:f.name, id:f.id }))
-        .sort((a,b)=>a.name.localeCompare(b.name,'de'));
+        .sort((a,b)=>a.name.localeCompare(b.name,'de',{numeric:true}));   // 1, 2, 3 … 10, 11 statt 1, 10, 11 … 2
       renderLocationPickers();
       await loadSpLocation(spLocations[0]);
     } else if(rootCsvs.length){

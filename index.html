@@ -1189,7 +1189,7 @@ function parseData(rows, sheetName){
     hinweis:52, wiedervorlage:53,
     artVerord:86, hausbesuch:87, indikation:91,
     rezNrKomplett:81, rezDatum:84, icd:92, diagnose:93, menge1:95, leistung1:96, freq1:97,
-    kasse:122, befreit:126, rezWert:133, zuzahlung:134, anzahlung:135,
+    kasse:122, befreit:126, befVon:127, befBis:128, rtPreis:26, rezWert:133, zuzahlung:134, anzahlung:135,
     bearbStatus:132, quittungNr:136, rechnungNr:137, abrechnungsdatum:138,
     artzNach:161, lizenz:166, team:167,
     atAusgefallen:171, atAbsage:172, atAbsagedatum:175
@@ -1284,6 +1284,9 @@ function parseData(rows, sheetName){
       zuzahlung: r[COL.zuzahlung] ? (parseFloat(String(r[COL.zuzahlung]).replace(/\./g,'').replace(',','.'))||0) : null,
       anzahlung: r[COL.anzahlung] ? (parseFloat(String(r[COL.anzahlung]).replace(/\./g,'').replace(',','.'))||0) : null,
       befreit: r[COL.befreit]==='J',
+      // „von bis" = zeitlich befristete Befreiung (Zeitraum in befVon/befBis); Preis je Einheit lt. Preisliste
+      befVonBis: (COL.befVon!==undefined && r[COL.befreit]==='von bis') ? [r[COL.befVon]||'', r[COL.befBis]||''] : null,
+      rtPreis: (COL.rtPreis!==undefined && r[COL.rtPreis]) ? (parseFloat(String(r[COL.rtPreis]).replace(/\./g,'').replace(',','.'))||null) : null,
       atAusgefallen: r[COL.atAusgefallen]==='J',
       atAbsage: (r[COL.atAbsage]||'').toString().trim(),
       atAbsagedatum: r[COL.atAbsagedatum] ? parseDate(r[COL.atAbsagedatum]) : null,
@@ -1316,28 +1319,61 @@ function parseData(rows, sheetName){
   });
 
   // ── Offene Zuzahlung je Patient (neuer Export) ──
-  // Je Rezept: Zuzahlung (Soll) vs. Anzahlung (bereits gezahlt); befreit=J → nichts fällig.
-  // offen = Zuzahlung − Anzahlung, summiert über alle Rezepte des Patienten.
+  // THEORG füllt „Zuzahlung" (Soll) und „Rezeptwert" ERST nach dem Taxieren/Abrechnen. Bei
+  // laufenden Rezepten stehen beide auf 0,00 – nur „Anzahlung" + Quittungsnummer zeigen, ob der
+  // Patient schon gezahlt hat. Deshalb zwei Fälle (Okt 2026, geprüft am Export 156bay_8):
+  //   A) Soll vorhanden (abgerechnet):  offen = Zuzahlung − Anzahlung
+  //   B) laufendes Rezept, Soll = 0:    offen, wenn Kassenrezept, erwachsen, nicht befreit, echte
+  //      Menge (kein Dauer-Platzhalter, nicht storniert) UND weder Anzahlung noch Quittung.
+  //      Betrag = 10 € + Menge × 10 % des Einheitspreises (je Einheit gerundet) – deckt sich bei
+  //      bereits bezahlten Rezepten auf den Cent mit THEORG. Nur Heilmittel 1 (Zweit-Heilmittel fehlt im Preis).
   const hatZuzahlungsdaten = cells.some(c=>c.zuzahlung!==null);
+  const zzHeute = new Date(); zzHeute.setHours(12,0,0,0);
+  const zzDat = t => { const m = String(t||'').match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})/); return m ? new Date(+m[3], +m[2]-1, +m[1], 12) : null; };
   const zzRez = {};
   cells.forEach(c=>{
     if(!c.patKey || !c.rezeptNr || c.zuzahlung===null) return;
     const k = c.patKey+'|'+c.rezeptNr;
-    const e = zzRez[k] = zzRez[k] || {patKey:c.patKey, rezeptNr:c.rezeptNr, zz:0, anz:0, befreit:false, blanko:false, hb:false};
+    const e = zzRez[k] = zzRez[k] || {patKey:c.patKey, rezeptNr:c.rezeptNr, zz:0, anz:0, befreit:false, blanko:false, hb:false,
+      quittung:false, kasse:'', art:'', menge:null, geb:null, preise:{}, dauer:false, storno:false, praev:isPraevHM(c.heilmittel)};
     if(isBlankoHM(c.heilmittel)) e.blanko = true;
     if(c.hausbesuch) e.hb = true;
     if(c.zuzahlung>e.zz) e.zz = c.zuzahlung;
     if(c.anzahlung!==null && c.anzahlung>e.anz) e.anz = c.anzahlung;
     if(c.befreit) e.befreit = true;
+    if(c.befVonBis){ const v = zzDat(c.befVonBis[0]), b = zzDat(c.befVonBis[1]); if((!v || v<=zzHeute) && (!b || b>=zzHeute)) e.befreit = true; }
+    if(c.quittungNr) e.quittung = true;
+    if(c.dauertermin) e.dauer = true;
+    if(/abgebrochen/i.test(c.bearbStatus||'')) e.storno = true;
+    if(!e.kasse && c.kasse) e.kasse = c.kasse;
+    if(!e.art && c.artVerord) e.art = c.artVerord;
+    if(e.menge===null && c.menge) e.menge = c.menge;
+    if(!e.geb && c.patGeb) e.geb = c.patGeb;
+    if(c.rtPreis) e.preise[c.rtPreis] = (e.preise[c.rtPreis]||0)+1;
   });
   const zzOffen = {};
   Object.values(zzRez).forEach(e=>{
-    if(e.befreit || e.zz<=0) return;
-    const offen = Math.round((e.zz - e.anz)*100)/100;
+    if(e.befreit) return;
+    let offen = 0, geschaetzt = false;
+    if(e.zz>0){                                                        // A) Soll bekannt
+      offen = Math.round((e.zz - e.anz)*100)/100;
+    } else {                                                           // B) laufendes Rezept
+      const kasse = e.kasse.toLowerCase();
+      const gkv = !!kasse && !/privat|beihilfe/.test(kasse) && !/\bBG\b/.test(e.art);
+      const erwachsen = !e.geb || (zzHeute - e.geb) >= 18*365.25*86400000;
+      // Platzhalter-Rezepte (Dauermaske: Menge 99/100/600/1000 … bzw. Dauertermin-Zellen) sind nicht bewertbar –
+      // dahinter liegen die echten Rezepte, die der Export nicht zeigt. Storniert/Prävention ebenfalls raus.
+      const echteMenge = e.menge>0 && e.menge<=60 && !e.dauer && !e.storno && !e.praev;
+      const preis = +(Object.keys(e.preise).sort((a,b)=>e.preise[b]-e.preise[a])[0]||0);
+      if(gkv && erwachsen && echteMenge && preis>0 && e.anz<=0 && !e.quittung){
+        offen = Math.round((10 + e.menge*Math.round(preis*10)/100)*100)/100;
+        geschaetzt = true;
+      }
+    }
     if(offen<=0.005) return;
     const p = zzOffen[e.patKey] = zzOffen[e.patKey] || {betrag:0, rezepte:[]};
     p.betrag = Math.round((p.betrag+offen)*100)/100;
-    p.rezepte.push({rezeptNr:e.rezeptNr, offen:offen, soll:e.zz, blanko:e.blanko, hb:e.hb});
+    p.rezepte.push({rezeptNr:e.rezeptNr, offen:offen, soll:e.zz, blanko:e.blanko, hb:e.hb, geschaetzt:geschaetzt});
   });
 
   // Lizenznummer des Exports = Standort-Kennung (für standortbezogene Merklisten)

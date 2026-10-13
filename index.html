@@ -5499,6 +5499,8 @@ function setAssignmentMatrix(dateStr, area, timeBlock, names){
   if(!area || !timeBlock) return;
   const key = 'cki_asg_'+dateStr.replace(/-/g,'')+'_'+area+'_'+timeBlock;
   lsSet(key, Array.isArray(names) ? names : []);
+  // Änderung oben → händische Abweichungen dieses Tages gelten ab jetzt nicht mehr (s. zuwGet)
+  lsSet('cki_zuwts_'+dateStr.replace(/-/g,''), Date.now());
 }
 function addPersonToArea(dateStr, area, timeBlock, name){
   const names = getAssignmentMatrixByArea(dateStr, area, timeBlock);
@@ -5616,14 +5618,33 @@ function hasActiveTerminInLast60Days(rezeptNr, cells){
   return false;
 }
 // Zuweisung je Kategorie (Standard) + je Aufgabe (Override; '' = Standard erben)
-function getCatAssign(catkey){ return lsGet('cki_catassign_'+catkey,''); }
-function setCatAssign(catkey,val){ lsSet('cki_catassign_'+catkey,val); renderAufgaben(); }
-function getTaskAssign(id){ return lsGet('cki_assign_'+id,''); }
+// Wunsch 13.10.: Die Tages-Zuweisung oben (Tagesgeschäft/Backoffice × Vormittag/Mittag/Nachmittag)
+// bestimmt, wer die Aufgaben hat. Händische Abweichungen („Standard" je Kategorie, Chip je Aufgabe)
+// bleiben möglich, gelten aber
+//   • nur für den jeweiligen TAG  → um Mitternacht ist alles zurückgesetzt, und
+//   • nur, bis oben wieder etwas geändert wird → jede Änderung an der Tages-Zuweisung setzt die
+//     händischen Abweichungen dieses Tages außer Kraft (unten folgt wieder der Zuweisung oben).
+// Speicher: cki_zuw_<JJJJMMTT> = { 'c|<Kategorie>'|'t|<Aufgabe>': {n:Name, ts} }, cki_zuwts_<JJJJMMTT> = Zeit
+// der letzten Änderung oben. (Die früheren Dauer-Standards cki_catassign_/cki_assign_ gelten nicht mehr.)
+function zuwTag(){ return String(currentDate||'').replace(/-/g,''); }
+function zuwGet(k){
+  const e = (lsGet('cki_zuw_'+zuwTag(), {})||{})[k];
+  if(!e || !e.n) return '';
+  return (e.ts||0) >= lsGet('cki_zuwts_'+zuwTag(), 0) ? e.n : '';
+}
+function zuwSet(k, name){
+  const key = 'cki_zuw_'+zuwTag(); const all = lsGet(key, {})||{};
+  if(name) all[k] = {n:name, ts:Date.now()}; else delete all[k];
+  lsSet(key, all);
+}
+function getCatAssign(catkey){ return zuwGet('c|'+catkey); }
+function setCatAssign(catkey,val){ zuwSet('c|'+catkey, val); renderAufgaben(); }
+function getTaskAssign(id){ return zuwGet('t|'+id); }
 function cycleTaskAssign(id){
   const names=getTeam().map(m=>m.n); if(!names.length) return;
   const order=[''].concat(names);                        // '' = Standard (Kategorie)
   const cur=getTaskAssign(id); const idx=order.indexOf(cur);
-  lsSet('cki_assign_'+id, order[(idx<0?1:idx+1)%order.length]);
+  zuwSet('t|'+id, order[(idx<0?1:idx+1)%order.length]);
   renderAufgaben();
 }
 // Auto-Zuweisung aus der Tages-Matrix (Call 17.09.): Wer laut Zuweisung den Bereich

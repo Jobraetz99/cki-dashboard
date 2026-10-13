@@ -2788,7 +2788,7 @@ function renderOffene(){
   // Rehasport/Anamnese raus. Blanko-VOs sind enthalten (echte Menge via getBlankoMax).
 
   // A8 (Call 18.09.): nur noch zwei Ansichten — seit 2 Wochen und seit 4 Wochen (1 Monat)
-  const WEEKS = { alle:0, w2:14, w4:28 };
+  const WEEKS = { alle:0, w2:14 };
   if(!(currentOffeneFilter in WEEKS)) currentOffeneFilter = 'alle';
   const threshold = WEEKS[currentOffeneFilter];
 
@@ -2907,14 +2907,13 @@ function renderOffene(){
 
   // A8 (Call 18.09.): 1-Monats-Filter ist jetzt fest aktiv (kein Toggle mehr) — nur Hinweis
   h += `<div style="background:var(--primary-bg);border:1px solid var(--primary);border-radius:10px;padding:10px 12px;margin-bottom:14px;font-size:11px;color:var(--dark)">
-    🔗 <b style="color:var(--primary)">Gleiche Aufgaben wie im Tagesziel:</b> Hier stehen genau die Rezepte aus „Rezepte abrechnen" und „Rezept zu Ende planen". Status und Notiz gelten an beiden Stellen. Abgerechnete und stornierte Rezepte erscheinen nicht.
+    🔗 <b style="color:var(--primary)">Gleiche Aufgaben wie im Tagesziel:</b> Hier stehen genau die Rezepte aus „Rezepte abrechnen" und „Rezept zu Ende planen". Status und Notiz gelten an beiden Stellen. Angezeigt werden nur Rezepte mit einem <b>Termin in den letzten 4 Wochen</b>; abgerechnete und stornierte Rezepte erscheinen nicht.
   </div>`;
 
   h += `<div class="nr-filters" style="margin-bottom:14px">`;
   [
     {f:'alle', l:'📋 Alle', t:0},
-    {f:'w2', l:'⏱️ seit 2 Wochen', t:14},
-    {f:'w4', l:'📅 seit 4 Wochen (1 Monat)', t:28}
+    {f:'w2', l:'⏱️ seit 2 Wochen kein Termin', t:14}
   ].forEach(x=>{
     h += `<button class="nr-filter${currentOffeneFilter===x.f?' a':''}" onclick="setOffeneFilter('${x.f}')">${x.l} (${cntFor(x.t)})</button>`;
   });
@@ -4694,7 +4693,7 @@ function calcKap4Wochen(){
 
 // ═══════════════════════════════════════════════════════════
 // Navigation aus den Aufgaben-Kacheln in die jeweiligen Tabs
-function gotoOffene(f){ currentOffeneFilter=(f==='w2'||f==='w4')?f:'alle'; if(f==='ohne') lsSet('cki_offene_show_ohne', true); switchView('offene'); }  // A8: nur noch 2/4 Wochen
+function gotoOffene(f){ currentOffeneFilter=(f==='w2')?f:'alle'; if(f==='ohne') lsSet('cki_offene_show_ohne', true); switchView('offene'); }  // A8: nur noch 2/4 Wochen
 function gotoFolgeVO(){ currentFvoFilter='offen'; switchView('folgevo'); }
 // ── Punkt 1 (Call 23.09.): Deep-Link Tagesziel → konkrete Lücke im Lücken-Tab ──
 //    Springt zum richtigen Tag, öffnet die Nachrücker-Liste der Lücke und scrollt hin.
@@ -4771,7 +4770,10 @@ const AUF_FARBE = {offen:'var(--accent)', ib:'var(--amber)', erledigt:'var(--tea
 let _aufCache = null;
 function aufAll(){ if(!_aufCache) _aufCache = lsGet('cki_tasks', {}) || {}; return _aufCache; }
 function aufWrite(id, e){
-  const a = aufAll(); a[id] = e; lsSet('cki_tasks', a);
+  const a = aufAll();
+  // xe = Stand des neuesten Exports, der diese Aufgabe beurteilt hat – bleibt auch bei händischen Änderungen erhalten
+  if(a[id] && a[id].xe && !(e.xe > a[id].xe)) e.xe = a[id].xe;
+  a[id] = e; lsSet('cki_tasks', a);
   lsSet('cki_check_'+id, e.st==='erledigt' || e.st==='abgelehnt');
 }
 function taskSt(id){
@@ -4782,7 +4784,17 @@ function taskSt(id){
 // Merkliste je Standort+Tag (cki_tagesliste, 14 Tage): Aufgaben, die heute in der Liste standen und
 // im aktuellen Export FEHLEN, bleiben als „laut Export erledigt" stehen (werden an items angehängt).
 // Tauchen sie wieder auf, stehen sie automatisch wieder auf offen.
+// Stand des geladenen Exports (Änderungszeit der Datei) als Zahl. Automatische Status tragen ihn
+// mit (exp). Fix 13.10.: Seit der Status für alle Rechner geteilt wird, haben sich zwei Rechner
+// mit VERSCHIEDEN ALTEN Exporten gegenseitig überschrieben – der eine setzte „laut Export erledigt",
+// der andere (älterer Export, Aufgabe dort noch vorhanden) stellte wieder auf offen, und umgekehrt.
+// Regel: Eine automatische Entscheidung darf nur von einem NEUEREN Export geändert werden.
+function exportStamp(){
+  try{ if(spLoadedFileInfo && spLoadedFileInfo.mod){ const t = Date.parse(spLoadedFileInfo.mod); if(!isNaN(t)) return t; } }catch(e){}
+  return 0;
+}
 function aufMerkliste(secKey, items, erledigtText){
+  const exp = exportStamp();
   const all = lsGet('cki_tagesliste', {}) || {};
   const dayKey = aufOrtKey()+'|'+currentDate;
   const snap = all[dayKey] || {};
@@ -4791,13 +4803,17 @@ function aufMerkliste(secKey, items, erledigtText){
   items.forEach(it=>{
     if(!snap[it.id]){ snap[it.id] = {k:secKey, m:it.main, s:it.sub}; dirty = true; }
     const e = aufAll()[it.id];
-    if(e && e.auto) aufWrite(it.id, {st:'offen', ts:Date.now(), by:'Export'});          // wieder aufgetaucht
+    // wieder aufgetaucht → nur öffnen, wenn UNSER Export neuer ist als der, der erledigt hat
+    if(e && e.auto && exp > (e.exp||0)) aufWrite(it.id, {st:'offen', ts:Date.now(), by:'Export', exp:exp, xe:exp});
   });
   Object.keys(snap).forEach(id=>{
     const g = snap[id];
     if(g.k!==secKey || present.has(id)) return;
     const st = taskSt(id);
-    if(st==='offen' || st==='ib') aufWrite(id, {st:'erledigt', auto:true, ts:Date.now(), by:'Export'});
+    const e0 = aufAll()[id];
+    // fehlt im Export → erledigt; aber nicht, wenn ein NEUERER Export sie gerade wieder geöffnet hat
+    const neuerGeoeffnet = e0 && !e0.auto && (e0.xe||0) > exp;
+    if((st==='offen' || st==='ib') && !neuerGeoeffnet) aufWrite(id, {st:'erledigt', auto:true, ts:Date.now(), by:'Export', exp:exp, xe:exp});
     const e = aufAll()[id] || {};
     const wann = e.ts ? new Date(e.ts).toLocaleString('de-DE',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
     items.push({ id:id, main:g.m, ghost:true,
@@ -4855,7 +4871,7 @@ function taskStatusSelect(id, name){
 //    Alle nwp-Fälle bleiben mit Begründung gespeichert → Basis für das
 //    Backoffice-Ablehnungs-Review (nur Leitung setzt "endgültig geprüft").
 function tpStatusAll(){ return lsGet('cki_tpstatus', {}); }
-function getTpStatus(date, patKey){ return tpStatusAll()[date+'|'+patKey] || null; }
+function getTpStatus(date, patKey){ const e = tpStatusAll()[date+'|'+patKey]; return (e && e.st) ? e : null; }   // st:'' = vom Export wieder geöffnet
 
 // Pflicht-Begründung einholen: leer und „Sonstiges" werden abgewiesen, Abbruch → null.
 function pflichtBegruendung(frage){
@@ -5715,20 +5731,22 @@ function lvKandidaten(day){
   const dayKey = aufOrtKey()+'|'+day;
   const snap = all[dayKey] || {};
   let dirty = false;
+  const exp = exportStamp();
   out.forEach((e,key)=>{
     const id = 'lv|'+day+'|'+key;
     if(!snap[id]){ snap[id] = {k:'lv', l:e.letzter?1:0, hm:e.heilmittel, nr:e.rezeptNr}; dirty = true; }
     const st = getTpStatus(day, key);
-    if(st && st.auto){ const a = tpStatusAll(); delete a[day+'|'+key]; lsSet('cki_tpstatus', a); }
+    if(st && st.auto && exp > (st.exp||0)){ const a = tpStatusAll(); a[day+'|'+key] = {st:'', offenExp:exp, ts:Date.now(), by:'Export'}; lsSet('cki_tpstatus', a); }
   });
   Object.keys(snap).forEach(id=>{
     const g = snap[id];
     if(g.k!=='lv') return;
     const key = id.split('|').slice(2).join('|');
     if(out.has(key)) return;
-    if(!getTpStatus(day, key)){
+    const st0 = tpStatusAll()[day+'|'+key];
+    if((!st0 || !st0.st) && !(st0 && (st0.offenExp||0) > exp)){
       const a = tpStatusAll();
-      a[day+'|'+key] = { st:'wp', auto:true, reason:'', name:'', ts:Date.now(), by:'Export' };
+      a[day+'|'+key] = { st:'wp', auto:true, exp:exp, reason:'', name:'', ts:Date.now(), by:'Export' };
       lsSet('cki_tpstatus', a);
     }
     out.set(key, {rezeptNr:g.nr, letzter:!!g.l, heilmittel:g.hm||'', nichtMehrKandidat:true});
@@ -6112,10 +6130,13 @@ function istAbgeschlossen(r){ return rezStatus(r).includes('abgeschlossen'); }
 function computeActionItems(){
   const rez = collectRezepte();
   // Fertig, aber nicht abgerechnet (Nicht-Blanko) – abgebrochene raus
-  const typA = rez.filter(r=>!r.istAbgerechnet && r.echteMenge>0 && !r.istBlanko && r.erbracht>=r.echteMenge && !istStorniert(r) && !isPraevHM(r.heilmittel));
+  // Wunsch 13.10.: nur Rezepte mit einem Termin in den letzten 4 Wochen – ältere sind Altlasten und
+  // gehören weder ins Tagesziel noch in den Reiter „Offene Rezepte" (beide zeigen dieselbe Liste).
+  const letzte4Wochen = r => r.tageSeitLetzterTermin!=null && r.tageSeitLetzterTermin <= 28;
+  const typA = rez.filter(r=>!r.istAbgerechnet && r.echteMenge>0 && !r.istBlanko && r.erbracht>=r.echteMenge && !istStorniert(r) && !isPraevHM(r.heilmittel) && letzte4Wochen(r));
   // Angefangen, kein Folgetermin geplant – abgebrochene UND abgeschlossene raus
   // (eine abgeschlossene Serie braucht keinen Folgetermin mehr)
-  const typB = rez.filter(r=>!r.istAbgerechnet && r.echteMenge>0 && r.erbracht>0 && r.erbracht<r.echteMenge && !r.hasFuture && !istStorniert(r) && !istAbgeschlossen(r));
+  const typB = rez.filter(r=>!r.istAbgerechnet && r.echteMenge>0 && r.erbracht>0 && r.erbracht<r.echteMenge && !r.hasFuture && !istStorniert(r) && !istAbgeschlossen(r) && letzte4Wochen(r));
   // Folge-VO-Kandidaten (Serie faktisch fertig, keine neuere VO, keine Zukunftstermine) – nur die offenen; abgebrochene raus
   const folgeVO = rez.filter(r=>r.echteMenge>0 && r.erbracht>0 && !r.hasFuture && !r.hasFolgeVO && (r.erbracht>=r.echteMenge || r.rest<=1) && !istStorniert(r))
                      .filter(r=>getDoingStatus(r.rezeptNr)==='offen');

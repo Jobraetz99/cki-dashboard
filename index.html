@@ -242,6 +242,7 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--dark);min
 .nr-mini{display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--card);border-radius:10px;margin-bottom:4px;border:1px solid var(--border);flex-wrap:wrap}
 .nr-mini-log{flex-basis:100%;display:flex;gap:6px;align-items:center;margin-top:4px} /* Punkt A2 (Call 21.09.) */
 /* Punkt 2 (Call 23.09.): Patienten-Notiz in Aktionslisten */
+.pr:has(> .pat-notiz){flex-wrap:wrap}
 .pat-notiz{flex-basis:100%;display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:5px;font-size:11px}
 .ph-btn{flex-shrink:0;font-size:10px;font-weight:700;padding:3px 8px;border:1px solid var(--amber);border-radius:8px;background:var(--amber-bg);color:var(--amber);cursor:pointer;font-family:inherit}
 .ph-box{flex-basis:100%;font-size:11px;line-height:1.5;padding:8px 10px;border:1px solid var(--amber);border-radius:8px;background:var(--amber-bg);color:var(--dark);white-space:pre-wrap;word-break:break-word}
@@ -958,6 +959,22 @@ function pickPhone(...cands){
 // Präventions-Leistungen (PRÄ1 … PRÄ6): kein Rezept zum Abrechnen (Okt 2026)
 function isPraevHM(hm){ return /^\s*PRÄ/i.test(String(hm||'')); }
 // Rezeptions-Spalte im THEORG-Kalender (heißt je Standort „Rezi", „Rezi 1", „Rezeption" …)
+// Letzter BESUCH des Patienten in der Praxis (Wunsch 16.10.): über ALLE Rezepte, nur Termine bis
+// heute (gebuchte Zukunftstermine sind im Export auch „belegt" und zählen hier nicht).
+function patLetzterBesuch(patKey){
+  if(!DATA || !patKey) return null;
+  if(!DATA._letzterBesuch){
+    const ende = new Date(); ende.setHours(23,59,59,999); const eT = ende.getTime();
+    const m = {};
+    DATA.cells.forEach(c=>{
+      if(!c.patKey || !c.belegt || !c.termIdent || !c.start || c.belArt!=='R') return;
+      const t = c.start.getTime(); if(t > eT) return;
+      if(!m[c.patKey] || c.start > m[c.patKey]) m[c.patKey] = c.start;
+    });
+    DATA._letzterBesuch = m;
+  }
+  return DATA._letzterBesuch[patKey] || null;
+}
 // „letzter Termin 02.10.26 (vor 14 Tagen)" – Mail Luis 16.10. (GRIMZ-Box)
 function letzterTerminTxt(d){
   if(!d) return 'letzter Termin: –';
@@ -2064,6 +2081,8 @@ function analyzeRezepteFull(cellsForDay, allCells, opts){
       };
     }
     if(c.termIdent)rezeptMap[key].termineHeute.add(c.termIdent);
+    // Abgerechnet? (Status „abger. …", Rechnungsnummer oder Abrechnungsdatum)
+    if(/^abger/i.test(c.bearbStatus||'') || c.rechnungNr || c.abrechnungsdatum) rezeptMap[key].abger = true;
     // VO-Datum nachtragen: nicht jede R-Zelle trägt das rezDatum, aber es ist je Rezept konstant.
     if(c.rezDatum && !rezeptMap[key].rezDatum) rezeptMap[key].rezDatum = c.rezDatum;
   });
@@ -2151,6 +2170,9 @@ function analyzeRezepteFull(cellsForDay, allCells, opts){
     //   läuft noch = offene Behandlungen (rest>0) oder Blanko/BVB (Kapazität separat)
     //   aktuell    = letzter Termin ≤ 4 Wochen vor Stichtag
     if(allActive){
+      // Wunsch 16.10.: Im ganzen Reiter „Rezepte" (und den daraus abgeleiteten Aufgaben) keine
+      // bereits abgerechneten Rezepte. Gilt nur hier, nicht für die Nachrücker-Vorschläge im Lücken-Tab.
+      if(p.abger) return;
       const openWork = rest>0 || isBlankoHM(p.heilmittel) || !!findBVB(p.icd);
       // Blanko-VO innerhalb der 16-Wochen-Gültigkeit gilt als aktiv, auch wenn länger kein
       // Termin lief – genau diese "nicht zu Ende geplanten" VOs wollen wir sehen.
@@ -2394,13 +2416,20 @@ const PR_STATUS = {
   bearb:{l:'◐ In Bearbeitung', cls:'st-bearb'},
   done:{l:'✓ Erledigt', cls:'st-done'}
 };
+// Wunsch 16.10.: Auch die Rezepte-Listen (Nachrücker, BVB, zu selten, GRIMZ …) haben den EINEN
+// Aufgaben-Status (offen / in Bearbeitung / erledigt / abgelehnt) statt des alten Klick-Chips.
+// Aufgabe je Liste + Rezept; GRIMZ nutzt dieselbe ID wie die Backoffice-Aufgabe (grimz|<Rezept>).
+// Alt-Werte (offen → in Bearbeitung → erledigt) werden beim ersten Anzeigen übernommen.
+function prTaskId(cat,p){ return (cat==='bvbpot'?'grimz':cat)+'|'+(p.rezeptNr || ((p.name||'')+'|'+(p.icd||''))); }
 function prStatusChip(cat,p){
-  const key = prStatusKey(cat,p);
-  const st = lsGet(key,'offen');
-  const c = PR_STATUS[st] || PR_STATUS.offen;
-  return `<span class="pr-status ${c.cls}" onclick="event.stopPropagation();cyclePrStatus('${encodeURIComponent(key)}')" title="Klicken: Offen → In Bearbeitung → Erledigt">${c.l}</span>`;
+  const id = prTaskId(cat,p);
+  if(!aufAll()[id]){
+    const alt = lsGet(prStatusKey(cat,p), '');
+    if(alt==='bearb' || alt==='done') aufWrite(id, {st: alt==='done'?'erledigt':'ib', ts:Date.now(), by:''});
+  }
+  return taskStatusSelect(id, p.name);
 }
-function prCardClass(cat,p){ return lsGet(prStatusKey(cat,p),'offen')==='done' ? ' pr-done' : ''; }
+function prCardClass(cat,p){ return taskDone(prTaskId(cat,p)) ? ' pr-done' : ''; }
 function cyclePrStatus(encKey){
   const key = decodeURIComponent(encKey);
   const cur = lsGet(key,'offen');
@@ -2436,6 +2465,27 @@ function renderRezeptGroup(group, cat){
   } else if(blType){
     headStatus = '<span style="font-size:9px;color:var(--muted);font-weight:600">Status je Rezept ▶</span>';
   }
+  // Wunsch 16.10.: Hat der Patient nur EIN Rezept, gibt es keine Gruppe mit Kopf + Zeile (doppelter
+  // Status, doppelte Infos), sondern genau eine Karte. Gruppiert wird nur bei mehreren Rezepten.
+  const infos = [];
+  if(cat==='blanko'){
+    const ld = patLetzterBesuch(group.rezepte[0].patKey||patKeyFor(group.rezepte[0]));
+    infos.push('<span style="font-size:10px;color:var(--muted);font-weight:600">'+letzterTerminTxt(ld)+'</span>');
+  }
+  if(cat==='blankopot'){
+    const bl = group.rezepte.filter(r=>r.blankoOffen!=null && r.tags && r.tags.blankopot);
+    if(bl.length){
+      const noch = bl.reduce((a,r)=>a+r.blankoOffen,0);
+      const r0 = bl.slice().sort((a,b)=>(a.tageUebrig||0)-(b.tageUebrig||0))[0];
+      const ab = r0.blankoStart ? ' · 16 Wo. ab '+(r0.blankoStartIstTermin?'1. Termin ':'VO-Datum ')+r0.blankoStart.toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit'}) : '';
+      infos.push('<span style="font-size:10px;font-weight:800;color:var(--accent)">📌 noch '+noch+' Termin'+(noch===1?'':'e')+' zu planen</span>');
+      infos.push('<span style="font-size:10px;color:var(--muted);font-weight:600">'+(r0.blankoZukunft||0)+' gebucht · noch '+r0.tageUebrig+' Tage'+ab+'</span>');
+    }
+  }
+  if(group.rezepte.length===1){
+    return '<div style="margin-bottom:8px;border:1px solid var(--border);border-radius:12px;overflow:hidden">'+renderRezeptRow(group.rezepte[0], 'detail', cat, infos.join(''))+'</div>';
+  }
+  if(blType) headStatus = '<span style="font-size:9px;color:var(--muted);font-weight:600">Status je Rezept ▼</span>';
   let h = '<div class="rezept-group" style="margin-bottom:8px;border:1px solid var(--border);border-radius:12px;overflow:hidden">';
   h += '<div class="rezept-group-head" style="background:var(--primary-bg);padding:12px 14px;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:8px;font-weight:700" onclick="toggleRezeptGroupExpand(\''+key+'\')">';
   h += '<span>'+(expanded?'▼':'▶')+' '+esc(group.name)+'</span>';
@@ -2444,21 +2494,7 @@ function renderRezeptGroup(group, cat){
   if(group.geb instanceof Date && !isNaN(group.geb)) gebStr = '* '+group.geb.toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'numeric'});
   else if(group.geb){ const d=new Date(group.geb); gebStr = !isNaN(d) ? '* '+d.toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'numeric'}) : esc(String(group.geb)); }
   h += '<span style="font-size:10px;color:var(--muted);font-weight:600">'+gebStr+'</span>';
-  if(cat==='blanko'){
-    const ld = group.rezepte.map(r=>r.lastDate).filter(Boolean).sort((a,b)=>b-a)[0];
-    h += '<span style="font-size:10px;color:var(--muted);font-weight:600">'+letzterTerminTxt(ld)+'</span>';
-  }
-  // To-do 01.10.: bei „Blanko-VO zu Ende planen" direkt sichtbar, wie viele Termine noch fehlen
-  if(cat==='blankopot'){
-    const bl = group.rezepte.filter(r=>r.blankoOffen!=null && r.tags && r.tags.blankopot);
-    if(bl.length){
-      const noch = bl.reduce((a,r)=>a+r.blankoOffen,0);
-      const r0 = bl.slice().sort((a,b)=>(a.tageUebrig||0)-(b.tageUebrig||0))[0];
-      const ab = r0.blankoStart ? ' · 16 Wo. ab '+(r0.blankoStartIstTermin?'1. Termin ':'VO-Datum ')+r0.blankoStart.toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit'}) : '';
-      h += '<span style="font-size:10px;font-weight:800;color:var(--accent)">📌 noch '+noch+' Termin'+(noch===1?'':'e')+' zu planen</span>';
-      h += '<span style="font-size:10px;color:var(--muted);font-weight:600">'+(r0.blankoZukunft||0)+' gebucht · noch '+r0.tageUebrig+' Tage'+ab+'</span>';
-    }
-  }
+  h += infos.join('');
   h += headStatus;
   h += '<span style="background:var(--primary);color:#fff;border-radius:100px;padding:2px 8px;font-size:10px;font-weight:800">' + group.rezepte.length + '</span>';
   h += '</div>';
@@ -2500,7 +2536,7 @@ function showRezeptDetail(k){
   let blZeitBar = '';
   if(k==='blanko'){
     const heute0 = new Date(); heute0.setHours(0,0,0,0);
-    const tage = p => p.lastDate ? Math.round((heute0 - new Date(p.lastDate.getFullYear(), p.lastDate.getMonth(), p.lastDate.getDate()))/86400000) : 9999;
+    const tage = p => { const d = patLetzterBesuch(p.patKey||patKeyFor(p)); return d ? Math.round((heute0 - new Date(d.getFullYear(), d.getMonth(), d.getDate()))/86400000) : 9999; };
     const bucket = p => { const t = tage(p); return t<=14 ? 'w2' : t<=28 ? 'w24' : 'w4'; };
     const cntZ = {w2:0, w24:0, w4:0}; items.forEach(p=>cntZ[bucket(p)]++);
     items = items.filter(p=>bucket(p)===currentBlZeitFilter);
@@ -2615,6 +2651,7 @@ function showRezeptDetail(k){
         </div>
         ${prStatusChip(k,p)}
         ${p.mobil?`<a href="tel:${p.mobil}" class="pr-tel">📞 ${p.mobil}</a>`:''}
+        ${patNotizField(p.patKey||patKeyFor(p), p.name)}
       </div>`;
     });
   } else if(k==='blanko'){
@@ -2643,6 +2680,7 @@ function showRezeptDetail(k){
         </div>
         ${prStatusChip(k,p)}
         ${p.mobil?`<a href="tel:${p.mobil}" class="pr-tel">📞 ${p.mobil}</a>`:''}
+        ${patNotizField(p.patKey||patKeyFor(p), p.name)}
       </div>`;
     });
   } else if(k==='bvbpot'){
@@ -2663,7 +2701,7 @@ function showRezeptDetail(k){
           <div class="pr-n">${p.name} ${ageStr ? `<span style="font-size:9px;color:var(--muted);font-weight:600;margin-left:6px">${ageStr}</span>` : ''} <span style="font-size:9px;color:var(--primary);font-weight:700;margin-left:6px">${p.icd||'—'}</span></div>
           <div class="pr-d">
             <b>${p.heilmittel||'?'}</b> · Rezept: <b>${p.menge}</b> Beh. · Freq. bis <b>${p.bvbFreqMax}×/Wo</b>${voDat(p.rezDatum)}
-            · ${letzterTerminTxt(p.lastDate)}
+            · ${letzterTerminTxt(patLetzterBesuch(p.patKey||patKeyFor(p)))}
             <br><b style="color:var(--primary)">🔼 Möglich bis ${p.bvbMaxMoeglich} Beh. → noch ${p.bvbOffen} über größeres Folge-VO</b>
           </div>
           <div class="progress-mini"><div class="progress-mini-f" style="width:${pct}%;background:var(--primary)"></div></div>
@@ -2698,6 +2736,7 @@ function showRezeptDetail(k){
         </div>
         ${prStatusChip(k,p)}
         ${p.mobil?`<a href="tel:${String(p.mobil).replace(/[^+\\d]/g,'')}" class="pr-tel" onclick="event.stopPropagation()">📞 ${p.mobil}</a>`:''}
+        ${patNotizField(p.patKey||patKeyFor(p), p.name)}
       </div>`;
     });
   } else if(k==='blankoOLD'){
@@ -2721,6 +2760,7 @@ function showRezeptDetail(k){
       <div class="pr-bs">${badgesHtml}</div>
       ${prStatusChip(k,p)}
       ${p.mobil?`<a href="tel:${p.mobil}" class="pr-tel" onclick="event.stopPropagation()">📞</a>`:''}
+        ${patNotizField(p.patKey||patKeyFor(p), p.name)}
       </div>`;
     });
   }
@@ -3057,7 +3097,7 @@ function voDat(d, pre){
   return (pre===undefined?' · ':pre)+'📅 VO '+d.toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'2-digit'});
 }
 
-function renderRezeptRow(r, type, cat){
+function renderRezeptRow(r, type, cat, extra){
   const pct = r.total ? Math.round(r.erbracht/r.total*100) : 0;
   const colors = {crit:'var(--fire)',warn:'var(--amber)',norm:'var(--green)',miss:'var(--accent)'};
   const c = colors[type]||'var(--muted)';
@@ -3082,6 +3122,7 @@ function renderRezeptRow(r, type, cat){
         <b>${r.heilmittel||'?'}</b> · <b style="color:${c}">${r.erbracht}/${r.total}</b> · ${r.icd||'?'}${voDat(r.rezDatum)} ${r.diagnose ? '· '+String(r.diagnose).substring(0,40) : ''}
         ${r.therapist?'<br>👤 '+r.therapist:''}
       </div>
+      ${extra?'<div class="pr-d" style="margin-top:3px;display:flex;flex-wrap:wrap;gap:4px 12px">'+extra+'</div>':''}
       <div class="progress-mini"><div class="progress-mini-f" style="width:${pct}%;background:${c}"></div></div>
       ${patNotizField(r.patKey, r.name)}
     </div>
@@ -6364,7 +6405,7 @@ function buildAufgabenSections(a){
       items: grimz.map(p=>({
         id:'grimz|'+p.rezeptNr,
         main:esc(p.name),
-        sub:`${p.heilmittel?esc(p.heilmittel)+' · ':''}nur ${p.menge} von bis zu ${p.bvbMaxMoeglich} verordnet (bis ${p.bvbFreqMax}×/Wo)${voDat(p.rezDatum)} · ${letzterTerminTxt(p.lastDate)} · größere Folge-VO anstoßen`,
+        sub:`${p.heilmittel?esc(p.heilmittel)+' · ':''}nur ${p.menge} von bis zu ${p.bvbMaxMoeglich} verordnet (bis ${p.bvbFreqMax}×/Wo)${voDat(p.rezDatum)} · ${letzterTerminTxt(patLetzterBesuch(p.patKey||patKeyFor(p)))} · größere Folge-VO anstoßen`,
         notiz: patNotizField(p.patKey, p.name) })) },
     { key:'kap', ico:'📊', color:'var(--primary)', ttl:'Kapazität 4 Wochen im Voraus bereinigen · Ziel 87 %', go:"switchView('controlling')",
       items: kapItems },
@@ -6724,10 +6765,10 @@ function renderAufgaben(){
       };
       if(stdSections.some(s=>s.items.length)) h += `<div class="tz-grp">📌 Standardaufgaben · Arbeitsaufteilung ${areaLabel}</div>`;
       stdSections.forEach(renderSec);
-      // ── Punkt 7/8 (Call 17.09.): händische Listen direkt unter den Standardaufgaben ──
-      if(tzArea==='bo'){ h += renderRezeptBestellungen(); h += renderUnterschriften(); }
       if(sections.some(s=>s.items.length)) h += `<div class="tz-grp">🗂️ Aufgaben aus dem Theorg-Export</div>`;
       sections.forEach(renderSec);
+      // Händische Listen (Punkt 7/8, Call 17.09.) – Wunsch 16.10.: unter die Export-Aufgaben, ans Ende
+      if(tzArea==='bo'){ h += renderRezeptBestellungen(); h += renderUnterschriften(); }
     } else {
       h += `<div class="empty" style="background:var(--teal-bg);border:1px solid var(--teal);color:var(--teal)"><b>🎉 Keine Aufgaben im Bereich ${areaLabel}</b></div>`;
     }

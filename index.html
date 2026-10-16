@@ -990,6 +990,30 @@ function patNurRehaOderKeineBeh(patKey){
   // jede Erwähnung von „Reha" („in Reha bis …", „nur Reha", „ambulante REHA" …) oder „keine Behandlung"
   return /reha|keine\s*behandlung/i.test((e.hinweis||'')+' '+(e.wv||''));
 }
+// Wunsch 16.10.: Hinweis „kann nur 1x wöchentlich", „nur 1x pro Woche", „nur einmal die Woche" …
+// → nicht bei „Blanko-VO zu Ende planen" und „Zu selten" (öfter als 1×/Woche geht bei diesen Patienten nicht)
+function patNurEinmalProWoche(patKey){
+  const e = DATA && DATA.patHinweise ? DATA.patHinweise[patKey] : null;
+  if(!e) return false;
+  return /(nur|kann|will|möchte|moechte|max\.?|maximal)\s*(1\s*x|1\s*mal|einmal|ein\s*mal)\s*(pro\s*woche|die\s*woche|in\s*der\s*woche|wöchentlich|woechentlich|\/\s*woche|\/\s*wo\b)/i.test((e.hinweis||'')+' '+(e.wv||''));
+}
+// Wunsch 16.10.: Hinweis, dass der Arzt das Rezept nicht umstellt / kein GRIMZ macht → nicht in die
+// GRIMZ-Box. Erkennt u. a. „keine GRIMZ Änderung möglich", „Arzt macht kein GRIMZ",
+// „Arzt stellt Rezept nicht um", „Arzt ändert Rezept nicht".
+function patArztKeinGrimz(patKey){
+  const e = DATA && DATA.patHinweise ? DATA.patHinweise[patKey] : null;
+  if(!e) return false;
+  const t = (e.hinweis||'')+' '+(e.wv||'');
+  return /kein\w*\s*grimz/i.test(t)
+      || /grimz[^|]{0,25}nicht/i.test(t)
+      || /(arzt|ärztin|aerztin|dr\.)[^|]{0,40}(stellt|ändert|aendert|macht|verschreibt)[^|]{0,30}(nicht|kein)/i.test(t);
+}
+// THEORG-Patientenhinweis direkt sichtbar an der Karte (Wunsch 16.10., „Zu selten")
+function patHinweisInline(patKey){
+  const e = DATA && DATA.patHinweise ? DATA.patHinweise[patKey] : null;
+  if(!e || (!e.hinweis && !e.wv)) return '';
+  return '<div style="margin-top:4px;padding:4px 8px;border-radius:6px;background:var(--amber-bg,#fff7ed);border:1px solid var(--amber);font-size:11px;color:var(--dark)">📌 <b>Hinweis:</b> '+esc(e.hinweis||'')+(e.wv?' <span style="color:var(--muted)">· Wiedervorlage: '+esc(e.wv)+'</span>':'')+'</div>';
+}
 function isCheckerExcludedHM(hm){
   const s = String(hm==null?'':hm).toUpperCase().replace(/[\s\-\.]/g,'');
   return s.startsWith('REHASPORT') || s.startsWith('ANAMNESE');
@@ -1633,6 +1657,7 @@ function renderMainTabs(){
   h += `<button class="m-tab${currentView==='offene'?' a':''}" onclick="switchView('offene')">💰 Offene Rezepte</button>`;
   h += `<button class="m-tab${currentView==='potential'?' a':''}" onclick="switchView('potential')">🎯 Potential-Dauer</button>`;
   h += `<button class="m-tab${currentView==='folgevo'?' a':''}" onclick="switchView('folgevo')">🔄 Passive Patienten</button>`;
+  h += `<button class="m-tab${currentView==='rehasport'?' a':''}" onclick="switchView('rehasport')">🏋️ Rehasport</button>`;
   h += `<button class="m-tab${currentView==='verlauf'?' a':''}" onclick="switchView('verlauf')">📈 Verlauf</button>`;
   h += `<button class="m-tab${currentView==='controlling'?' a':''}" onclick="switchView('controlling')">📊 Controlling</button>`;
   // Punkt 19: 🔔-Schalter für Browser-Benachrichtigungen
@@ -1671,6 +1696,7 @@ function renderViewContent(){
     else if(currentView==='offene')renderOffene();
     else if(currentView==='potential')renderPotential();
     else if(currentView==='folgevo')renderFolgeVO();
+    else if(currentView==='rehasport')renderRehasport();
     else if(currentView==='verlauf')renderVerlauf();
     else renderControlling();
   }
@@ -2271,7 +2297,7 @@ function analyzeRezepteFull(cellsForDay, allCells, opts){
       // "nicht zu Ende geplant" = VO läuft noch, aber nicht durchgehend 2×/Wo verplant.
       // Nur bewertbar mit VO-Datum (sonst ist die 16-Wochen-Gültigkeit nicht bestimmbar).
       const isAktivLaufend = tageUebrig!==null && tageUebrig > 0;
-      if(isAktivLaufend && offen > 0){
+      if(isAktivLaufend && offen > 0 && !patNurEinmalProWoche(p.patKey||patKeyFor(p))){
         tags.blankopot = true;
         cats.blankopot.push(p);
         score += 1;
@@ -2283,7 +2309,7 @@ function analyzeRezepteFull(cellsForDay, allCells, opts){
     //   (Freq. 1-2 → 24 möglich, 1-3 → 36 möglich.) Stehen deutlich weniger auf dem
     //   Rezept, besteht Potenzial für ein größeres Folge-VO.
     // Mail Luis 16.10.: ist schon eine 12er-VO (oder größer) da, gehört der Patient nicht mehr in die GRIMZ-Box
-    if(isBVB && p.freqMax && p.menge && p.menge < 12){
+    if(isBVB && p.freqMax && p.menge && p.menge < 12 && !patArztKeinGrimz(p.patKey||patKeyFor(p))){
       const maxMoeglich = p.freqMax * 12;
       const offen = maxMoeglich - p.menge;
       if(offen > 0){
@@ -2305,7 +2331,7 @@ function analyzeRezepteFull(cellsForDay, allCells, opts){
     const weekCount = p.weekTermine.size;
     p.weekCount = weekCount;
     let isUnter = false;
-    if(p.freqMax && rest>=1 && weekCount>=1 && weekCount < p.freqMax){
+    if(p.freqMax && rest>=1 && weekCount>=1 && weekCount < p.freqMax && !patNurEinmalProWoche(p.patKey||patKeyFor(p))){
       isUnter = true;
       p.untertaktet = true;
       p.unterSoll = !!(p.freq && weekCount < p.freq);   // unter verordneter Untergrenze
@@ -2731,6 +2757,7 @@ function showRezeptDetail(k){
           <div class="pr-d">
             <b>${p.heilmittel||'?'}</b> · Soll ${p.freq?(p.freqMax&&p.freqMax!==p.freq?`${p.freq}–${p.freqMax}`:`${p.freq}`):'?'}×/Wo · <b style="color:${col}">diese Woche ${p.weekCount}×</b> (möglich bis ${p.freqMax}×)${voDat(p.rezDatum)}
             <br><b style="color:${col}">${p.unterSoll?'⚠ unter Soll-Frequenz':'🐌 unter möglicher Frequenz'} — noch ${p.rest} Beh. offen → öfter takten</b>
+            ${patHinweisInline(p.patKey||patKeyFor(p))}
           </div>
           <div class="progress-mini"><div class="progress-mini-f" style="width:${pct}%;background:${col}"></div></div>
         </div>
@@ -4456,6 +4483,115 @@ function renderFolgeVO(){
 }
 
 // ═══════════════════════════════════════════════════════════
+// VIEW: REHASPORT (Wunsch 16.10.)
+// ═══════════════════════════════════════════════════════════
+// Alle Patienten mit Rehasport-Verordnung (Heilmittel „REHASPORT", Muster 56) mit Ausstellungsdatum
+// und Gültigkeit. Laufzeit nach der BAR-Rahmenvereinbarung Rehasport/Funktionstraining (Richtwerte):
+//   50 Übungseinheiten → 18 Monate · 120 UE (erweiterter Umfang) → 36 Monate
+//   Herzsport 90 UE → 24 Monate · Herzsport-Folgeverordnung 45 UE → 12 Monate
+// Gezählt wird ab Ausstellungsdatum; abgelaufen ist die VO, wenn die Frist vorbei ODER alle
+// Einheiten verbraucht sind (je nachdem, was zuerst eintritt).
+let currentRehaFilter = 'aktiv';
+function isRehasportHM(hm){ return /^REHASPORT/.test(String(hm==null?'':hm).toUpperCase().replace(/[\s\-\.]/g,'')); }
+function rehaLaufzeitMonate(menge){
+  if(menge>=120) return 36;
+  if(menge===90) return 24;
+  if(menge===45) return 12;
+  return 18;
+}
+function rehasportListe(){
+  const ende = new Date(); ende.setHours(23,59,59,999); const eT = ende.getTime();
+  const heute0 = new Date(); heute0.setHours(0,0,0,0);
+  const map = {};
+  DATA.cells.forEach(c=>{
+    if(!c.rezeptNr || c.belArt!=='R' || !c.patNach || !isRehasportHM(c.heilmittel)) return;
+    const e = map[c.rezeptNr] = map[c.rezeptNr] || { rezeptNr:c.rezeptNr, patKey:c.patKey||patKeyFor(c), name:(c.patVor+' '+c.patNach).trim(),
+      geb:c.patGeb, mobil:c.patMobil||'', kasse:c.kasse||'', rezDatum:c.rezDatum||null, menge:c.menge||0, status:c.bearbStatus||'',
+      bel:new Set(), fut:new Set(), last:null, next:null, ma:{} };
+    if(!e.rezDatum && c.rezDatum) e.rezDatum = c.rezDatum;
+    if(!e.menge && c.menge) e.menge = c.menge;
+    if(!e.kasse && c.kasse) e.kasse = c.kasse;
+    if(!c.termIdent || !c.belegt || !c.start) return;
+    const t = c.start.getTime();
+    if(t <= eT){ e.bel.add(c.termIdent); if(!e.last || c.start>e.last) e.last = c.start; }
+    else { e.fut.add(c.termIdent); if(!e.next || c.start<e.next) e.next = c.start; }
+    if(c.therapist && !c.rezi) e.ma[c.therapist] = (e.ma[c.therapist]||0)+1;
+  });
+  return Object.values(map).map(e=>{
+    e.erbracht = e.bel.size; e.geplant = e.fut.size;
+    e.monate = rehaLaufzeitMonate(e.menge);
+    e.gueltigBis = e.rezDatum ? new Date(e.rezDatum.getFullYear(), e.rezDatum.getMonth()+e.monate, e.rezDatum.getDate()) : null;
+    e.tageGueltig = e.gueltigBis ? Math.round((e.gueltigBis - heute0)/86400000) : null;
+    e.rest = Math.max(0, (e.menge||0) - e.erbracht);
+    e.abgelaufen = (e.tageGueltig!==null && e.tageGueltig < 0) || (e.menge>0 && e.rest<=0);
+    e.bald = !e.abgelaufen && ((e.tageGueltig!==null && e.tageGueltig <= 60) || (e.menge>0 && e.rest <= 5));
+    e.kursleiter = Object.keys(e.ma).sort((a,b)=>e.ma[b]-e.ma[a])[0] || '';
+    return e;
+  });
+}
+function renderRehasport(){
+  const alle = rehasportListe();
+  const heute0 = new Date(); heute0.setHours(0,0,0,0);
+  const vor6Mon = new Date(heute0); vor6Mon.setMonth(vor6Mon.getMonth()-6);
+  const aktiv = alle.filter(e=>!e.abgelaufen);
+  const bald = alle.filter(e=>e.bald);
+  // abgelaufen: nur, wer in den letzten 6 Monaten noch da war (sonst Altlast)
+  const abgel = alle.filter(e=>e.abgelaufen && e.last && e.last >= vor6Mon);
+  const fd = d => d ? d.toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'2-digit'}) : '–';
+  const pats = new Set(aktiv.map(e=>e.patKey)).size;
+
+  let h = `<div class="summary">
+    <h2>🏋️ Rehasport · Verordnungen und Gültigkeit</h2>
+    <div class="sg">
+      <div class="si"><div class="si-l">Aktive Verordnungen</div><div class="si-v">${aktiv.length}</div><div class="si-s">${pats} Teilnehmer</div></div>
+      <div class="si"><div class="si-l">⏳ Läuft bald ab</div><div class="si-v">${bald.length}</div><div class="si-s">≤ 60 Tage oder ≤ 5 Einheiten übrig</div></div>
+      <div class="si"><div class="si-l">⛔ Abgelaufen</div><div class="si-v">${abgel.length}</div><div class="si-s">in den letzten 6 Monaten noch da gewesen</div></div>
+    </div>
+  </div>`;
+  h += `<div style="background:var(--primary-bg,#eef2ff);border:1px solid var(--primary);border-radius:12px;padding:12px 14px;margin-bottom:12px;font-size:11px;color:var(--dark);line-height:1.6">
+    <b style="color:var(--primary);font-family:Montserrat;font-weight:800">ℹ️ Gültigkeit (Richtwerte der Rahmenvereinbarung Rehasport):</b>
+    <b>50 Übungseinheiten in 18 Monaten</b> · erweiterter Umfang <b>120 Einheiten in 36 Monaten</b> · Herzsport <b>90 in 24 Monaten</b>, Folge-VO <b>45 in 12 Monaten</b>.
+    Gezählt ab <b>Ausstellungsdatum</b>; die Verordnung endet, wenn die Frist vorbei <b>oder</b> alle Einheiten genutzt sind – je nachdem, was zuerst eintritt.
+    Einzelne Kassen haben zusätzlich Fristen für den Beginn (z. B. AOK Bayern 6 Monate, AOK Baden-Württemberg 3 Monate).
+  </div>`;
+  h += leitfadenBox('rehasport', 'Rehasport · Folgeverordnung ansprechen', 'z.B.: „Ihre Rehasport-Verordnung läuft bald aus – sollen wir schon eine Folgeverordnung vorbereiten?"');
+  h += `<div class="search-wrap"><input type="text" id="rsSearch" placeholder="🔍 Patient suchen..." oninput="(function(q){q=q.toLowerCase();document.querySelectorAll('#content .pr').forEach(r=>{r.style.display=(r.querySelector('.pr-n')?.textContent||'').toLowerCase().includes(q)?'':'none';});})(this.value)"></div>`;
+  h += `<div class="nr-filters" style="margin-bottom:14px">`
+    + [['aktiv','✅ Aktiv',aktiv.length],['bald','⏳ Läuft bald ab',bald.length],['abgelaufen','⛔ Abgelaufen (6 Mon.)',abgel.length]]
+      .map(([f,l,n])=>`<button class="nr-filter${currentRehaFilter===f?' a':''}" onclick="currentRehaFilter='${f}';renderRehasport()">${l} (${n})</button>`).join('')
+    + `</div>`;
+  let liste = currentRehaFilter==='bald' ? bald : currentRehaFilter==='abgelaufen' ? abgel : aktiv;
+  liste = liste.slice().sort((a,b)=> (a.tageGueltig??99999)-(b.tageGueltig??99999) || a.name.localeCompare(b.name));
+  if(!liste.length){
+    h += `<div class="empty">Keine Rehasport-Verordnungen in dieser Ansicht${alle.length?'':' – im geladenen Export gibt es keine Rezepte mit Heilmittel „REHASPORT"'}.</div>`;
+    document.getElementById('content').innerHTML = h; return;
+  }
+  liste.forEach(e=>{
+    const age = e.geb ? Math.floor((Date.now()-new Date(e.geb).getTime())/(365.25*86400000)) : null;
+    const col = e.abgelaufen ? 'var(--muted)' : e.bald ? 'var(--fire)' : 'var(--teal)';
+    const pct = e.menge ? Math.min(100, Math.round(e.erbracht/e.menge*100)) : 0;
+    const gTxt = !e.gueltigBis ? 'Gültigkeit unbekannt (kein VO-Datum)'
+      : e.tageGueltig<0 ? 'abgelaufen am '+fd(e.gueltigBis)
+      : 'gültig bis <b>'+fd(e.gueltigBis)+'</b> (noch '+e.tageGueltig+' Tage)';
+    h += `<div class="pr${taskDone('reha|'+e.rezeptNr)?' pr-done':''}" style="border-left:3px solid ${col}" data-lf-sel="${esc(e.name)}" onclick="selectLeitfadenPatient('${jsq(e.name)}','${jsq(e.mobil||'')}','${jsq(e.kursleiter||'')}','')">
+      <div class="pr-i">
+        <div class="pr-n">${esc(e.name)} ${age?`<span style="font-size:9px;color:var(--muted);font-weight:600;margin-left:6px">${age}J</span>`:''} <span style="font-size:9px;color:var(--muted);font-weight:600;margin-left:6px">${esc(e.kasse)}</span></div>
+        <div class="pr-d">
+          📄 ausgestellt <b>${fd(e.rezDatum)}</b> · <span style="color:${col}">${gTxt}</span> · Laufzeit ${e.monate} Monate
+          <br>🏋️ <b>${e.erbracht}/${e.menge||'?'}</b> Einheiten genutzt${e.menge?` · noch <b style="color:${e.rest<=5?'var(--fire)':'var(--dark)'}">${e.rest}</b>`:''}${e.geplant?` · ${e.geplant} gebucht`:''}
+          · ${letzterTerminTxt(e.last)}${e.next?` · nächster ${e.next.toLocaleDateString('de-DE',{weekday:'short',day:'2-digit',month:'2-digit'})}`:''}${e.kursleiter?` · 👤 ${esc(e.kursleiter)}`:''}
+        </div>
+        <div class="progress-mini"><div class="progress-mini-f" style="width:${pct}%;background:${col}"></div></div>
+      </div>
+      ${taskStatusSelect('reha|'+e.rezeptNr, e.name)}
+      ${e.mobil?`<a href="tel:${esc(String(e.mobil).replace(/[^+\d]/g,''))}" class="pr-tel" onclick="event.stopPropagation()">📞 ${esc(e.mobil)}</a>`:''}
+      ${patNotizField(e.patKey, e.name)}
+    </div>`;
+  });
+  document.getElementById('content').innerHTML = h;
+}
+
+// ═══════════════════════════════════════════════════════════
 // VIEW: VERLAUF (Kennzahlen-Historie über Zeit) — Phase 1, dateibasiert
 // ═══════════════════════════════════════════════════════════
 // Snapshot der Kennzahlen des aktuell geladenen Exports (nur Zahlen, KEINE Personendaten).
@@ -4926,6 +5062,7 @@ function rerenderCurrent(){
   else if(currentView==='luecken') renderLuecken();
   else if(currentView==='potential') renderPotential();
   else if(currentView==='folgevo') renderFolgeVO();
+  else if(currentView==='rehasport') renderRehasport();
   else if(currentView==='verlauf') renderVerlauf();
 }
 function setTaskSt(id, st, name){

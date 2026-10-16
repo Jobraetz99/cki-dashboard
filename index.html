@@ -771,6 +771,7 @@ let currentTherapist = 'all';
 let selectedTherapists = null;
 let currentRezeptCat = 'nr';
 let currentNRFilter = 'all';
+let currentBlZeitFilter = 'w2';   // Wunsch 16.10.: „Auf Blanko umstellen" – letzter Termin ≤2 Wo / 2–4 Wo / >4 Wo
 let currentBlStFilter = 'offen';  // Punkt 8 (Call 15.09.) · A7 (Call 18.09.): Default = nur „offen" — fertige/in Bearbeitung per Filter
 let verlaufTab = 'tg';            // Punkt 11 (Call 15.09.): Rubrik im Verlauf-Reiter (tg/bo/sp)
 let verlaufPerson = '';           // Punkt 4 (Call 23.09.): Mitarbeiter-Filter im Verlauf ('' = alle)
@@ -956,6 +957,22 @@ function pickPhone(...cands){
 // im klassischen Sinn): Rehasport und Anamnese komplett ausblenden.
 // Präventions-Leistungen (PRÄ1 … PRÄ6): kein Rezept zum Abrechnen (Okt 2026)
 function isPraevHM(hm){ return /^\s*PRÄ/i.test(String(hm||'')); }
+// Rezeptions-Spalte im THEORG-Kalender (heißt je Standort „Rezi", „Rezi 1", „Rezeption" …)
+// „letzter Termin 02.10.26 (vor 14 Tagen)" – Mail Luis 16.10. (GRIMZ-Box)
+function letzterTerminTxt(d){
+  if(!d) return 'letzter Termin: –';
+  const t = new Date(); t.setHours(0,0,0,0);
+  const tage = Math.round((t - new Date(d.getFullYear(), d.getMonth(), d.getDate()))/86400000);
+  return '📅 letzter Termin <b>'+d.toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'2-digit'})+'</b>'+(tage>0?' (vor '+tage+' Tag'+(tage===1?'':'en')+')':tage===0?' (heute)':'');
+}
+function isReziMA(name){ return /(^|\s)(rezi\b|rezi\d|rezeption|empfang)/i.test(String(name||'')); }
+// Mail Luis 16.10.: Hinweis mit „Reha" (z. B. „in Reha bis …", „nur Reha") oder „keine Behandlung" → nicht bei DP-Potenzial und „auf Blanko umstellen"
+function patNurRehaOderKeineBeh(patKey){
+  const e = DATA && DATA.patHinweise ? DATA.patHinweise[patKey] : null;
+  if(!e) return false;
+  // jede Erwähnung von „Reha" („in Reha bis …", „nur Reha", „ambulante REHA" …) oder „keine Behandlung"
+  return /reha|keine\s*behandlung/i.test((e.hinweis||'')+' '+(e.wv||''));
+}
 function isCheckerExcludedHM(hm){
   const s = String(hm==null?'':hm).toUpperCase().replace(/[\s\-\.]/g,'');
   return s.startsWith('REHASPORT') || s.startsWith('ANAMNESE');
@@ -1262,11 +1279,14 @@ function parseData(rows, sheetName){
       excluded = EXCLUDE_TERMS.some(t=>t && rowStr.includes(t));
     }
 
+    // Mail Luis 16.10.: Die Rezeptions-Spalte („Rezi") ist kein Therapeut → keine Arbeitszeit/Kapazität,
+    // keine Lücken, keine Abwesenheiten. Patiententermine darauf bleiben als Daten erhalten.
+    const rezi = isReziMA(therapist);
     cells.push({
-      dateStr, therapist, excluded,
+      dateStr, therapist, excluded, rezi,
       dauertermin: (r[COL.dtr]||'').toString().trim()==='J',
       start:startDate, end:endDate,
-      belegt, belArt, azFlag, bezeichnung,
+      belegt, belArt, azFlag: azFlag && !rezi, bezeichnung,
       termIdent: termIdent||null,
       patName: (r[COL.pNach]&&r[COL.pVor]) ? (r[COL.pVor]+' '+r[COL.pNach]) : null,
       patNach: r[COL.pNach]||'',
@@ -1810,7 +1830,7 @@ function isSportwissenschaftler(therapistCells){
 function analyzeDay(cells){
   const byTh = {};
   cells.forEach(c=>{
-    if(!c.therapist)return;
+    if(!c.therapist || c.rezi)return;                 // Rezi-Spalte ist kein Therapeut
     if(!byTh[c.therapist])byTh[c.therapist] = {name:c.therapist, cells:[]};
     byTh[c.therapist].cells.push(c);
   });
@@ -2136,7 +2156,13 @@ function analyzeRezepteFull(cellsForDay, allCells, opts){
       // Termin lief – genau diese "nicht zu Ende geplanten" VOs wollen wir sehen.
       const blankoValid = isBlankoHM(p.heilmittel) && p.rezDatum && (refT - p.rezDatum.getTime()) < 112*86400000;
       const recent = (p.lastDate && (refT - p.lastDate.getTime()) <= ACTIVE_WINDOW) || blankoValid;
-      if(!openWork || !recent) return;   // fertig oder eingeschlafen → nicht anzeigen
+      // Wunsch 16.10.: „Auf Blanko umstellen" reicht weiter zurück (bis 6 Monate), damit die Filter
+      // „2–4 Wochen" und „älter als 4 Wochen" etwas zeigen. Solche älteren Rezepte zählen NUR für
+      // diese Liste (p.blankoAlt), nicht für Nachrücker, BVB, GRIMZ usw.
+      const blankoAlt = !recent && rest>0 && p.lastDate && (refT - p.lastDate.getTime()) <= 183*86400000
+                        && isShoulder(p.icd) && !isBlankoHM(p.heilmittel);
+      if(!openWork || (!recent && !blankoAlt)) return;   // fertig oder eingeschlafen → nicht anzeigen
+      p.blankoAlt = blankoAlt;
     }
 
     const bvb = findBVB(p.icd);
@@ -2169,7 +2195,7 @@ function analyzeRezepteFull(cellsForDay, allCells, opts){
     //   → Aktion: Beim Arzt Umstellung auf Blanko anstoßen
     //   NICHT wenn der Patient bereits eine aktive Blanko-VO hat (Proforma-Fall, Okt 2026)
     //   NICHT wenn der Patient eine Dauerplan-Maske hat (To-do 01.10. – jedes Kriterium reicht allein)
-    if(isShoulder(p.icd) && !isBlankoHM(p.heilmittel) && !aktiveBlankoPats.has(p.patKey||patKeyFor(p)) && !isDauerPatKey(p.patKey||patKeyFor(p))){
+    if(isShoulder(p.icd) && !isBlankoHM(p.heilmittel) && !aktiveBlankoPats.has(p.patKey||patKeyFor(p)) && !isDauerPatKey(p.patKey||patKeyFor(p)) && !patNurRehaOderKeineBeh(p.patKey||patKeyFor(p))){
       isBlanko = true;
       tags.blanko = true;
       // (Push in cats.blanko passiert unten zentral – vorher doppelt = Dopplungen in der Liste)
@@ -2234,7 +2260,8 @@ function analyzeRezepteFull(cellsForDay, allCells, opts){
     //   Eine BVB-VO darf über 12 Wochen laufen → max. Behandlungen = obere Frequenz × 12.
     //   (Freq. 1-2 → 24 möglich, 1-3 → 36 möglich.) Stehen deutlich weniger auf dem
     //   Rezept, besteht Potenzial für ein größeres Folge-VO.
-    if(isBVB && p.freqMax && p.menge){
+    // Mail Luis 16.10.: ist schon eine 12er-VO (oder größer) da, gehört der Patient nicht mehr in die GRIMZ-Box
+    if(isBVB && p.freqMax && p.menge && p.menge < 12){
       const maxMoeglich = p.freqMax * 12;
       const offen = maxMoeglich - p.menge;
       if(offen > 0){
@@ -2277,6 +2304,7 @@ function analyzeRezepteFull(cellsForDay, allCells, opts){
     p.badges = badges;
     p.tags = tags;
     
+    if(p.blankoAlt){ if(isBlanko) cats.blanko.push(p); return; }   // ältere Schulter-Rezepte nur für „Auf Blanko umstellen"
     if(isBVB)cats.bvb.push(p);
     if(isBlanko)cats.blanko.push(p);
     if(isBvbPot)cats.bvbpot.push(p);
@@ -2416,6 +2444,10 @@ function renderRezeptGroup(group, cat){
   if(group.geb instanceof Date && !isNaN(group.geb)) gebStr = '* '+group.geb.toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'numeric'});
   else if(group.geb){ const d=new Date(group.geb); gebStr = !isNaN(d) ? '* '+d.toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'numeric'}) : esc(String(group.geb)); }
   h += '<span style="font-size:10px;color:var(--muted);font-weight:600">'+gebStr+'</span>';
+  if(cat==='blanko'){
+    const ld = group.rezepte.map(r=>r.lastDate).filter(Boolean).sort((a,b)=>b-a)[0];
+    h += '<span style="font-size:10px;color:var(--muted);font-weight:600">'+letzterTerminTxt(ld)+'</span>';
+  }
   // To-do 01.10.: bei „Blanko-VO zu Ende planen" direkt sichtbar, wie viele Termine noch fehlen
   if(cat==='blankopot'){
     const bl = group.rezepte.filter(r=>r.blankoOffen!=null && r.tags && r.tags.blankopot);
@@ -2465,6 +2497,18 @@ function showRezeptDetail(k){
   // ── Punkt 8 + Status im Rezepte-Reiter (Call 15.09.): Blanko-Status filtern ──
   const blType = k==='blanko' ? 'um' : (k==='blankopot' ? 'pl' : null);
   let blFilterBar = '';
+  let blZeitBar = '';
+  if(k==='blanko'){
+    const heute0 = new Date(); heute0.setHours(0,0,0,0);
+    const tage = p => p.lastDate ? Math.round((heute0 - new Date(p.lastDate.getFullYear(), p.lastDate.getMonth(), p.lastDate.getDate()))/86400000) : 9999;
+    const bucket = p => { const t = tage(p); return t<=14 ? 'w2' : t<=28 ? 'w24' : 'w4'; };
+    const cntZ = {w2:0, w24:0, w4:0}; items.forEach(p=>cntZ[bucket(p)]++);
+    items = items.filter(p=>bucket(p)===currentBlZeitFilter);
+    blZeitBar = `<div class="nr-filters" style="margin-bottom:8px">`
+      + [['w2','📅 letzter Termin in den letzten 2 Wochen'],['w24','⏱️ vor 2–4 Wochen'],['w4','💤 vor mehr als 4 Wochen']]
+        .map(([f,l])=>`<button class="nr-filter${currentBlZeitFilter===f?' a':''}" onclick="currentBlZeitFilter='${f}';showRezeptDetail('blanko')">${l} (${cntZ[f]})</button>`).join('')
+      + `</div>`;
+  }
   if(blType){
     const stOf = p => getBlStatus(blType, p.rezeptNr);
     const cnt = {alle:items.length, offen:0, ib:0, fertig:0};
@@ -2495,7 +2539,7 @@ function showRezeptDetail(k){
   }
   
   let h = `<div class="d-t">${titles[k]} <span style="color:var(--muted);font-weight:600;font-size:12px">(${items.length})</span></div>`;
-  h += blFilterBar;
+  h += blZeitBar + blFilterBar;
 
   if(isNR){
     const allNR = rez.nr;
@@ -2619,6 +2663,7 @@ function showRezeptDetail(k){
           <div class="pr-n">${p.name} ${ageStr ? `<span style="font-size:9px;color:var(--muted);font-weight:600;margin-left:6px">${ageStr}</span>` : ''} <span style="font-size:9px;color:var(--primary);font-weight:700;margin-left:6px">${p.icd||'—'}</span></div>
           <div class="pr-d">
             <b>${p.heilmittel||'?'}</b> · Rezept: <b>${p.menge}</b> Beh. · Freq. bis <b>${p.bvbFreqMax}×/Wo</b>${voDat(p.rezDatum)}
+            · ${letzterTerminTxt(p.lastDate)}
             <br><b style="color:var(--primary)">🔼 Möglich bis ${p.bvbMaxMoeglich} Beh. → noch ${p.bvbOffen} über größeres Folge-VO</b>
           </div>
           <div class="progress-mini"><div class="progress-mini-f" style="width:${pct}%;background:var(--primary)"></div></div>
@@ -3472,7 +3517,7 @@ function renderControlling(){
   const workByTh2 = {}; // th -> Set(dateStr) mit Arbeitszeit (AZ=J) → gearbeitete Tage
   const catTotal = {urlaub:0, fortbildung:0, krank:0};
   DATA.cells.forEach(c=>{
-    if(!c.therapist || !dset.has(c.dateStr)) return;
+    if(!c.therapist || c.rezi || !dset.has(c.dateStr)) return;
     if(c.azFlag) (workByTh2[c.therapist] = workByTh2[c.therapist] || new Set()).add(c.dateStr);
     const k = abwKategorie(c.bezeichnung); if(!k) return;
     const rec = abwByTh[c.therapist] = abwByTh[c.therapist] || {urlaub:new Set(),fortbildung:new Set(),krank:new Set()};
@@ -3937,7 +3982,7 @@ function renderPotential(){
   let hinweisRaus = 0;
   collectPatienten().forEach(p=>{
     if(p.istDauer) return;              // hat schon einen Dauerplan → kein Potenzial mehr
-    if(dauerplanPerHinweisAbgelehnt(p.patKey)){ hinweisRaus++; return; }  // THEORG-Hinweis "Kein Dauerplan"
+    if(dauerplanPerHinweisAbgelehnt(p.patKey) || patNurRehaOderKeineBeh(p.patKey)){ hinweisRaus++; return; }  // THEORG-Hinweis "Kein Dauerplan" / "nur Reha" / "keine Behandlung"
     const cats = patDauerKategorien(p);
     if(!cats.length) return;
     // Punkt 9 (Call 15.09.): nur aktive Patienten – letzter Termin ≤ 3 Wochen her ODER Zukunftstermin gebucht
@@ -3975,7 +4020,7 @@ function renderPotential(){
     <b style="color:var(--primary);font-family:Montserrat;font-weight:800">ℹ️ Logik:</b>
     Angezeigt werden Patienten mit einer für einen Dauerplan geeigneten Behandlungsart (Blanko, Privat, MLD 45/60, KG ZNS, Hausbesuch, BVB/LVB), die <b>noch keine Maske D</b> besitzen. Sobald ein Patient die Maske D erhält, verschwindet er automatisch aus dieser Liste. Auch <b>BVB/LVB-Diagnosen</b> (langfristiger Versorgungsbedarf) zählen als Dauerplan-Kriterium.
     <br><b style="color:var(--primary)">Aktiv-Filter:</b> Es zählen nur Patienten, die <b>in den letzten 3 Wochen</b> einen Termin hatten oder einen gebuchten Zukunftstermin haben – wer länger raus ist, ist meist nicht mehr in Behandlung (${inaktivRaus} ausgeblendet).
-    <br><b style="color:var(--primary)">Hinweis-Ausschluss:</b> Steht im THEORG-Patientenhinweis „Kein Dauerplan" bzw. „kein DP" / „DP = Nein", wird der Patient hier nicht angezeigt${hinweisRaus?` (${hinweisRaus} ausgeblendet)`:''}.
+    <br><b style="color:var(--primary)">Hinweis-Ausschluss:</b> Steht im THEORG-Patientenhinweis „Kein Dauerplan" bzw. „kein DP" / „DP = Nein" oder „Reha" (z. B. „in Reha bis …") / „keine Behandlung", wird der Patient hier nicht angezeigt${hinweisRaus?` (${hinweisRaus} ausgeblendet)`:''}.
     <br><b>Tipp:</b> Patient anklicken → Name wird unten in den Telefonleitfaden eingesetzt.</div>`;
 
   h += leitfadenBox('potential', 'Dauerplan anbieten', 'z.B.: „Frau/Herr … , da Sie regelmäßig zu uns kommen, können wir einen Dauerplan einrichten – dann sind Ihre Termine langfristig gesichert …"');
@@ -5725,7 +5770,7 @@ function dauerKandidatKeys(){
   try{
     collectPatienten().forEach(p=>{
       if(p.istDauer) return;
-      if(dauerplanPerHinweisAbgelehnt(p.patKey)) return;   // THEORG-Hinweis "Kein Dauerplan"
+      if(dauerplanPerHinweisAbgelehnt(p.patKey) || patNurRehaOderKeineBeh(p.patKey)) return;   // THEORG-Hinweis "Kein Dauerplan" / "nur Reha" / "keine Behandlung"
       const cats = patDauerKategorien(p);
       if(cats.length) map.set(p.patKey, cats);
     });
@@ -6246,7 +6291,7 @@ function buildAufgabenSections(a){
   // ── Punkt 6a (Call 15.09.): Blanko-Aufgaben fürs Backoffice (aus der Rezepte-Analyse) ──
   const blCats = analyzeRezepteFull(null, DATA.cells, {allActive:true});
   const _seenUm = new Set(), _seenPl = new Set();
-  const blUm = (blCats.blanko||[]).filter(p=>{ if(!p.rezeptNr||_seenUm.has(p.rezeptNr)) return false; _seenUm.add(p.rezeptNr); return true; });
+  const blUm = (blCats.blanko||[]).filter(p=>{ if(p.blankoAlt) return false; if(!p.rezeptNr||_seenUm.has(p.rezeptNr)) return false; _seenUm.add(p.rezeptNr); return true; });
   const blPl = (blCats.blankopot||[]).filter(p=>{ if(!p.rezeptNr||_seenPl.has(p.rezeptNr)) return false; _seenPl.add(p.rezeptNr); return true; });
   // Mail Luis 07.10.: GRIMZ-Box (BVB/LHB, Frequenz nicht ausgeschöpft) als Backoffice-Aufgabe
   const _seenGz = new Set();
@@ -6319,7 +6364,7 @@ function buildAufgabenSections(a){
       items: grimz.map(p=>({
         id:'grimz|'+p.rezeptNr,
         main:esc(p.name),
-        sub:`${p.heilmittel?esc(p.heilmittel)+' · ':''}nur ${p.menge} von bis zu ${p.bvbMaxMoeglich} verordnet (bis ${p.bvbFreqMax}×/Wo)${voDat(p.rezDatum)} · größere Folge-VO anstoßen`,
+        sub:`${p.heilmittel?esc(p.heilmittel)+' · ':''}nur ${p.menge} von bis zu ${p.bvbMaxMoeglich} verordnet (bis ${p.bvbFreqMax}×/Wo)${voDat(p.rezDatum)} · ${letzterTerminTxt(p.lastDate)} · größere Folge-VO anstoßen`,
         notiz: patNotizField(p.patKey, p.name) })) },
     { key:'kap', ico:'📊', color:'var(--primary)', ttl:'Kapazität 4 Wochen im Voraus bereinigen · Ziel 87 %', go:"switchView('controlling')",
       items: kapItems },

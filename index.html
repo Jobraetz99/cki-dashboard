@@ -3672,7 +3672,53 @@ function renderControlling(){
   </div>`;
   h += `<div class="ausl-card" style="margin-bottom:16px">${ctrlKapazitaetChart(kd)}</div>`;
 
+  h += ctrlDauerAnteilHTML();
   document.getElementById('content').innerHTML = h;
+}
+
+// ── Dauerpatienten-Anteil je Therapeut und KW (Wunsch 16.10.) ───────────────────
+// Wie viele Stunden ist ein Therapeut je Kalenderwoche schon mit Dauerpatienten (Patient mit
+// Dauer-Maske D) verplant – und welcher Anteil seiner ARBEITSZEIT ist das? Gezeigt werden die
+// laufende KW und die folgenden 7: Dauertermine stehen lange im Voraus fest, die Zukunft zeigt
+// also, wie viel Kapazität schon fest vergeben ist. Unabhängig von der Zeitraumwahl oben.
+// Jede 10-Min-Zelle zählt einmal; Rezi-Spalte ausgenommen.
+function ctrlDauerAnteilHTML(){
+  const heute = new Date();
+  const kws = [];
+  for(let i=0;i<8;i++){ const d = new Date(heute); d.setDate(d.getDate()+7*i); kws.push(isoWeekKey(d)); }
+  const kwSet = new Set(kws);
+  const T = {}, seen = new Set();
+  DATA.cells.forEach(c=>{
+    if(!c.therapist || c.rezi || !c.start) return;
+    const kw = isoWeekKey(c.start); if(!kwSet.has(kw)) return;
+    const k = c.therapist+'|'+c.start.getTime(); if(seen.has(k)) return; seen.add(k);
+    const min = Math.max(0, (c.end - c.start)/60000) || 10;
+    const t = T[c.therapist] = T[c.therapist] || {};
+    const e = t[kw] = t[kw] || {az:0, dauer:0};
+    if(c.azFlag) e.az += min;
+    if(c.belegt && c.belArt==='R' && c.patKey && isDauerPatKey(c.patKey)) e.dauer += min;
+  });
+  const names = Object.keys(T).filter(n=>kws.some(k=>T[n][k] && T[n][k].az>=60))
+    .sort((a,b)=>{ const s = n=>kws.reduce((x,k)=>x+(T[n][k]?T[n][k].dauer:0),0); return s(b)-s(a) || a.localeCompare(b); });
+  if(!names.length) return '';
+  const f1 = m => (m/60).toLocaleString('de-DE',{minimumFractionDigits:1, maximumFractionDigits:1});
+  const zelle = (e, fett) => {
+    if(!e || e.az<=0) return `<td style="padding:6px 8px;border-top:1px solid var(--border);text-align:center;color:var(--muted)">–</td>`;
+    const p = Math.round(e.dauer/e.az*100);
+    const bg = `rgba(0,102,204,${(Math.min(100,p)/100*0.35).toFixed(2)})`;
+    return `<td style="padding:6px 8px;border-top:1px solid var(--border);text-align:center;background:${bg};${fett?'font-weight:800':''}">
+      <div style="font-size:13px;font-weight:800">${p} %</div><div style="font-size:10px;color:var(--muted)">${f1(e.dauer)} / ${f1(e.az)} h</div></td>`;
+  };
+  const info = `<b>Dauerpatienten je Therapeut und KW</b><br>Stunden, die mit <b>Dauerpatienten</b> (Patient mit Dauer-Maske D) verplant sind, im Verhältnis zur <b>Arbeitszeit</b> der Woche (alle Zellen mit Arbeitszeit-Kennzeichen).<br>Gezeigt: laufende KW und die nächsten 7 – Dauertermine stehen lange im Voraus fest, die Zukunft zeigt also, wie viel Kapazität schon fest vergeben ist.<br>Zelle: Anteil in % · darunter Dauer-Stunden / Arbeitszeit-Stunden. Je dunkler, desto höher der Anteil.`;
+  let h = `<div class="st">🔁 Dauerpatienten je Therapeut und KW <span class="sub">Anteil an der Arbeitszeit · laufende + nächste 7 Wochen</span> ${infoI(info)}</div>`;
+  h += `<div class="ausl-card" style="margin-bottom:16px;overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px;min-width:${180+kws.length*90}px">
+    <thead><tr style="color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.04em">
+      <th style="padding:6px 8px;text-align:left">Therapeut</th>${kws.map((k,i)=>`<th style="padding:6px 8px;text-align:center">${esc(k.replace(/^\d{4}-/,''))}${i===0?'<br><span style="text-transform:none">(laufend)</span>':''}</th>`).join('')}</tr></thead><tbody>`;
+  names.forEach(n=>{ h += `<tr><td style="padding:6px 8px;border-top:1px solid var(--border);font-weight:700;white-space:nowrap">${esc(n)}</td>${kws.map(k=>zelle(T[n][k])).join('')}</tr>`; });
+  const ges = kws.map(k=>names.reduce((a,n)=>{ const e=T[n][k]; if(e){ a.az+=e.az; a.dauer+=e.dauer; } return a; }, {az:0,dauer:0}));
+  h += `<tr style="background:var(--primary-bg,#eef2ff)"><td style="padding:6px 8px;border-top:2px solid var(--primary);font-weight:800">Gesamt Praxis</td>${ges.map(e=>zelle(e,true).replace('border-top:1px solid var(--border)','border-top:2px solid var(--primary)')).join('')}</tr>`;
+  h += `</tbody></table></div>`;
+  return h;
 }
 
 // ═══════════════════════════════════════════════════════════
